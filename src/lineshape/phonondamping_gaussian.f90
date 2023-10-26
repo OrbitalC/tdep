@@ -470,6 +470,10 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 egv4 = op4%egv
                 vel4 = op4%vel
             end if
+            qv1 = qv1*lo_twopi
+            qv2 = qv2*lo_twopi
+            qv3 = qv3*lo_twopi
+            qv4 = qv4*lo_twopi
             ! Now do loops on mode
             do b1=1, dr%n_mode
             do b2=1, dr%n_mode
@@ -486,7 +490,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 egv(:, 3) = dr%aq(q3)%egv(:, b3)
                 egv(:, 4) = egv4(:, b4)
                 ! Actual computing of the scattering matrix
-                psi4 = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
+                psi4 = fcf%scatteringamplitude(omega, egv, -qv2, -qv3, -qv4)
 
                 ! Let's get the smearing
                 select case (se%integrationtype)
@@ -501,6 +505,8 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 end select
                 sigma = sqrt(s2**2 + s3**2 + s4**2)
 
+                ! Some re-initialization
+                buf = 0.0_r8
                 ilo = lo_hugeint
                 ihi = -lo_hugeint
 
@@ -517,7 +523,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
                 end do
                 omdiff = -omega(2) - omega(3) - omega(4)
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
@@ -525,7 +531,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                    buf(i) = buf(i) - (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
                 end do
 
                 plf1 = n2 * (n3 + 1) * (n4 + 1)
@@ -536,7 +542,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                    buf(i) = buf(i) - 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
                 end do
                 omdiff = -omega(2) + omega(3) + omega(4)
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
@@ -544,7 +550,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
                 end do
 
                 ! Increment the self-energy

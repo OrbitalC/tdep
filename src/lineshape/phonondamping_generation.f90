@@ -303,7 +303,7 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
             call mem%deallocate(z0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
             call mem%deallocate(y0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         end block kktransform_4ph
-        call tmr%tock('Kramers-Kronig transformation four phonon')
+        call tmr%tock('Kramers-Kronig transformation 4ph')
     end if
 
     ! Do the fourth order real part after the Kramer-Kronig to not mess with the (maybe) already computed real part
