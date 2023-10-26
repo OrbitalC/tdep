@@ -944,7 +944,7 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
     fourthfreq: block
     type(lo_phonon_dispersions_qpoint) :: op4
     real(r8), dimension(3) :: qv1, qv2, qv3, qv4, v0
-    integer :: q2, q3, jq, ctr
+    integer :: q2, q3, idxq, ctr
 
     ! Make some space
     allocate (sr%omega4(dr%n_mode, qp%n_full_point, qp%n_full_point))
@@ -958,31 +958,28 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
 
     ctr = 0
     do q2 = 1, qp%n_full_point
-        do q3 = 1, qp%n_full_point
         ! make it parallel
         ctr = ctr + 1
         if (mod(ctr, mw%n) .ne. mw%r) cycle
 
+        do q3 = 1, qp%n_full_point
+        ! Get the q-vectors
+        qv1 = qpoint%r
+        qv2 = qp%ap(q2)%r
+        qv3 = qp%ap(q3)%r
+        qv4 = -qv1 - qv2 - qv3
         if (closedgrid) then
             ! A closed grid, fetch data from the grid to the fourth point
-            qv1 = qpoint%r
-            qv2 = qp%ap(q2)%r
-            qv3 = qp%ap(q3)%r
             qv4 = -qv1 - qv2 - qv3
             qv4 = matmul(uc%inv_reciprocal_latticevectors, qv4)
             qv4 = lo_clean_fractional_coordinates(qv4)
-            jq = index_on_grid(qp, qv4)
-            sr%omega4(:, q2, q3) = dr%aq(jq)%omega
-            sr%vel4(:, :, q2, q3) = dr%aq(jq)%vel
-            egv4(:, :, q2, q3) = dr%aq(jq)%egv
-            qvec4(:, q2, q3) = -qv1 - qv2 - qv3
+            idxq = index_on_grid(qp, qv4)
+            sr%omega4(:, q2, q3) = dr%aq(idxq)%omega
+            sr%vel4(:, :, q2, q3) = dr%aq(idxq)%vel
+            egv4(:, :, q2, q3) = dr%aq(idxq)%egv
+            qvec4(:, q2, q3) = qv4
         else
             ! Not a closed grid, just fetch everything
-            ! Get the q-vectors
-            qv1 = qpoint%r
-            qv2 = qp%ap(q2)%r
-            qv3 = qp%ap(q3)%r
-            qv4 = -qv1 - qv2 - qv4
             ! Get harmonic things
             call op4%generate(fc, uc, mem, qvec=qv4)
             sr%omega4(:, q2, q3) = op4%omega
@@ -1000,11 +997,11 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
             end if
         end if
         end do
-        call mw%allreduce('sum', sr%omega4)
-        call mw%allreduce('sum', sr%vel4)
-        call mw%allreduce('sum', egv4)
-        call mw%allreduce('sum', qvec4)
     end do
+    call mw%allreduce('sum', sr%omega4)
+    call mw%allreduce('sum', sr%vel4)
+    call mw%allreduce('sum', egv4)
+    call mw%allreduce('sum', qvec4)
     if (verbosity .gt. 0) then
         t1 = walltime()
         write (*, *) ''
@@ -1013,7 +1010,7 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
     end if
     end block fourthfreq
 
-    call tmr%tock("q'' harmonic properties")
+    call tmr%tock("q''' harmonic properties")
 
     pretransform: block
         real(r8) :: f0, f1
@@ -1022,8 +1019,10 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
         ! Some temporary space for scaled eigenvectors
         allocate (fh%ugv1(dr%n_mode, dr%n_mode))
         allocate (fh%ugv2(dr%n_mode, dr%n_mode, qp%n_full_point))
-        allocate (fh%ugv3(dr%n_mode, dr%n_mode, qp%n_full_point))
         allocate (fh%ugv4(dr%n_mode, dr%n_mode, qp%n_full_point, qp%n_full_point))
+        fh%ugv1 = 0.0_r8
+        fh%ugv2 = 0.0_r8
+        fh%ugv4 = 0.0_r8
 
         ! First fix the one at the main q-point, always the same
         ! just pre-multiply with masses and frequencies
@@ -1058,6 +1057,8 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
         ! Pre-multiply eigenvectors with masses and frequencies
         ctr = 0
         do iq = 1, qp%n_full_point
+        ctr = ctr + 1
+        if (mod(ctr, mw%n) .ne. mw%r) cycle
         do imode = 1, dr%n_mode
             ! First get the thingy for q'
             if (iq .eq. ind_gamma_full) then
@@ -1091,41 +1092,6 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
             end if
             ! Now we can get the things at q'' and q'''
             do jq=1, qp%n_full_point
-            do jmode=1, dr%n_mode
-                ctr = ctr + 1
-                if (mod(ctr, mw%n) .ne. mw%r) cycle
-
-                ! Here it's for q''
-                if (jq .eq. ind_gamma_full) then
-                    ! Pick consistent Gamma
-                    if (gpoint%omega(imode) .gt. lo_freqtol) then
-                        f0 = 1.0_r8 / sqrt(gpoint%omega(imode))
-                    else
-                        f0 = 0.0_r8
-                    end if
-                    do iatom=1, uc%na
-                        f1 = uc%invsqrtmass(iatom)
-                        do ix=1, 3
-                            ialpha = (iatom - 1)*3 + ix
-                            fh%ugv3(ialpha, imode, jq) = gpoint%egv(ialpha, imode)*f0*f1
-                        end do
-                    end do
-                else
-                    ! Not at Gamma, don't have to care
-                    if (dr%aq(jq)%omega(imode) .gt. lo_freqtol) then
-                        f0 = 1.0_r8/sqrt(dr%aq(jq)%omega(imode))
-                    else
-                        f0 = 0.0_r8
-                    end if
-                    do iatom=1, uc%na
-                        f1 = uc%invsqrtmass(iatom)
-                        do ix=1, 3
-                            ialpha = (iatom - 1)*3 + ix
-                            fh%ugv3(ialpha, imode, jq) = dr%aq(jq)%egv(ialpha, imode)*f0*f1
-                        end do
-                    end do
-                end if
-
                 ! And finally for q'''
                 if (sr%omega4(imode, iq, jq) .gt. lo_freqtol) then
                     f0 = 1.0_r8 / sqrt(sr%omega4(imode, iq, jq))
@@ -1140,11 +1106,9 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
                     end do
                 end do
             end do
-            end do
         end do
         end do
         call mw%allreduce('sum', fh%ugv2)
-        call mw%allreduce('sum', fh%ugv3)
         call mw%allreduce('sum', fh%ugv4)
         ! Space for the pre-transformed phi
         allocate (fh%ptf_phi(dr%n_mode**4))
@@ -1165,11 +1129,10 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
         end if
     end block pretransform
 
-    call tmr%tock("eigenvector scaling")
+    call tmr%tock("4ph eigenvector scaling")
 
     ! Get the fourphonon matrix elements
     fourphsc2: block
-        real(r8) :: t_up, t_tot
         real(r8), dimension(3) :: qv2, qv3, qv4
         integer :: q2, q3, b1, b2, b3, b4, ctr, l
 
@@ -1202,10 +1165,10 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
                             if (mod(l, mw%n) .ne. mw%r) cycle
 
                             fh%evp2 = 0.0_r8
-                            call zgeru(dr%n_mode, dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), fh%ugv3(:, b3, q3), 1, fh%evp1, 1, fh%evp2, dr%n_mode)
+                            call zgeru(dr%n_mode, dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), fh%ugv2(:, b3, q3), 1, fh%evp1, 1, fh%evp2, dr%n_mode)
                             do b4=1, dr%n_mode
                                 fh%evp3 = 0.0_r8
-                                call zgeru(dr%n_mode, dr%n_mode*dr%n_mode*dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), fh%ugv4(:, b4, q2, q3), 1, fh%evp2, 1, fh%evp3, dr%n_mode)
+                                call zgeru(dr%n_mode, dr%n_mode*dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), fh%ugv4(:, b4, q2, q3), 1, fh%evp2, 1, fh%evp3, dr%n_mode)
                                 fh%evp3 = conjg(fh%evp3)
                                 sr%psi_4ph(b1, b2, b3, b4, q2, q3) = dot_product(fh%evp3, fh%ptf_phi)
                             end do
@@ -1233,11 +1196,10 @@ subroutine generate_fourthorder(sr, qpoint, ompoint, gpoint, qp, dr, uc, fc, fcf
     end block fourphsc2
     call tmr%tock("four-phonon matrix elements")
 
-
     ! Some cleanup
     call mem%deallocate(egv4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qvec4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
+    call mem%tock(__FILE__, __LINE__, mw%comm)
 end subroutine
 
 !> pre-transform to get half of the matrix elements for psi4

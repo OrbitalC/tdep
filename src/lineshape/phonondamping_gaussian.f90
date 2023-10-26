@@ -396,11 +396,11 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
     integer, intent(in) :: verbosity
 
     real(r8), dimension(:), allocatable :: buf
-    real(r8) :: psisquare, psisq23, psisq32
+    real(r8) :: psisquare
     real(r8) :: sigma, om1, om2, om3, om4, invf, s2, s3, s4
     real(r8) :: plf1, plf2, t0, pref
     real(r8) :: n2, n3, n4
-    integer :: q1, q2, ctr, i, ii, jj, b1, b2, b3, b4, ilo, ihi
+    integer :: q2, q3, ctr, i, ii, jj, b1, b2, b3, b4, ilo, ihi
 
     ! set the unit
     t0 = walltime()
@@ -412,16 +412,16 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
     call mem%allocate(buf, se%n_energy, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     buf = 0.0_r8
 
-    qloopfull: do q1 = 1, qp%n_full_point
-    do q2=1, qp%n_full_point
+    qloopfull: do q2 = 1, qp%n_full_point
+    do q3=1, qp%n_full_point
+        ! Prefactor for this q-point
+        pref = fourphonon_imag_prefactor * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight
         do b1 = 1, dr%n_mode
             do b2 = 1, dr%n_mode
                 ! Make it parallel
                 ctr = ctr + 1
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
 
-                ! Prefactor for this q-point
-                pref = fourphonon_imag_prefactor * qp%ap(q1)%integration_weight * qp%ap(q2)%integration_weight
                 do b3 = 1, dr%n_mode
                     do b4 = 1, dr%n_mode
                         ! reset buffer
@@ -436,17 +436,16 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
                             s4 = dr%default_smearing(b4)
                             sigma = sqrt(s2**2 + s3**2 + s4**2)
                         case (2)
-                            ! WARNING NOT DONE AS IT SHOULD BE HERE
-                            s2 = qp%adaptive_sigma(qp%ap(q1)%radius, dr%aq(q1)%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
-                            s3 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
-                            s4 = qp%adaptive_sigma(qp%ap(q2)%radius, sr%vel4(:, b4, q1, q2), dr%default_smearing(b4), se%smearing_prefactor)
+                            s2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
+                            s3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
+                            s4 = qp%adaptive_sigma(qp%ap(q3)%radius, sr%vel4(:, b4, q2, q3), dr%default_smearing(b4), se%smearing_prefactor)
                             sigma = sqrt(s2**2 + s3**2 + s4**2)
                         end select
                         ! Fetch frequencies
                         om1 = wp%omega(b1)
-                        om2 = dr%aq(q1)%omega(b2)
-                        om3 = dr%aq(q2)%omega(b3)
-                        om4 = sr%omega4(b4, q1, q2)
+                        om2 = dr%aq(q2)%omega(b2)
+                        om3 = dr%aq(q3)%omega(b3)
+                        om4 = sr%omega4(b4, q2, q3)
 
                         ! Define occupation numbers
                         n2 = lo_planck(temperature, om2)
@@ -455,36 +454,56 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
 
                         plf1 = (n2 + 1) * (n3 + 1) * (n4 + 1)
                         plf2 = n2 * n3 * n4
-                        ii = max(floor((om2 + om3 - 4 * sigma)*invf), 1)
-                        jj = min(ceiling((om2 + om3 + om4 - 4 * sigma) * invf), se%n_energy)
+                        ! Delta(BigOmega - om2 - om3 - om4)
+                        ii = max(floor((om2 + om3 + om4 - 4 * sigma)*invf), 1)
+                        jj = min(ceiling((om2 + om3 + om4 + 4 * sigma) * invf), se%n_energy)
                         ilo = min(ilo, ii)
                         ihi = max(ihi, jj)
                         do i = ii, jj
-                            buf(i) = buf(i) + (plf1 + plf2) * (lo_gauss(se%energy_axis(i), -om2 - om3 - om4, sigma) &
-                                                               - lo_gauss(se%energy_axis(i), om2 + om3 + om4, sigma))
+                            buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), om2 + om3 + om4, sigma)
+                        end do
+                        ! Delta(BigOmega + om2 + om3 + om4)
+                        ii = max(floor((om2 - om3 - om4 - 4 * sigma)*invf), 1)
+                        jj = min(ceiling((om2 - om3 - om4 + 4 * sigma) * invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), -om2 - om3 - om4, sigma)
                         end do
 
                         plf1 = n2 * (n3 + 1) * (n4 + 1)
                         plf2 = (n2 + 1) * n3 * n4
-                        ! WARNING
-                        ii = max(floor((om2 - om3 - om4 - 4 * sigma)*invf), 0)
+                        ! Delta(BigOmega - om2 + om3 + om4)
+                        ii = max(floor((om2 - om3 - om4 - 4 * sigma)*invf), 1)
                         jj = min(ceiling((om2 - om3 - om4 + 4 * sigma)*invf), se%n_energy)
                         ilo = min(ilo, ii)
                         ihi = max(ihi, jj)
                         do i = ii, jj
-                            buf(i) = buf(i) + 3 * (plf1 + plf2) * (lo_gauss(se%energy_axis(i), om2 - om3 -om4, sigma) &
-                                                                   - lo_gauss(se%energy_axis(i), -om2 + om3 + om4, sigma))
+                            buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), om2 - om3 - om4, sigma)
+                        end do
+                        ! Delta(BigOmega - om2 + om3 + om4)
+                        ii = max(floor((-om2 + om3 + om4 - 4 * sigma)*invf), 1)
+                        jj = min(ceiling((-om2 + om3 + om4 + 4 * sigma)*invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), -om2 + om3 + om4, sigma)
                         end do
 
                         ! Increment the self-energy
                         if (ilo .lt. ihi) then
-                            psisquare = abs(sr%psi_4ph(b1, b2, b3, b4, q1, q2) * conjg(sr%psi_4ph(b1, b2, b3, b4, q1, q2))) * pref
+                            psisquare = abs(sr%psi_4ph(b1, b2, b3, b4, q2, q3) * conjg(sr%psi_4ph(b1, b2, b3, b4, q2, q3))) * pref
                             se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*psisquare
                         end if
                     end do
                 end do
             end do
         end do
+        if (verbosity .gt. 0) then
+            if (lo_trueNtimes(ctr, 127, qp%n_full_point*qp%n_full_point*dr%n_mode*dr%n_mode)) then
+                call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, dr%n_mode*dr%n_mode*qp%n_full_point*qp%n_full_point)
+            end if
+        end if
     end do
     end do qloopfull
 

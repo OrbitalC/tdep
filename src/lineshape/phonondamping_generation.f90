@@ -174,7 +174,6 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
     call tmr%tock('three-phonon integrals')
 
     if (se%fourthorder_scattering) then
-        fourthorder_imag: block
             call sr%generate_fourthorder(qpoint, wp, gp, qp, dr, uc, fc, fcf, &
                                          se%skipsym, .false., opts%grid, tmr, mw, mem, verbosity)
             select case (se%integrationtype)
@@ -185,9 +184,9 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
             case default
                 call lo_stop_gracefully(['Unknown integration type'], lo_exitcode_param, __FILE__, __LINE__, mw%comm)
             end select
-        call tmr%tock('four-phonon integrals')
-        end block fourthorder_imag
     end if
+
+    call tmr%tock('four-phonon integrals')
 
     ! finalize to ensure that it's reasonable.
     sanity: block
@@ -254,7 +253,7 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
             call mem%deallocate(z0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
             call mem%deallocate(y0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         end block kktransform
-        call tmr%tock('Kramers-Kronig transformation')
+        call tmr%tock('Kramers-Kronig transformation 3ph')
     end if
 
 
@@ -305,7 +304,7 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
             call mem%deallocate(z0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
             call mem%deallocate(y0, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         end block kktransform_4ph
-        call tmr%tock('Kramers-Kronig transformation four phonon')
+        call tmr%tock('Kramers-Kronig transformation 4ph')
     end if
 
     ! Do the fourth order real part after the Kramer-Kronig to not mess with the (maybe) already computed real part
