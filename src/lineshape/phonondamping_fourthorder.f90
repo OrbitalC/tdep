@@ -238,7 +238,7 @@ subroutine fourphonon_selfenergy(qpoint, wp, gp, qp, uc, temperature, dr, fcf, d
                 ctr = ctr + 1
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
 
-                prefactor = qp%ip(iq)%integration_weight*fourphonon_prefactor
+                prefactor = qp%ip(iq)%integration_weight*fourphonon_real_prefactor
                 ! pre-transform the matrix element
                 call pretransform_phi4(fcf, qpoint%r, qp%ip(iq)%r, ptf)
 
@@ -278,7 +278,7 @@ subroutine fourphonon_selfenergy(qpoint, wp, gp, qp, uc, temperature, dr, fcf, d
                 ctr = ctr + 1
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
 
-                prefactor = qp%ap(iq)%integration_weight*fourphonon_prefactor
+                prefactor = qp%ap(iq)%integration_weight*fourphonon_real_prefactor
                 ! pre-transform the matrix element
                 call pretransform_phi4(fcf, qpoint%r, qp%ap(iq)%r, ptf)
 

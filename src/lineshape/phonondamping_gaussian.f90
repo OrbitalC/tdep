@@ -372,3 +372,217 @@ subroutine threephonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, tempera
     call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     if (verbosity .gt. 0) call lo_progressbar(' ... threephonon imaginary selfenergy', dr%n_mode*qp%n_full_point, dr%n_mode*qp%n_full_point, walltime() - t0)
 end subroutine
+
+
+!> fourphonon self energy gaussian
+subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpoint, qpoint, uc, closedgrid, temperature, mw, mem, verbosity)
+    !> harmonic properties at this q-point
+    type(lo_phonon_dispersions_qpoint), intent(in) :: wp
+    !> self-energy
+    type(lo_phonon_selfenergy), intent(inout) :: se
+    !> second order forceconstant
+    type(lo_forceconstant_secondorder), intent(inout) :: fc
+    !> fourth order forceconstant
+    type(lo_forceconstant_fourthorder), intent(in) :: fcf
+    !> qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> harmonic dispersions
+    type(lo_phonon_dispersions), intent(in) :: dr
+    !> harmonic properties at Gamma with the right direction
+    type(lo_phonon_dispersions_qpoint), intent(in) :: gpoint
+    !> q-point in question
+    type(lo_qpoint) :: qpoint
+    !> crystal structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> is it a closed grid ?
+    logical, intent(in) :: closedgrid
+    !> temperature
+    real(r8), intent(in) :: temperature
+    !> MPI helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
+    !> talk a lot?
+    integer, intent(in) :: verbosity
+
+    real(r8), dimension(:), allocatable :: buf, om4
+    real(r8), dimension(:, :), allocatable :: vel4
+    complex(r8), dimension(:, :), allocatable :: egv4, egv
+
+    type(lo_phonon_dispersions_qpoint) :: op4
+    real(r8), dimension(3) :: qv1, qv2, qv3, qv4, qvec4
+    real(r8), dimension(4) :: omega
+    complex(r8) :: psi4
+    real(r8) :: sigma, omdiff, invf, s2, s3, s4, t0, t1
+    real(r8) :: plf1, plf2, pref, n2, n3, n4
+    integer :: q2, q3, q4, b1, b2, b3, b4, ctr, i, ii, jj, ilo, ihi
+
+
+    ! set the unit
+    t0 = walltime()
+
+    invf = se%n_energy/se%energy_axis(se%n_energy)
+
+    ctr = 0
+    se%im_4ph = 0.0_r8
+    call mem%allocate(buf, se%n_energy, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(om4, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv, [dr%n_mode, 4], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv4, [dr%n_mode, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(vel4, [3, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    buf = 0.0_r8
+    om4 = 0.0_r8
+    egv = 0.0_r8
+    egv4 = 0.0_r8
+    vel4 = 0.0_r8
+
+    do q2=1, qp%n_full_point
+        ! Make it parallel
+        ctr = ctr + 1
+        if (mod(ctr, mw%n) .ne. mw%r) cycle
+
+        do q3=1, qp%n_full_point
+            pref = fourphonon_imag_prefactor * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight
+
+            ! First get the fourth qpoint
+            qv1 = qpoint%r
+            qv2 = qp%ap(q2)%r
+            qv3 = qp%ap(q3)%r
+            qv4 = -qv1 - qv2 - qv3
+            qvec4 = matmul(uc%inv_reciprocal_latticevectors, qv4)
+            if (closedgrid) then
+                ! First case, we are on a closedgrid, we just have to fetch the qpoint
+                ! qv4 = lo_clean_fractional_coordinates(qv4)
+                q4 = index_on_grid(qp, qvec4)
+                om4 = dr%aq(q4)%omega
+                egv4 = dr%aq(q4)%egv
+                vel4 = dr%aq(q4)%vel
+            else if (sum(abs(qvec4 - anint(qvec4))) .lt. lo_sqtol) then
+                ! Second case, we are at Gamma, let's ensure that we have proper Gamma
+                qv4 = 0.0_r8
+                om4 = gpoint%omega
+                egv4 = gpoint%egv
+                vel4 = gpoint%vel
+            else
+                ! For every other cases, we have to generate the point
+                call op4%generate(fc, uc, mem, qvec=qv4)
+                om4 = op4%omega
+                egv4 = op4%egv
+                vel4 = op4%vel
+            end if
+            ! Now do loops on mode
+            do b1=1, dr%n_mode
+            do b2=1, dr%n_mode
+            do b3=1, dr%n_mode
+            do b4=1, dr%n_mode
+                omega(1) = wp%omega(b1)
+                omega(2) = dr%aq(q2)%omega(b2)
+                omega(3) = dr%aq(q3)%omega(b3)
+                omega(4) = om4(b4)
+                ! If one mode is zero, we can skip this
+                if (minval(omega) .lt. lo_freqtol) cycle
+                egv(:, 1) = wp%egv(:, b1)
+                egv(:, 2) = dr%aq(q2)%egv(:, b2)
+                egv(:, 3) = dr%aq(q3)%egv(:, b3)
+                egv(:, 4) = egv4(:, b4)
+                ! Actual computing of the scattering matrix
+                psi4 = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
+
+                ! Let's get the smearing
+                select case (se%integrationtype)
+                case (1)
+                    s2 = dr%default_smearing(b2)
+                    s3 = dr%default_smearing(b3)
+                    s4 = dr%default_smearing(b4)
+                case (2)
+                    s2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
+                    s3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
+                    s4 = qp%adaptive_sigma(qp%ap(q3)%radius, vel4(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
+                end select
+                sigma = sqrt(s2**2 + s3**2 + s4**2)
+
+                ilo = lo_hugeint
+                ihi = -lo_hugeint
+
+                ! Define occupation numbers
+                n2 = lo_planck(temperature, omega(2))
+                n3 = lo_planck(temperature, omega(3))
+                n4 = lo_planck(temperature, omega(4))
+
+                plf1 = (n2 + 1) * (n3 + 1) * (n4 + 1)
+                plf2 = n2 * n3 * n4
+                omdiff = omega(2) + omega(3) + omega(4)
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                end do
+                omdiff = -omega(2) - omega(3) - omega(4)
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                end do
+
+                plf1 = n2 * (n3 + 1) * (n4 + 1)
+                plf2 = (n2 + 1) * n3 * n4
+                omdiff = omega(2) - omega(3) - omega(4)
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                end do
+                omdiff = -omega(2) + omega(3) + omega(4)
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), -omdiff, sigma))
+                end do
+
+                ! Increment the self-energy
+                if (ilo .lt. ihi) then
+                    se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)* abs(psi4 * conjg(psi4)) * pref
+                end if
+            end do
+            end do
+            end do
+            end do
+        end do
+        if (verbosity .gt. 0) then
+            if (lo_trueNtimes(ctr, 127, qp%n_full_point)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, qp%n_full_point)
+        end if
+    end do
+
+    ! Sum it up
+    call mw%allreduce('sum', se%im_4ph)
+
+    ! Fix degeneracies ?
+    do b1 = 1, dr%n_mode
+        buf = 0.0_r8
+        do i = 1, wp%degeneracy(b1)
+            b2 = wp%degenmode(i, b1)
+            buf = buf + se%im_4ph(:, b2)
+        end do
+        buf = buf / real(wp%degeneracy(b1), r8)
+        do i = 1, wp%degeneracy(b1)
+            b2 = wp%degenmode(i, b1)
+            se%im_4ph(:, b2) = buf
+        end do
+    end do
+    call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(om4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(vel4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', dr%n_mode*qp%n_full_point,&
+    dr%n_mode*qp%n_full_point, walltime() - t0)
+end subroutine

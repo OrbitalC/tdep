@@ -20,6 +20,7 @@ type lo_opts
     logical :: isotopescattering = .false.
     logical :: thirdorder = .false.
     logical :: fourthorder = .false.
+    logical :: fourthorder_real = .false.
     logical :: slightsmearing = .false.
     integer :: integrationtype = -lo_hugeint
     logical :: readiso = .false.
@@ -125,8 +126,11 @@ subroutine parse(opts)
                  help='Switch of three-phonon scattering', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--fourthorder', &
+    call cli%add(switch='--fourthorder_real', &
                  help='Consider four-phonon contributions to the real part of the self-energy.', hidden=.true., &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    call cli%add(switch='--fourthorder', &
+                 help='Consider four-phonon contributions to the dynamic part of the self-energy.', hidden=.true., &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nondiagonal', &
@@ -232,6 +236,7 @@ subroutine parse(opts)
     opts%isotopescattering = .not. dumlog
     call cli%get(switch='--no_thirdorder_scattering', val=dumlog)
     opts%thirdorder = .not. dumlog
+    call cli%get(switch='--fourthorder_real', val=opts%fourthorder_real)
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
     call cli%get(switch='--nondiagonal', val=dumlog)
     opts%diagonal = .not. dumlog
