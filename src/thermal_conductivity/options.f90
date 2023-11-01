@@ -21,6 +21,7 @@ type lo_opts
     integer :: integrationtype      !< gaussian or tetrahedron
     integer :: scfiterations        !< maximum number of self-consistent iterations
     real(flyt) :: scftol            !< tolerance for the SCF cycle
+    logical :: fourthorder          !< include fourth order scattering
 
     integer :: correctionlevel      !< how hard to correct
     integer :: mfppts               !< number of points on mfp-plots
@@ -132,6 +133,10 @@ subroutine parse(opts)
                  help='What tolerance to converge the self-consistent cycle to.', &
                  required=.false., act='store', def='1E-5', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--fourthorder', &
+                 help='Add fourth order scattering to the thermal conductivity.', &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
     !call cli%add(switch='--thinfilm',hidden=.true.,&
     !        help='Calculate the suppression of kappa from in a thin film.',&
     !        required=.false.,act='store_true',def='.false.',error=lo_status)
@@ -180,6 +185,7 @@ subroutine parse(opts)
     call cli%get(switch='--scfiterations', val=opts%scfiterations)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
     call cli%get(switch='--dumpgrid', val=opts%dumpgrid)
+    call cli%get(switch='--fourthorder', val=opts%fourthorder)
     !call cli%get(switch='--thinfilm',val=opts%thinfilm)
     ! stuff that's not really an option
     call cli%get(switch='--correctionlevel', val=opts%correctionlevel)

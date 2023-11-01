@@ -6,6 +6,7 @@ use mpi_wrappers, only: lo_mpi_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
+use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_phonon_dos, only: lo_phonon_dos
@@ -18,9 +19,11 @@ public :: calculate_scattering_amplitudes
 contains
 
 !> get all matrix elements
-subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
+subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw, fcf)
     !> third order forceconstant
     type(lo_forceconstant_thirdorder), intent(in) :: fct
+    !> fourth order forceconstant
+    type(lo_forceconstant_fourthorder), intent(in), optional :: fcf
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
     !> qpoint mesh
@@ -34,13 +37,14 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
     !
     real(r8), parameter :: timereport = 30.0_r8 ! report progress every 30 seconds
     !
-    complex(r8), dimension(fct%na*3, 3) :: egv
+    complex(r8), dimension(fct%na*3, 4) :: egv
     complex(r8), dimension(fct%na*3, 2) :: egviso
     complex(r8) :: c0
-    real(r8), dimension(3) :: q2, q3, omega
+    real(r8), dimension(3) :: q2, q3, q4
+    real(r8), dimension(4) :: omega
     real(r8) :: omthres, timer, t0
-    integer :: gi1, gi2, gi3
-    integer :: i, j, b1, b2, b3
+    integer :: gi1, gi2, gi3, gi4
+    integer :: i, j, b1, b2, b3, b4
 
     timer = walltime()
     t0 = timer
@@ -51,7 +55,6 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
         do b1 = 1, dr%n_mode
         do b2 = 1, dr%n_mode
         do b3 = 1, dr%n_mode
-
             ! First the plus-events
             do j = 1, sc%q(i)%plus(b1, b2, b3)%n
                 ! grid-indices
@@ -65,14 +68,14 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
                 omega(1) = dr%aq(gi1)%omega(b1)
                 omega(2) = dr%aq(gi2)%omega(b2)
                 omega(3) = dr%aq(gi3)%omega(b3)
-                if (minval(omega) .lt. omthres) then
+                if (minval(omega(:3)) .lt. omthres) then
                     sc%q(i)%plus(b1, b2, b3)%e(j)%psisquare = 0.0_r8
                 else
                     egv(:, 1) = dr%aq(gi1)%egv(:, b1)
                     egv(:, 2) = dr%aq(gi2)%egv(:, b2)
                     egv(:, 3) = dr%aq(gi3)%egv(:, b3)
                     ! and the scattering amplitude
-                    c0 = fct%scatteringamplitude(omega, egv, q2, q3)
+                    c0 = fct%scatteringamplitude(omega(:3), egv(:,:3), q2, q3)
                     !sc%q(i)%plus(b1,b2,b3)%e(j)%psisquare=1E-10_r8 !abs(conjg(c0)*c0)
                     sc%q(i)%plus(b1, b2, b3)%e(j)%psisquare = abs(conjg(c0)*c0)
                     !write(*,*) abs(conjg(c0)*c0)
@@ -93,18 +96,106 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
                 omega(1) = dr%aq(gi1)%omega(b1)
                 omega(2) = dr%aq(gi2)%omega(b2)
                 omega(3) = dr%aq(gi3)%omega(b3)
-                if (minval(omega) .lt. omthres) then
+                if (minval(omega(:3)) .lt. omthres) then
                     sc%q(i)%minus(b1, b2, b3)%e(j)%psisquare = 0.0_r8
                 else
                     egv(:, 1) = dr%aq(gi1)%egv(:, b1)
                     egv(:, 2) = dr%aq(gi2)%egv(:, b2)
                     egv(:, 3) = dr%aq(gi3)%egv(:, b3)
                     ! and the scattering amplitude
-                    c0 = fct%scatteringamplitude(omega, egv, q2, q3)
+                    c0 = fct%scatteringamplitude(omega(:3), egv(:,:3), q2, q3)
                     !sc%q(i)%minus(b1,b2,b3)%e(j)%psisquare=1E-10_r8 ! abs(conjg(c0)*c0)
                     sc%q(i)%minus(b1, b2, b3)%e(j)%psisquare = abs(conjg(c0)*c0)
                 end if
             end do
+            if (sc%fourphonon) then
+                do b4 = 1, dr%n_mode
+                    ! first the plus plus events
+                    do j = 1, sc%q4(i)%plusplus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(i)%gi1
+                        gi2 = sc%q4(i)%plusplus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(i)%plusplus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(i)%plusplus(b1, b2, b3, b4)%e(j)%gi4
+                        ! q-vectors with correct sign
+                        q2 = -qp%ap(gi2)%r*lo_twopi
+                        q3 = -qp%ap(gi3)%r*lo_twopi
+                        q4 = -qp%ap(gi4)%r*lo_twopi
+                        ! frequencies, eigenvectors, q-vectors
+                        omega(1) = dr%aq(gi1)%omega(b1)
+                        omega(2) = dr%aq(gi2)%omega(b2)
+                        omega(3) = dr%aq(gi3)%omega(b3)
+                        omega(4) = dr%aq(gi4)%omega(b4)
+                        if (minval(omega) .lt. omthres) then
+                            sc%q4(i)%plusplus(b1, b2, b3, b4)%e(j)%psisquare = 0.0_r8
+                        else
+                            egv(:, 1) = dr%aq(gi1)%egv(:, b1)
+                            egv(:, 2) = dr%aq(gi2)%egv(:, b2)
+                            egv(:, 3) = dr%aq(gi3)%egv(:, b3)
+                            egv(:, 4) = dr%aq(gi4)%egv(:, b4)
+                            ! and the scattering amplitude
+                            c0 = fcf%scatteringamplitude(omega, egv, q2, q3, q4)
+                            sc%q4(i)%plusplus(b1, b2, b3, b4)%e(j)%psisquare = abs(conjg(c0)*c0)
+                        end if
+                    end do
+                    ! then the plus minus events
+                    do j = 1, sc%q4(i)%plusminus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(i)%gi1
+                        gi2 = sc%q4(i)%plusminus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(i)%plusminus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(i)%plusminus(b1, b2, b3, b4)%e(j)%gi4
+                        ! q-vectors with correct sign
+                        q2 = -qp%ap(gi2)%r*lo_twopi
+                        q3 = -qp%ap(gi3)%r*lo_twopi
+                        q4 = -qp%ap(gi4)%r*lo_twopi
+                        ! frequencies, eigenvectors, q-vectors
+                        omega(1) = dr%aq(gi1)%omega(b1)
+                        omega(2) = dr%aq(gi2)%omega(b2)
+                        omega(3) = dr%aq(gi3)%omega(b3)
+                        omega(4) = dr%aq(gi4)%omega(b4)
+                        if (minval(omega) .lt. omthres) then
+                            sc%q4(i)%plusminus(b1, b2, b3, b4)%e(j)%psisquare = 0.0_r8
+                        else
+                            egv(:, 1) = dr%aq(gi1)%egv(:, b1)
+                            egv(:, 2) = dr%aq(gi2)%egv(:, b2)
+                            egv(:, 3) = dr%aq(gi3)%egv(:, b3)
+                            egv(:, 4) = dr%aq(gi4)%egv(:, b4)
+                            ! and the scattering amplitude
+                            c0 = fcf%scatteringamplitude(omega, egv, q2, q3, q4)
+                            sc%q4(i)%plusminus(b1, b2, b3, b4)%e(j)%psisquare = abs(conjg(c0)*c0)
+                        end if
+                    end do
+                    ! then the minus minus events
+                    do j = 1, sc%q4(i)%minusminus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(i)%gi1
+                        gi2 = sc%q4(i)%minusminus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(i)%minusminus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(i)%minusminus(b1, b2, b3, b4)%e(j)%gi4
+                        ! q-vectors with correct sign
+                        q2 = -qp%ap(gi2)%r*lo_twopi
+                        q3 = -qp%ap(gi3)%r*lo_twopi
+                        q4 = -qp%ap(gi4)%r*lo_twopi
+                        ! frequencies, eigenvectors, q-vectors
+                        omega(1) = dr%aq(gi1)%omega(b1)
+                        omega(2) = dr%aq(gi2)%omega(b2)
+                        omega(3) = dr%aq(gi3)%omega(b3)
+                        omega(4) = dr%aq(gi4)%omega(b4)
+                        if (minval(omega) .lt. omthres) then
+                            sc%q4(i)%minusminus(b1, b2, b3, b4)%e(j)%psisquare = 0.0_r8
+                        else
+                            egv(:, 1) = dr%aq(gi1)%egv(:, b1)
+                            egv(:, 2) = dr%aq(gi2)%egv(:, b2)
+                            egv(:, 3) = dr%aq(gi3)%egv(:, b3)
+                            egv(:, 4) = dr%aq(gi4)%egv(:, b4)
+                            ! and the scattering amplitude
+                            c0 = fcf%scatteringamplitude(omega, egv, q2, q3, q4)
+                            sc%q4(i)%minusminus(b1, b2, b3, b4)%e(j)%psisquare = abs(conjg(c0)*c0)
+                        end if
+                    end do ! j
+                end do ! b4
+            end if
         end do
         end do
         end do

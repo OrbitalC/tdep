@@ -48,6 +48,7 @@ type lo_mem_helper
             allocate_1d_i4,&
             allocate_2d_i4,&
             allocate_3d_i4,&
+            allocate_4d_i4,&
             allocate_1d_r8,&
             allocate_2d_r8,&
             allocate_3d_r8,&
@@ -67,6 +68,7 @@ type lo_mem_helper
             deallocate_1d_i4,&
             deallocate_2d_i4,&
             deallocate_3d_i4,&
+            deallocate_4d_i4,&
             deallocate_1d_r8,&
             deallocate_2d_r8,&
             deallocate_3d_r8,&
@@ -84,6 +86,7 @@ type lo_mem_helper
         procedure, private :: allocate_1d_i4
         procedure, private :: allocate_2d_i4
         procedure, private :: allocate_3d_i4
+        procedure, private :: allocate_4d_i4
 
         procedure, private :: allocate_1d_r8
         procedure, private :: allocate_2d_r8
@@ -105,6 +108,7 @@ type lo_mem_helper
         procedure, private :: deallocate_1d_i4
         procedure, private :: deallocate_2d_i4
         procedure, private :: deallocate_3d_i4
+        procedure, private :: deallocate_4d_i4
 
         procedure, private :: deallocate_1d_r8
         procedure, private :: deallocate_2d_r8
@@ -511,6 +515,75 @@ subroutine allocate_3d_i4(mem,x,n,persistent,scalable,file,line,supress_error)
     else
         ! Things seem sensible, go ahead with the allocation
         allocate(x(n(1),n(2),n(3)),stat=mem%ierr)
+        if ( mem%ierr .ne. 0 ) then
+            ! This went badly
+            write(lo_iou,*) 'ERROR: failed allocation.'
+            write(lo_iou,*) '   file: ',trim(file)
+            write(lo_iou,*) '   line: ',line
+            stop
+        else
+            mem%n_allocate=mem%n_allocate+1
+            if ( persistent ) then
+                if ( scalable ) then
+                    mem%persistent_scalable=mem%persistent_scalable+size(x)*storage_size(x)
+                    mem%peak_persistent_scalable=max(mem%peak_persistent_scalable,mem%persistent_scalable)
+                else
+                    mem%persistent_nonscalable=mem%persistent_nonscalable+size(x)*storage_size(x)
+                    mem%peak_persistent_nonscalable=max(mem%peak_persistent_nonscalable,mem%persistent_nonscalable)
+                endif
+            else
+                if ( scalable ) then
+                    mem%temporary_scalable=mem%temporary_scalable+size(x)*storage_size(x)
+                    mem%peak_temporary_scalable=max(mem%peak_temporary_scalable,mem%temporary_scalable)
+                else
+                    mem%temporary_nonscalable=mem%temporary_nonscalable+size(x)*storage_size(x)
+                    mem%peak_temporary_nonscalable=max(mem%peak_temporary_nonscalable,mem%temporary_nonscalable)
+                endif
+            endif
+        endif
+    endif
+end subroutine
+subroutine allocate_4d_i4(mem,x,n,persistent,scalable,file,line,supress_error)
+    !> memory tracker
+    class(lo_mem_helper), intent(inout) :: mem
+    !> array to allocate
+    integer(i4), dimension(:,:,:,:), allocatable, intent(inout) :: x
+    !> size to allocate
+    integer, dimension(4), intent(in) :: n
+    !> should this be a persistent array or a temporary array
+    logical, intent(in) :: persistent
+    !> is this a scalable or non-scalable array?
+    logical, intent(in) :: scalable
+    !> filename
+    character(len=*), intent(in) :: file
+    !> line number
+    integer, intent(in) :: line
+    !> suppress error for too large array
+    logical, intent(in), optional :: supress_error
+
+    logical :: check_size
+    ! maybe do not check for large arrays?
+    if ( present(supress_error) ) then
+        check_size=.not.supress_error
+    else
+        check_size=.true.
+    endif
+    ! allocate if everything seems sensible
+    if ( minval(n) .le. 0 ) then
+        ! Throw error because I can not allocate empty thingy
+        write(lo_iou,*) 'ERROR: trying to allocate an array of size ',n
+        write(lo_iou,*) '       that could not have been intended.'
+        write(lo_iou,*) '   file: ',trim(file)
+        write(lo_iou,*) '   line: ',line
+        stop
+    ! elseif ( product(n) .gt. size_for_throwing_error .and. check_size ) then
+    !     ! Throw error because the array will be too large
+    !     write(lo_iou,*) 'ERROR: trying to allocate an array of size ',n
+    !     write(lo_iou,*) '       that could not have been intended.'
+    !     stop
+    else
+        ! Things seem sensible, go ahead with the allocation
+        allocate(x(n(1),n(2),n(3), n(4)),stat=mem%ierr)
         if ( mem%ierr .ne. 0 ) then
             ! This went badly
             write(lo_iou,*) 'ERROR: failed allocation.'
@@ -1555,6 +1628,62 @@ subroutine deallocate_3d_i4(mem,x,persistent,scalable,file,line)
     class(lo_mem_helper), intent(inout) :: mem
     !> array to deallocate
     integer(i4), dimension(:,:,:), allocatable, intent(inout) :: x
+    !> was this a persistent array or a temporary array
+    logical, intent(in) :: persistent
+    !> was this scalable or non-scalable memory
+    logical, intent(in) :: scalable
+    !> filename
+    character(len=*), intent(in) :: file
+    !> line number
+    integer, intent(in) :: line
+
+    integer :: n
+
+    if ( .not.allocated(x) ) then
+        write(lo_iou,*) 'ERROR: trying to deallocate array that is already deallocated.'
+        write(lo_iou,*) '   file: ',trim(file)
+        write(lo_iou,*) '   line: ',line
+        stop
+    else
+        n=size(x)*storage_size(x)
+    endif
+    if ( persistent ) then
+        deallocate(x,stat=mem%ierr)
+        if ( mem%ierr .ne. 0 ) then
+            write(lo_iou,*) 'ERROR: failed deallocation.'
+            write(lo_iou,*) '   file: ',trim(file)
+            write(lo_iou,*) '   line: ',line
+            stop
+        else
+            mem%n_deallocate=mem%n_deallocate+1
+            if ( scalable ) then
+                mem%persistent_scalable=mem%persistent_scalable-n
+            else
+                mem%persistent_nonscalable=mem%persistent_nonscalable-n
+            endif
+        endif
+    else
+        deallocate(x,stat=mem%ierr)
+        if ( mem%ierr .ne. 0 ) then
+            write(lo_iou,*) 'ERROR: failed deallocation.'
+            write(lo_iou,*) '   file: ',trim(file)
+            write(lo_iou,*) '   line: ',line
+            stop
+        else
+            mem%n_deallocate=mem%n_deallocate+1
+            if ( scalable ) then
+                mem%temporary_scalable=mem%temporary_scalable-n
+            else
+                mem%temporary_nonscalable=mem%temporary_nonscalable-n
+            endif
+        endif
+    endif
+end subroutine
+subroutine deallocate_4d_i4(mem,x,persistent,scalable,file,line)
+    !> memory tracker
+    class(lo_mem_helper), intent(inout) :: mem
+    !> array to deallocate
+    integer(i4), dimension(:,:,:,:), allocatable, intent(inout) :: x
     !> was this a persistent array or a temporary array
     logical, intent(in) :: persistent
     !> was this scalable or non-scalable memory

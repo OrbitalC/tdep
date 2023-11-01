@@ -89,10 +89,12 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
     type(lo_mem_helper), intent(inout) :: mem
 
     real(r8), parameter :: threephonon_prefactor = lo_pi/4.0_r8
+    real(r8), parameter :: fourphonon_prefactor = lo_pi/8.0_r8
     real(r8), parameter :: isotope_prefactor = lo_pi/2.0_r8
     real(r8), dimension(:, :), allocatable :: buf_plus, buf_minus, buf_iso
-    real(r8) :: om1, om2, om3, n1, n2, n3, f0, f1, f2, omthres, qs_boundary, velnorm
-    integer :: gi1, gi2, gi3, b1, b2, b3, iq, lqp, j
+    real(r8), dimension(:, :), allocatable :: buf_plusplus, buf_plusminus, buf_minusminus
+    real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, f0, f1, f2, f3, f4, f5, omthres, qs_boundary, velnorm
+    integer :: gi1, gi2, gi3, gi4, b1, b2, b3, b4, iq, lqp, j
 
     ! Threshold for omega to be zero
     omthres = dr%omega_min*0.2_r8
@@ -107,6 +109,11 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
         dr%iq(iq)%Fn = 0.0_r8
         dr%iq(iq)%mfp = 0.0_r8
         dr%iq(iq)%scalar_mfp = 0.0_r8
+        if (sc%fourphonon) then
+            dr%iq(iq)%p_plusplus = 0.0_r8
+            dr%iq(iq)%p_plusminus = 0.0_r8
+            dr%iq(iq)%p_minusminus = 0.0_r8
+        end if
     end do
 
     ! Some temporary buffers
@@ -116,6 +123,17 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                       file=__FILE__, line=__LINE__)
     call mem%allocate(buf_iso, [dr%n_mode, qp%n_irr_point], persistent=.false., scalable=.false., &
                       file=__FILE__, line=__LINE__)
+    if (sc%fourphonon) then
+        call mem%allocate(buf_plusplus, [dr%n_mode, qp%n_irr_point], persistent=.false., scalable=.false., &
+                          file=__FILE__, line=__LINE__)
+        call mem%allocate(buf_plusminus, [dr%n_mode, qp%n_irr_point], persistent=.false., scalable=.false., &
+                          file=__FILE__, line=__LINE__)
+        call mem%allocate(buf_minusminus, [dr%n_mode, qp%n_irr_point], persistent=.false., scalable=.false., &
+                          file=__FILE__, line=__LINE__)
+        buf_plusplus = 0.0_r8
+        buf_plusminus = 0.0_r8
+        buf_minusminus = 0.0_r8
+    end if
     buf_plus = 0.0_r8
     buf_minus = 0.0_r8
     buf_iso = 0.0_r8
@@ -181,6 +199,97 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                     ! accumulate actual scattering strength
                     buf_minus(b1, iq) = buf_minus(b1, iq) + f0
                 end do
+                if (sc%fourphonon) then
+                do b4 = 1, dr%n_mode
+                    ! First the plusplus events
+                    do j = 1, sc%q4(lqp)%plusplus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(lqp)%gi1
+                        gi2 = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi4
+                        ! frequencies
+                        om1 = dr%aq(gi1)%omega(b1)
+                        om2 = dr%aq(gi2)%omega(b2)
+                        om3 = dr%aq(gi3)%omega(b3)
+                        om4 = dr%aq(gi4)%omega(b4)
+                        ! init scattering rate to zero
+                        sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%W = 0.0_r8
+                        ! skip things with gamma
+                        if (minval([om1, om2, om3, om4]) .lt. omthres) cycle
+                        ! distribution functions
+                        n1 = lo_planck(temperature, om1)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+                        n4 = lo_planck(temperature, om4)
+
+                        f0 = n1*n2*n3*(n4 + 1)*fourphonon_prefactor
+                        f0 = f0*sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%psisquare*sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%deltafunction
+                        ! Store intermediate scattering strength
+                        sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%W = f0
+                        ! Store actual scattering strength
+                        buf_plusplus(b1, iq) = buf_plusplus(b1, iq) + f0
+                    end do
+                    ! Then the plusminus events
+                    do j = 1, sc%q4(lqp)%plusminus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(lqp)%gi1
+                        gi2 = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi4
+                        ! frequencies
+                        om1 = dr%aq(gi1)%omega(b1)
+                        om2 = dr%aq(gi2)%omega(b2)
+                        om3 = dr%aq(gi3)%omega(b3)
+                        om4 = dr%aq(gi4)%omega(b4)
+                        ! init scattering rate to zero
+                        sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%W = 0.0_r8
+                        ! skip things with gamma
+                        if (minval([om1, om2, om3, om4]) .lt. omthres) cycle
+                        ! distribution functions
+                        n1 = lo_planck(temperature, om1)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+                        n4 = lo_planck(temperature, om4)
+
+                        f0 = n1*n2*(n3 + 1)*(n4 + 1)*fourphonon_prefactor
+                        f0 = f0*sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%psisquare*sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%deltafunction
+                        ! Store intermediate scattering strength
+                        sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%W = f0
+                        ! Store actual scattering strength
+                        buf_plusminus(b1, iq) = buf_plusminus(b1, iq) + f0
+                    end do
+                    ! Then the minusminus events
+                    do j = 1, sc%q4(lqp)%minusminus(b1, b2, b3, b4)%n
+                        ! grid-indices
+                        gi1 = sc%q4(lqp)%gi1
+                        gi2 = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi2
+                        gi3 = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi3
+                        gi4 = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi4
+                        ! frequencies
+                        om1 = dr%aq(gi1)%omega(b1)
+                        om2 = dr%aq(gi2)%omega(b2)
+                        om3 = dr%aq(gi3)%omega(b3)
+                        om4 = dr%aq(gi4)%omega(b4)
+                        ! init scattering rate to zero
+                        sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%W = 0.0_r8
+                        ! skip things with gamma
+                        if (minval([om1, om2, om3, om4]) .lt. omthres) cycle
+                        ! distribution functions
+                        n1 = lo_planck(temperature, om1)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+                        n4 = lo_planck(temperature, om4)
+
+                        f0 = n1*(n2+1)*(n3 + 1)*(n4 + 1)*fourphonon_prefactor
+                        f0 = f0*sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%psisquare*sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%deltafunction
+                        ! Store intermediate scattering strength
+                        sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%W = f0
+                        ! Store actual scattering strength
+                        buf_minusminus(b1, iq) = buf_minusminus(b1, iq) + f0
+                    end do
+                end do
+                end if
             end do
             end do
 
@@ -216,20 +325,40 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                 f0 = 0.0_r8
                 f1 = 0.0_r8
                 f2 = 0.0_r8
+                if (sc%fourphonon) then
+                    f3 = 0.0_r8
+                    f4 = 0.0_r8
+                    f5 = 0.0_r8
+                end if
                 do j = 1, dr%iq(iq)%degeneracy(b1)
                     b2 = dr%iq(iq)%degenmode(j, b1)
                     f0 = f0 + buf_plus(b2, iq)
                     f1 = f1 + buf_minus(b2, iq)
                     f2 = f2 + buf_iso(b2, iq)
+                    if (sc%fourphonon) then
+                        f3 = f3 + buf_plusplus(b2, iq)
+                        f4 = f4 + buf_plusminus(b2, iq)
+                        f5 = f5 + buf_minusminus(b2, iq)
+                    end if
                 end do
                 f0 = f0/real(dr%iq(iq)%degeneracy(b1), r8)
                 f1 = f1/real(dr%iq(iq)%degeneracy(b1), r8)
                 f2 = f2/real(dr%iq(iq)%degeneracy(b1), r8)
+                if (sc%fourphonon) then
+                    f3 = f3/real(dr%iq(iq)%degeneracy(b1), r8)
+                    f4 = f4/real(dr%iq(iq)%degeneracy(b1), r8)
+                    f5 = f5/real(dr%iq(iq)%degeneracy(b1), r8)
+                end if
                 do j = 1, dr%iq(iq)%degeneracy(b1)
                     b2 = dr%iq(iq)%degenmode(j, b1)
                     buf_plus(b2, iq) = f0
                     buf_minus(b2, iq) = f1
                     buf_iso(b2, iq) = f2
+                    if (sc%fourphonon) then
+                        buf_plusplus(b2, iq) = f3
+                        buf_plusminus(b2, iq) = f4
+                        buf_minusminus(b2, iq) = f5
+                    end if
                 end do
             end do
         end if
@@ -239,6 +368,11 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
     call mw%allreduce('sum', buf_plus)
     call mw%allreduce('sum', buf_minus)
     call mw%allreduce('sum', buf_iso)
+    if (sc%fourphonon) then
+        call mw%allreduce('sum', buf_plusplus)
+        call mw%allreduce('sum', buf_plusminus)
+        call mw%allreduce('sum', buf_minusminus)
+    end if
 
     ! ! Sum stuff up
     do iq = 1, qp%n_irr_point
@@ -247,6 +381,11 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
         dr%iq(iq)%p_plus(b1) = buf_plus(b1, iq)
         dr%iq(iq)%p_minus(b1) = buf_minus(b1, iq)
         dr%iq(iq)%p_iso(b1) = buf_iso(b1, iq)
+        if (sc%fourphonon) then
+            dr%iq(iq)%p_plusplus(b1) = buf_plusplus(b1, iq)
+            dr%iq(iq)%p_plusminus(b1) = buf_plusminus(b1, iq)
+            dr%iq(iq)%p_minusminus(b1) = buf_minusminus(b1, iq)
+        end if
 
         n1 = lo_planck(temperature, dr%iq(iq)%omega(b1))
         velnorm = norm2(dr%iq(iq)%vel(:, b1))
@@ -270,6 +409,12 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                                dr%iq(iq)%p_minus(b1)*0.5_r8 + &
                                dr%iq(iq)%p_iso(b1) + &
                                qs_boundary
+            if (sc%fourphonon) then
+                dr%iq(iq)%qs(b1) = dr%iq(iq)%qs(b1) + &
+                                   dr%iq(iq)%p_plusplus(b1) * 0.5_r8 + &
+                                   dr%iq(iq)%p_plusminus(b1) * 0.5_r8 + &
+                                   dr%iq(iq)%p_minusminus(b1) / 6.0_r8
+            end if
             dr%iq(iq)%linewidth(b1) = 0.5_r8*dr%iq(iq)%qs(b1)/(n1*(n1 + 1.0_r8))
 
             if (velnorm .gt. lo_phonongroupveltol) then
@@ -285,6 +430,11 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
     call mem%deallocate(buf_plus, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(buf_minus, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(buf_iso, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    if (sc%fourphonon) then
+        call mem%deallocate(buf_plusplus, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%deallocate(buf_plusminus, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%deallocate(buf_minusminus, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    end if
 end subroutine
 
 !> Self-consistently solve everything
@@ -355,9 +505,9 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
 
         ! update F to new values
         updateF: block
-            real(r8), dimension(3) :: Fp, Fpp, v0
+            real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
             real(r8) :: iQs, W
-            integer :: lqp, i, j, b1, b2, b3, ii, jj
+            integer :: lqp, i, j, b1, b2, b3, b4, ii, jj, kk
             integer :: iq
 
             ! Some temporary space
@@ -370,7 +520,7 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
                 b1loop: do b1 = 1, dr%n_mode
                     ! prefetch some stuff
                     if (dr%iq(iq)%linewidth(b1) .gt. lo_freqtol) then
-                        iQS = 1.0_r8/dr%iq(iq)%qs(b1)
+                        iQs = 1.0_r8/dr%iq(iq)%qs(b1)
                     else
                         cycle b1loop
                     end if
@@ -397,6 +547,44 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
                             Fpp = Fbb(:, b3, jj)
                             v0 = v0 + (Fp + Fpp)*W*iQs*0.5_r8
                         end do
+                        ! four-phonon stuff
+                        if (sc%fourphonon) then
+                            do b4 = 1, dr%n_mode
+                                do j = 1, sc%q4(lqp)%plusplus(b1, b2, b3, b4)%n
+                                    ! Scatterstrength
+                                    W = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%W
+                                    ii = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi2
+                                    jj = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi3
+                                    kk = sc%q4(lqp)%plusplus(b1, b2, b3, b4)%e(j)%gi4
+                                    Fp = Fbb(:, b2, ii)
+                                    Fpp = Fbb(:, b3, jj)
+                                    Fppp = Fbb(:, b4, kk)
+                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs * 0.5_r8
+                                end do
+                                do j = 1, sc%q4(lqp)%plusminus(b1, b2, b3, b4)%n
+                                    ! Scatterstrength
+                                    W = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%W
+                                    ii = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi2
+                                    jj = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi3
+                                    kk = sc%q4(lqp)%plusminus(b1, b2, b3, b4)%e(j)%gi4
+                                    Fp = Fbb(:, b2, ii)
+                                    Fpp = Fbb(:, b3, jj)
+                                    Fppp = Fbb(:, b4, kk)
+                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs * 0.5_r8
+                                end do
+                                do j = 1, sc%q4(lqp)%minusminus(b1, b2, b3, b4)%n
+                                    ! Scatterstrength
+                                    W = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%W
+                                    ii = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi2
+                                    jj = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi3
+                                    kk = sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%gi4
+                                    Fp = Fbb(:, b2, ii)
+                                    Fpp = Fbb(:, b3, jj)
+                                    Fppp = Fbb(:, b4, kk)
+                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs / 6.0_r8
+                                end do
+                            end do
+                        end if
                     end do
                     end do
                     ! isotope stuff

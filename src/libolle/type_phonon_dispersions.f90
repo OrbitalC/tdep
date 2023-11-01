@@ -47,6 +47,12 @@ type lo_phonon_dispersions_qpoint
     real(r8), dimension(:), allocatable :: p_plus
     !> minus scattering rate
     real(r8), dimension(:), allocatable :: p_minus
+    !> plusplus scattering rate
+    real(r8), dimension(:), allocatable :: p_plusplus
+    !> plusminus scattering rate
+    real(r8), dimension(:), allocatable :: p_plusminus
+    !> minusminus scattering rate
+    real(r8), dimension(:), allocatable :: p_minusminus
     !> isotope scattering rate
     real(r8), dimension(:), allocatable :: p_iso
     !> QS parameter for thermal conductivity
@@ -609,6 +615,56 @@ subroutine write_to_hdf5(dr, qp, uc, filename, mem, temperature)
         dddd = dddd*lo_kappa_au_to_SI
         call h5%store_data(dddd, h5%file_id, trim(dname), enhet='W/mK', dimensions='q-vector,mode,xyz,xyz')
         call mem%deallocate(dddd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    end if
+
+    ! Four phonon thermal conductivity
+    if (allocated(dr%iq(1)%p_plusplus) .and. present(temperature)) then
+        dname = 'scattering_rates_plusplus'
+        call mem%allocate(dd, [dr%n_mode, qp%n_full_point], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        do i = 1, qp%n_full_point
+            k = qp%ap(i)%irreducible_index
+            do j = 1, dr%n_mode
+                if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                    dd(j, i) = 0.0_r8
+                else
+                    n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                    dd(j, i) = dr%iq(k)%p_plusplus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                end if
+            end do
+        end do
+        call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+        call mem%deallocate(dd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        ! plus minus
+        dname = 'scattering_rates_plusminus'
+        call mem%allocate(dd, [dr%n_mode, qp%n_full_point], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        do i = 1, qp%n_full_point
+            k = qp%ap(i)%irreducible_index
+            do j = 1, dr%n_mode
+                if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                    dd(j, i) = 0.0_r8
+                else
+                    n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                    dd(j, i) = dr%iq(k)%p_plusminus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                end if
+            end do
+        end do
+        call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+        call mem%deallocate(dd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        dname = 'scattering_rates_minusminus'
+        call mem%allocate(dd, [dr%n_mode, qp%n_full_point], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        do i = 1, qp%n_full_point
+            k = qp%ap(i)%irreducible_index
+            do j = 1, dr%n_mode
+                if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                    dd(j, i) = 0.0_r8
+                else
+                    n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                    dd(j, i) = dr%iq(k)%p_minusminus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                end if
+            end do
+        end do
+        call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+        call mem%deallocate(dd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     end if
 
     ! If a temperature is specified, some more stuff

@@ -56,6 +56,27 @@ type lo_3phqp2
     integer :: gi1 = -lo_hugeint
 end type
 
+! For four-phonon integrationweights
+type lo_4phqp4
+    ! On the Monkhorst-pack grid, which four points are involved
+    integer :: gi2 = -lo_hugeint
+    integer :: gi3 = -lo_hugeint
+    integer :: gi4 = -lo_hugeint
+    ! The integration weight, matrix element and the extra parameter to
+    ! keep track of Pierls-Boltzmann equation stuff.
+    real(r8) :: deltafunction = -lo_huge
+    real(r8) :: psisquare = -lo_huge
+    real(r8) :: W = -lo_huge
+end type
+type lo_4phqp3
+    integer :: n = -lo_hugeint
+    type(lo_4phqp4), dimension(:), allocatable :: e
+end type
+type lo_4phqp2
+    type(lo_4phqp3), dimension(:, :, :, :), allocatable :: plusplus, plusminus, minusminus
+    integer :: gi1 = -lo_hugeint
+end type
+
 !> type to keep track of three-phonon and two-phonon events
 type lo_threephononevents
     !> Number of q-points on this rank
@@ -68,6 +89,12 @@ type lo_threephononevents
     type(lo_3phqp2), dimension(:), allocatable :: q
     !> Isotope events
     type(lo_iso2), dimension(:), allocatable :: iq
+    ! Plus plus corresponds to
+    ! omega-omega'-omega''=0 or om1=om2+om3 or om1-om3 = om2
+    !
+    ! Minus corresponds to
+    ! omega-omega'+omega''=0 or om1=om3-om2 or om1-om3 = -om2
+    type(lo_4phqp2), dimension(:), allocatable :: q4
     !> where to cut Gaussian tails
     real(r8) :: gaussian_threshold = -lo_huge
     !> how to adjust the automatic smearing
@@ -76,6 +103,8 @@ type lo_threephononevents
     integer :: integrationtype = -lo_hugeint
     !> should I include isotope scattering?
     logical :: isotopescattering = .false.
+    !> should I include fourth phonon scattering?
+    logical :: fourphonon = .false.
     !> Boundary scattering another way
     real(r8) :: mfpmax = -lo_huge
     !> Correction level. Keep it at 2, that's safe. The others are experimental.
@@ -88,7 +117,7 @@ contains
 
 !> Count all scattering events, threephonon and isotope
 subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, integrationtype, &
-                                         correctionlevel, mfpmax, isotopescattering)
+                                         correctionlevel, mfpmax, isotopescattering, fourphonon)
     !> scattering events
     type(lo_threephononevents), intent(out) :: sc
     !> q-point mesh
@@ -113,6 +142,8 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
     real(r8), intent(in) :: mfpmax
     !> consider isotope scattering
     logical, intent(in) :: isotopescattering
+    !> consider fourth order scattering
+    logical, intent(in) :: fourphonon
 
     real(r8) :: t0, t1
 
@@ -131,6 +162,7 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
         sc%smearing_prefactor = sigma
         sc%integrationtype = integrationtype
         sc%isotopescattering = isotopescattering
+        sc%fourphonon = fourphonon
         sc%mfpmax = mfpmax
         sc%correctionlevel = correctionlevel
 
@@ -151,6 +183,7 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
             write (*, *) 'sc%smearing_prefactor', sc%smearing_prefactor
             write (*, *) 'sc%integrationtype   ', sc%integrationtype
             write (*, *) 'sc%isotopescattering ', sc%isotopescattering
+            write (*, *) 'sc%fourphonon        ', sc%fourphonon
             write (*, *) 'sc%mfpmax            ', sc%mfpmax
             write (*, *) 'sc%correctionlevel   ', sc%correctionlevel
 
@@ -171,10 +204,16 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
         if (sc%n_local_qpoint .gt. 0) then
             allocate (sc%q(sc%n_local_qpoint))
             allocate (sc%iq(sc%n_local_qpoint))
+            if (sc%fourphonon) allocate (sc%q4(sc%n_local_qpoint))
             do i = 1, sc%n_local_qpoint
                 allocate (sc%q(i)%plus(dr%n_mode, dr%n_mode, dr%n_mode))
                 allocate (sc%q(i)%minus(dr%n_mode, dr%n_mode, dr%n_mode))
                 allocate (sc%iq(i)%band(dr%n_mode, dr%n_mode))
+                if (sc%fourphonon) then
+                    allocate (sc%q4(i)%plusplus(dr%n_mode, dr%n_mode, dr%n_mode, dr%n_mode))
+                    allocate (sc%q4(i)%plusminus(dr%n_mode, dr%n_mode, dr%n_mode, dr%n_mode))
+                    allocate (sc%q4(i)%minusminus(dr%n_mode, dr%n_mode, dr%n_mode, dr%n_mode))
+                end if
             end do
         end if
     end block makespace
@@ -213,6 +252,16 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
                 end select
             end if
 
+            if (sc%fourphonon) then
+                select case (sc%integrationtype)
+                case(1:2) ! gaussian
+                    call fourphonon_gaussian_oneqp(qp, dr, sc%q4(lqp), gi1, sc%gaussian_threshold, &
+                                                   sc%smearing_prefactor, sc%integrationtype, mem)
+                case(3)
+                    call lo_stop_gracefully(['This routine only works with gaussian integration'], lo_exitcode_param, __FILE__, __LINE__)
+                end select
+            end if
+
             if (mw%talk .and. lqp .lt. sc%n_local_qpoint) then
                 call lo_progressbar(' ... counting scattering events', lqp, sc%n_local_qpoint, walltime() - t0)
             end if
@@ -226,11 +275,15 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
     ! Some diagnostics and final things
     diagnostics: block
         integer(i8) :: ct_plus, ct_minus, ct_iso, ct_possible_3ph, ct_possible_iso
+        integer(i8) :: ct_plusplus, ct_plusminus, ct_minusminus, ct_possible_4ph
         real(r8) :: f0, f1, f2
-        integer :: i, lqp, b1, b2, b3
+        integer :: i, lqp, b1, b2, b3, b4
 
         ct_plus = 0
         ct_minus = 0
+        ct_plusplus = 0
+        ct_plusminus = 0
+        ct_minusminus = 0
         lqp = 0
         do i = 1, qp%n_irr_point
             ! Make it parallel
@@ -242,6 +295,13 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
             do b3 = 1, dr%n_mode
                 ct_plus = ct_plus + sc%q(lqp)%plus(b1, b2, b3)%n
                 ct_minus = ct_minus + sc%q(lqp)%minus(b1, b2, b3)%n
+                if (sc%fourphonon) then
+                    do b4 = 1, dr%n_mode
+                        ct_plusplus = ct_plusplus + sc%q4(lqp)%plusplus(b1, b2, b3, b4)%n
+                        ct_plusminus = ct_plusminus + sc%q4(lqp)%plusminus(b1, b2, b3, b4)%n
+                        ct_minusminus = ct_minusminus + sc%q4(lqp)%minusminus(b1, b2, b3, b4)%n
+                    end do
+                end if
             end do
             end do
             end do
@@ -265,6 +325,11 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
         call mw%allreduce('sum', ct_plus)
         call mw%allreduce('sum', ct_minus)
         call mw%allreduce('sum', ct_iso)
+        if (sc%fourphonon) then
+            call mw%allreduce('sum', ct_plusplus)
+            call mw%allreduce('sum', ct_plusminus)
+            call mw%allreduce('sum', ct_minusminus)
+        end if
 
         ! dump some info
         if (mw%talk) then
@@ -272,11 +337,17 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
             ct_possible_3ph = qp%n_irr_point*qp%n_full_point
             ct_possible_3ph = ct_possible_3ph*2*(dr%n_mode**3)
             ct_possible_iso = qp%n_irr_point*qp%n_full_point*dr%n_mode**2
+            ct_possible_4ph = qp%n_irr_point*qp%n_full_point**2
+            ct_possible_4ph = ct_possible_4ph*3*(dr%n_mode**4)
             write (*, *) ''
-            write (*, *) '   number of + events:', ct_plus
-            write (*, *) '   number of - events:', ct_minus
-            write (*, *) '   number of i events:', ct_iso
+            write (*, *) '    number of + events:', ct_plus
+            write (*, *) '    number of - events:', ct_minus
+            write (*, *) '    number of i events:', ct_iso
+            write (*, *) '   number of ++ events:', ct_plusplus
+            write (*, *) '   number of +- events:', ct_plusminus
+            write (*, *) '   number of -- events:', ct_minusminus
             write (*, *) '                % 3ph:', 100*real(ct_plus + ct_minus, r8)/real(ct_possible_3ph, r8)
+            write (*, *) '                % 4ph:', 100*real(ct_plusplus + ct_plusminus + ct_minusminus, r8)/real(ct_possible_4ph, r8)
             write (*, *) '                % iso:', 100*real(ct_iso, r8)/real(ct_possible_iso, r8)
         end if
 
@@ -414,6 +485,74 @@ pure function fft_third_grid_index(i1, i2, dims) result(i3)
     end do
     ! convert it back to a singlet
     i3 = triplet_to_singlet(gi3, dims(2), dims(3))
+
+contains
+    !> convert a linear index to a triplet
+    pure function singlet_to_triplet(l, ny, nz) result(gi)
+        !> linear index
+        integer, intent(in) :: l
+        !> second dimension
+        integer, intent(in) :: ny
+        !> third dimension
+        integer, intent(in) :: nz
+        !> grid-index
+        integer, dimension(3) :: gi
+
+        integer :: i, j, k
+
+        k = mod(l, nz)
+        if (k .eq. 0) k = nz
+        j = mod((l - k)/nz, ny) + 1
+        i = (l - k - (j - 1)*nz)/(nz*ny) + 1
+        gi = [i, j, k]
+    end function
+    !> convert a triplet index to a singlet
+    pure function triplet_to_singlet(gi, ny, nz) result(l)
+        !> grid-index
+        integer, dimension(3), intent(in) :: gi
+        !> second dimension
+        integer, intent(in) :: ny
+        !> third dimension
+        integer, intent(in) :: nz
+        !> linear index
+        integer :: l
+
+        l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
+    end function
+end function
+
+
+!> returns the index on the grid that gives q4=-q3-q2-q1
+pure function fft_fourth_grid_index(i1, i2, i3, dims) result(i4)
+    !> index to q1
+    integer, intent(in) :: i1
+    !> index to q2
+    integer, intent(in) :: i2
+    !> index to q3
+    integer, intent(in) :: i3
+    !> dimensions of the grid
+    integer, dimension(3), intent(in) :: dims
+    !> index to q4
+    integer :: i4
+
+    integer, dimension(3) :: gi1, gi2, gi3, gi4
+    integer :: l, k
+    ! Convert triplet to singlet
+    gi1 = singlet_to_triplet(i1, dims(2), dims(3))
+    gi2 = singlet_to_triplet(i2, dims(2), dims(3))
+    gi3 = singlet_to_triplet(i3, dims(2), dims(3))
+    do l = 1, 3
+        gi4(l) = 4 - gi1(l) - gi2(l) - gi3(l)
+    end do
+    do k = 1, 3
+    do l = 1, 3
+        if (gi4(l) .lt. 1) gi4(l) = gi4(l) + dims(l)
+        if (gi4(l) .gt. dims(l)) gi4(l) = gi4(l) - dims(l)
+    end do
+    end do
+
+    ! convert it back to a singlet
+    i4 = triplet_to_singlet(gi4, dims(2), dims(3))
 
 contains
     !> convert a linear index to a triplet

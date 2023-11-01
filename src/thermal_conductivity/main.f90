@@ -9,6 +9,7 @@ use type_crystalstructure, only: lo_crystalstructure
 use type_mdsim, only: lo_mdsim
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
+use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_phonon_dos, only: lo_phonon_dos
@@ -26,6 +27,7 @@ implicit none
 type(lo_opts) :: opts
 type(lo_forceconstant_secondorder) :: fc
 type(lo_forceconstant_thirdorder) :: fct
+type(lo_forceconstant_fourthorder) :: fcf
 type(lo_phonon_dispersions) :: dr
 type(lo_phonon_dos) :: pd
 type(lo_crystalstructure) :: uc
@@ -99,6 +101,10 @@ initharmonic: block
     if (mw%talk) write (*, *) '... read second order forceconstant'
     call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
     if (mw%talk) write (*, *) '... read third order forceconstant'
+    if (opts%fourthorder) then
+        call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
+        if (mw%talk) write (*, *) '... read fourth order forceconstant'
+    end if
 
     ! Get q-point mesh
     call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=opts%timereversal, &
@@ -132,7 +138,7 @@ weights_elements: block
     t0 = walltime()
     timer_count = walltime()
     call lo_find_all_scattering_events(sc, qp, dr, uc, mw, mem, opts%sigma, opts%thres, opts%integrationtype, &
-                                       opts%correctionlevel, opts%mfp_max, opts%isotopescattering)
+                                       opts%correctionlevel, opts%mfp_max, opts%isotopescattering, opts%fourthorder)
     call mpi_barrier(mw%comm, mw%error)
 
     ! stop counting timer, start matrixelement timer
@@ -141,7 +147,11 @@ weights_elements: block
 
     ! Calculate scattering amplitudes
     t0 = walltime()
-    call calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
+    if (sc%fourphonon) then
+        call calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw, fcf)
+    else
+        call calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw)
+    end if
     call mpi_barrier(mw%comm, mw%error)
     ! stop matrix element timer, start some other timer
     timer_matrixelements = walltime() - timer_matrixelements
@@ -191,6 +201,14 @@ initkappa: block
         dr%iq(i)%Fn = 0.0_r8
         dr%iq(i)%mfp = 0.0_r8
         dr%iq(i)%scalar_mfp = 0.0_r8
+        if (sc%fourphonon) then
+            allocate (dr%iq(i)%p_plusplus(dr%n_mode))
+            allocate (dr%iq(i)%p_plusminus(dr%n_mode))
+            allocate (dr%iq(i)%p_minusminus(dr%n_mode))
+            dr%iq(i)%p_plusplus = 0.0_r8
+            dr%iq(i)%p_plusminus = 0.0_r8
+            dr%iq(i)%p_minusminus = 0.0_r8
+        end if
     end do
     do i = 1, qp%n_full_point
         allocate (dr%aq(i)%kappa(3, 3, dr%n_mode))
