@@ -268,7 +268,7 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
         end do
         call mw%barrier()
         t1 = walltime()
-        call lo_progressbar(' ... counting scattering events', sc%n_local_qpoint, sc%n_local_qpoint, t1 - t0)
+        if (mw%talk) call lo_progressbar(' ... counting scattering events', sc%n_local_qpoint, sc%n_local_qpoint, t1 - t0)
         t0 = t1
     end block measurephasespace
 
