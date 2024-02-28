@@ -210,34 +210,52 @@ getenergy: block
         write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
         write (*, opf) 'Second order cumulant =', cumulant(2, 3)*lo_Hartree_to_eV
         write (*, opf) 'Third order cumulant =', cumulant(3, 3)*lo_Hartree_to_eV
-        if (opts%thirdorder .or. opts%fourthorder) then
-            fe3_1 = (cumulant(1, 4) + f_ph + ah3)*lo_Hartree_to_eV
-            fe3_2 = (cumulant(1, 4) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
-            write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
-            write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
-            write (*, *) ''
-            write (*, *) 'Free energy with third order anharmonic corrections (eV/atom):'
-            write (*, *) 'Calculated as <U - U_second - U_polar - U_third> + F_phonon + F_3'
-            write (*, opf) 'F =', fe3_1
-            write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
-            write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
-            write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
-            write (*, opf) 'Third order cumulant =', cumulant(3, 4)*lo_Hartree_to_eV
-        end if
-        if (opts%fourthorder) then
-            fe4_1 = (cumulant(1, 5) + f_ph + ah3 + ah4)*lo_Hartree_to_eV
-            fe4_2 = (cumulant(1, 5) + f_ph + ah3 + ah4 + pref*cumulant(2, 5))*lo_Hartree_to_eV
-            write (u, *) '# Fourth order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
-            write (u, "(1X, 2(F25.10,' '))") fe4_1, fe4_2
-            write (*, *) ''
-            write (*, *) 'Free energy with fourth order anharmonic corrections (eV/atom):'
-            write (*, *) 'Calculated as <U - U_second - U_polar - U_third - U_fourth> + F_phonon + F_3 + F_4'
-            write (*, opf) 'F  =', fe4_1
-            write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
-            write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
-            write (*, opf) 'F_4 =', ah4*lo_Hartree_to_eV
-            write (*, opf) 'Second order cumulant =', cumulant(2, 5)*lo_Hartree_to_eV
-            write (*, opf) 'Third order cumulant =', cumulant(3, 5)*lo_Hartree_to_eV
+
+        if (opts%stochastic) then
+            if (opts%thirdorder .or. opts%fourthorder) then
+                fe3_1 = (cumulant(1, 4) + f_ph + ah3)*lo_Hartree_to_eV
+                fe3_2 = (cumulant(1, 4) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
+                write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
+                write (*, *) ''
+                write (*, *) 'Free energy with third order anharmonic corrections (eV/atom):'
+                write (*, *) 'Calculated as <U - U_second - U_polar - U_third> + F_phonon + F_3'
+                write (*, opf) 'F =', fe3_1
+                write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
+                write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
+                write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
+                write (*, opf) 'Third order cumulant =', cumulant(3, 4)*lo_Hartree_to_eV
+            end if
+            if (opts%fourthorder) then
+                fe4_1 = (cumulant(1, 5) + f_ph + ah3 + ah4)*lo_Hartree_to_eV
+                fe4_2 = (cumulant(1, 5) + f_ph + ah3 + ah4 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                write (u, *) '# Fourth order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
+                write (u, "(1X, 2(F25.10,' '))") fe4_1, fe4_2
+                write (*, *) ''
+                write (*, *) 'Free energy with fourth order anharmonic corrections (eV/atom):'
+                write (*, *) 'Calculated as <U - U_second - U_polar - U_third - U_fourth> + F_phonon + F_3 + F_4'
+                write (*, opf) 'F  =', fe4_1
+                write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
+                write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
+                write (*, opf) 'F_4 =', ah4*lo_Hartree_to_eV
+                write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
+                write (*, opf) 'Third order cumulant =', cumulant(3, 5)*lo_Hartree_to_eV
+            end if
+        else
+            if (opts%thirdorder) then
+                fe3_1 = (cumulant(1, 3) + f_ph + ah3)*lo_Hartree_to_eV
+                fe3_2 = (cumulant(1, 3) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
+                write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
+                write (*, *) ''
+                write (*, *) 'Free energy with third order anharmonic corrections (eV/atom):'
+                write (*, *) 'Calculated as <U - U_second - U_polar - U_third> + F_phonon + F_3'
+                write (*, opf) 'F =', fe3_1
+                write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
+                write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
+                write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
+                write (*, opf) 'Third order cumulant =', cumulant(3, 4)*lo_Hartree_to_eV
+            end if
         end if
     end if
 
