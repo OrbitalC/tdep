@@ -242,7 +242,7 @@ getenergy: block
                 write (*, opf) 'Third order cumulant =', cumulant(3, 5)*lo_Hartree_to_eV
             end if
         else
-            if (opts%thirdorder) then
+            if (opts%thirdorder .or. opts%fourthorder) then
                 fe3_1 = (cumulant(1, 3) + f_ph + ah3)*lo_Hartree_to_eV
                 fe3_2 = (cumulant(1, 3) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
                 write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
