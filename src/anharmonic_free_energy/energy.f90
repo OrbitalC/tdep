@@ -211,6 +211,12 @@ subroutine perturbative_anharmonic_free_energy(p, fct, fcf, qp, dr, temperature,
                             n2 = lo_planck(temperature, om2)
                             n3 = lo_planck(temperature, om3)
 
+                            ! This is the Cowley expression
+                            f1 = (n1 + 1)*(n2 + n3 + 1) + n2*n3
+                            f1 = f1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma))
+                            f2 = n1*n2 + n1*n3 - n2*n3 + n1
+                            f2 = 3*f2*real(1.0_r8/(-om1 + om2 + om3 + lo_imag*sigma))
+
                             ! This is the Wallace expression
                             ! f1=n1*n2+n1+onethird
                             ! f1=3*f1*real(1.0_r8/( om1+om2+om3+lo_imag*sigma ))
@@ -223,11 +229,13 @@ subroutine perturbative_anharmonic_free_energy(p, fct, fcf, qp, dr, temperature,
                             n1 = lo_kb_Hartree*temperature/om1
                             n2 = lo_kb_Hartree*temperature/om2
                             n3 = lo_kb_Hartree*temperature/om3
+
+                            ! This is the Cowley expression in the classical limit
+                            f1 = n1 * (n2 + n3) + n2 * n3
+                            f1 = f1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma))
+                            f2 = n1 * (n2 + n3) - n2 * n3
+                            f2 = 3*f2*real(1.0_r8/(-om1 + om2 + om3 + lo_imag*sigma))
                         end if
-                        f1 = (n1 + 1)*(n2 + n3 + 1) + n2*n3
-                        f1 = f1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma))
-                        f2 = n1*n2 + n1*n3 - n2*n3 + n1
-                        f2 = 3*f2*real(1.0_r8/(-om1 + om2 + om3 + lo_imag*sigma))
                         en3(b1, q1) = en3(b1, q1) + ((f1 + f2)*psisq)*prefactor
                     end do
                 end do
