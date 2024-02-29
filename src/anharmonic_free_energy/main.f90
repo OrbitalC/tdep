@@ -243,8 +243,8 @@ getenergy: block
             end if
         else
             if (opts%thirdorder .or. opts%fourthorder) then
-                fe3_1 = (cumulant(1, 3) + f_ph + ah3)*lo_Hartree_to_eV
-                fe3_2 = (cumulant(1, 3) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                fe3_1 = (cumulant(1, 3) + f_ph - ah3)*lo_Hartree_to_eV
+                fe3_2 = (cumulant(1, 3) + f_ph - ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
                 write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
                 write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
                 write (*, *) ''
