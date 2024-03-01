@@ -296,9 +296,11 @@ subroutine perturbative_anharmonic_free_energy(p, fct, fcf, qp, dr, temperature,
                     if (quantum) then
                         n1 = lo_planck(temperature, om1)
                         n2 = lo_planck(temperature, om2)
+                        f1 = (2 * n1 + 1)*(2*n2 + 1)
                     else
                         n1 = lo_kb_Hartree*temperature/om1
                         n2 = lo_kb_Hartree*temperature/om2
+                        f1 = n1 * n2
                     end if
                     ! Now to get
                     evp1 = 0.0_r8
@@ -309,9 +311,8 @@ subroutine perturbative_anharmonic_free_energy(p, fct, fcf, qp, dr, temperature,
                     call zgeru(dr%n_mode**2, dr%n_mode**2, (1.0_r8, 0.0_r8), evp2, 1, evp1, 1, evp3, dr%n_mode**2)
                     evp3 = conjg(evp3)
                     psisq = real(dot_product(evp3, ptf), r8)
-                    f1 = (2*n1 + 1)*(2*n2 + 1)*psisq*prefactor
 
-                    en4(b1, q1) = en4(b1, q1) + f1
+                    en4(b1, q1) = en4(b1, q1) + f1*psisq*prefactor
                 end do
                 end do
             end do
