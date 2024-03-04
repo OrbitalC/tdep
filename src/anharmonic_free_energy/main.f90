@@ -128,8 +128,10 @@ epotthings: block
         ediff(i, 1) = sim%stat%potential_energy(i)
         ediff(i, 2) = sim%stat%potential_energy(i) - e2
         ediff(i, 3) = sim%stat%potential_energy(i) - e2 - ep
-        ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3
-        ediff(i, 5) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
+        ! ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3
+        ! ediff(i, 5) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
+        ediff(i, 4) = e3
+        ediff(i, 5) = e4
     end do
     call mw%allreduce('sum', ediff)
 
@@ -210,7 +212,6 @@ getenergy: block
         write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
         write (*, opf) 'Second order cumulant =', cumulant(2, 3)*lo_Hartree_to_eV
         write (*, opf) 'Third order cumulant =', cumulant(3, 3)*lo_Hartree_to_eV
-
         if (opts%stochastic) then
             if (opts%thirdorder .or. opts%fourthorder) then
                 fe3_1 = (cumulant(1, 4) + f_ph + ah3)*lo_Hartree_to_eV
@@ -244,7 +245,8 @@ getenergy: block
         else
             if (opts%thirdorder .or. opts%fourthorder) then
                 fe3_1 = (cumulant(1, 3) + f_ph - ah3)*lo_Hartree_to_eV
-                fe3_2 = (cumulant(1, 3) + f_ph - ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                ! fe3_2 = (cumulant(1, 3) + f_ph - ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                fe3_2 = (cumulant(1, 3) + f_ph + pref*cumulant(2, 4))*lo_Hartree_to_eV
                 write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
                 write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
                 write (*, *) ''
@@ -255,6 +257,21 @@ getenergy: block
                 write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
                 write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
                 write (*, opf) 'Third order cumulant =', cumulant(3, 4)*lo_Hartree_to_eV
+            end if
+            if (opts%thirdorder .or. opts%fourthorder) then
+                fe3_1 = (cumulant(1, 3) + f_ph - ah3)*lo_Hartree_to_eV
+                ! fe3_2 = (cumulant(1, 3) + f_ph - ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
+                fe3_2 = (cumulant(1, 3) + f_ph + pref*cumulant(2, 4) + pref*cumulant(2, 5))*lo_Hartree_to_eV
+                write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
+                write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
+                write (*, *) ''
+                write (*, *) 'Free energy with third order anharmonic corrections (eV/atom):'
+                write (*, *) 'Calculated as <U - U_second - U_polar - U_third> + F_phonon + F_3'
+                write (*, opf) 'F =', fe3_1
+                write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
+                write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
+                write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
+                write (*, opf) 'Third order cumulant =', cumulant(2, 5)*lo_Hartree_to_eV
             end if
         end if
     end if
