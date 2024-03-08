@@ -404,6 +404,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     !> talk a lot?
     integer, intent(in) :: verbosity
 
+    type(lo_phonon_dispersions_qpoint) :: op4
     real(r8), dimension(:), allocatable :: buf
     complex(r8), dimension(:, :), allocatable :: egv
 
@@ -413,7 +414,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     real(r8) :: sigma, omdiff, invf, s2, s3, s4, t0, t1
     real(r8) :: plf1, plf2, pref, n2, n3, n4
     real(r8) :: om1, om2, om3, om4
-    integer :: q2, b1, b2, b3, b4, ctr, i, ii, jj, ilo, ihi
+    integer :: q2, q3, b1, b2, b3, b4, ctr, i, ii, jj, ilo, ihi
 
     ! set the unit
     t0 = walltime()
@@ -430,25 +431,27 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     egv = 0.0_r8
 
     do q2 = 1, qp%n_full_point
-        pref = fourphonon_imag_prefactor*qp%ap(q2)%integration_weight
-        qv1 = qpoint%r*lo_twopi
-        qv2 = -qv1
-        qv3 = qp%ap(q2)%r*lo_twopi
-        qv4 = -qv3
+        do q3 = 1, qp%n_full_point
         do b1 = 1, dr%n_mode
             ctr = ctr + 1
             if (mod(ctr, mw%n) .ne. mw%r) cycle
 
             om1 = wp%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
+            pref = fourphonon_imag_prefactor*qp%ap(q2)%integration_weight*qp%ap(q3)%integration_weight
+            qv1 = qpoint%r
+            qv2 = qp%ap(q2)%r
+            qv3 = qp%ap(q2)%r
+            qv4 = -qv1 - qv2 - qv3
+            call op4%generate(fc, uc, mem, qvec=qv4)
             do b2 = 1, dr%n_mode
-                om2 = wp%omega(b2)
+                om2 = dr%aq(q2)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
                 do b3 = 1, dr%n_mode
-                    om3 = dr%aq(q2)%omega(b3)
+                    om3 = dr%aq(q3)%omega(b3)
                     if (om3 .lt. lo_freqtol) cycle
                     do b4 = b3, dr%n_mode
-                        om4 = dr%aq(q2)%omega(b4)
+                        om4 = op4%omega(b4)
                         if (om4 .lt. lo_freqtol) cycle
 
                         select case (se%integrationtype)
@@ -456,8 +459,8 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                             sigma = 1.0_r8*lo_frequency_THz_to_Hartree
                         case (2)
                             s2 = qp%adaptive_sigma(qp%ap(q2)%radius, wp%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
-                            s3 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
-                            s4 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
+                            s3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
+                            s4 = qp%adaptive_sigma(qp%ap(q2)%radius, op4%vel(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
                             sigma = sqrt(s2**2 + s3**2 + s4**2)
                         end select
 
@@ -511,25 +514,22 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                             omega = [om1, om2, om3, om4]
 
                             egv(:, 1) = wp%egv(:, b1)
-                            egv(:, 2) = conjg(wp%egv(:, b2))
-                            egv(:, 3) = dr%aq(q2)%egv(:, b3)
-                            egv(:, 4) = conjg(dr%aq(q2)%egv(:, b4))
+                            egv(:, 2) = dr%aq(q2)%egv(:, b2)
+                            egv(:, 3) = dr%aq(q3)%egv(:, b3)
+                            egv(:, 4) = op4%egv(:, b4)
 
-                            psisq = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
-                            if (b3 .eq. b4) then
-                                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
-                            else
-                                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + 2*buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
-                            end if
+                            psisq = fcf%scatteringamplitude(omega, egv, qv2*lo_twopi, qv3*lo_twopi, qv4*lo_twopi)
+                            se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
                         end if
                     end do ! b4
                 end do ! b3
             end do ! b2
         end do ! b1
         if (verbosity .gt. 0) then
-            if (lo_trueNtimes(ctr, 127, qp%n_full_point*dr%n_mode)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, &
-                                                                                        qp%n_full_point*dr%n_mode)
+            if (lo_trueNtimes(ctr, 127, qp%n_full_point*qp%n_full_point*dr%n_mode)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, &
+                                                                                        qp%n_full_point*qp%n_full_point*dr%n_mode)
         end if
+        end do
     end do
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
@@ -551,5 +551,6 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     end do
     call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point*dr%n_mode, qp%n_full_point*dr%n_mode, walltime() - t0)
+    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point*qp%n_full_point*dr%n_mode, &
+        qp%n_full_point*qp%n_full_point*dr%n_mode, walltime() - t0)
 end subroutine
