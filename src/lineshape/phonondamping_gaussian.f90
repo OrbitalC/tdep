@@ -430,7 +430,6 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     buf = 0.0_r8
     egv=0.0_r8
 
-
     do q2=1, qp%n_full_point
         pref = fourphonon_imag_prefactor * qp%ap(q2)%integration_weight
         qv1 = qpoint%r * lo_twopi
@@ -440,24 +439,25 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
         do b1 = 1, dr%n_mode
         ctr = ctr + 1
         if (mod(ctr, mw%n) .ne. mw%r) cycle
+
+        om1 = wp%omega(b1)
+        if (om1 .lt. lo_freqtol) cycle
         do b2 = 1, dr%n_mode
+        om2 = wp%omega(b2)
+        if (om2 .lt. lo_freqtol) cycle
         do b3 = 1, dr%n_mode
-        do b4 = 1, dr%n_mode
-            om1 = wp%omega(b1)
-            om2 = wp%omega(b2)
-            om3 = dr%aq(q2)%omega(b3)
-            om4 = dr%aq(q2)%omega(b4)
-            if (om1 .lt. lo_freqtol) cycle
-            if (om2 .lt. lo_freqtol) cycle
-            if (om3 .lt. lo_freqtol) cycle
-            if (om4 .lt. lo_freqtol) cycle
+        om3 = dr%aq(q2)%omega(b3)
+        if (om3 .lt. lo_freqtol) cycle
+        do b4 = b3, dr%n_mode
+        om4 = dr%aq(q2)%omega(b4)
+        if (om4 .lt. lo_freqtol) cycle
 
             select case (se%integrationtype)
             case (1)
                 sigma = 1.0_r8*lo_frequency_THz_to_Hartree
             case (2)
                 !s2 = qp%adaptive_sigma(qpoint%radius, qpoint%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
-                s3 = qp%adaptive_sigma(qp%ap(q2)%radius, wp%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
+                s2 = qp%adaptive_sigma(qp%ap(q2)%radius, wp%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
                 s3 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
                 s4 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
                 sigma = sqrt(s2**2 + s3**2 + s4**2)
@@ -479,7 +479,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
+                    buf(i) = buf(i) + 2 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
                 omdiff = -om2 - om3 - om4
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
@@ -487,7 +487,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) - (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
+                    buf(i) = buf(i) - 2 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
 
                 plf1 = n2 * (n3 + 1) * (n4 + 1)
@@ -498,7 +498,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) - 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
+                    buf(i) = buf(i) - 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
                 omdiff = -om2 + om3 + om4
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
@@ -506,7 +506,27 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + 3 * (plf1 - plf2) * (lo_gauss(se%energy_axis(i), omdiff, sigma))
+                    buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
+                end do
+
+                ! the same but reversing n2 and n3 -> more processes not included otherwise
+                plf1 = (n2 + 1) * n3 * (n4 + 1)
+                plf2 = n2 * (n3 + 1) * n4
+                omdiff = -om2 + om3 - om4
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) - 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
+                end do
+                omdiff = om2 - om3 + om4
+                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
+                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
+                ilo = min(ilo, ii)
+                ihi = max(ihi, jj)
+                do i = ii, jj
+                    buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
 
             if (ilo .lt. ihi) then
@@ -521,7 +541,11 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 egv(:,4)=conjg(dr%aq(q2)%egv(:,b4))
 
                 psisq = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
-                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
+                if (b3 .eq. b4) then
+                    se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
+                else
+                    se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + 2 * buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
+                end if
             end if
         end do
         end do
