@@ -432,15 +432,14 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
 
 
     do q2=1, qp%n_full_point
-        ctr = ctr + 1
-        if (mod(ctr, mw%n) .ne. mw%r) cycle
-
         pref = fourphonon_imag_prefactor * qp%ap(q2)%integration_weight
         qv1 = qpoint%r * lo_twopi
         qv2 = -qv1
         qv3 = qp%ap(q2)%r * lo_twopi
         qv4 = -qv3
         do b1 = 1, dr%n_mode
+        ctr = ctr + 1
+        if (mod(ctr, mw%n) .ne. mw%r) cycle
         do b2 = 1, dr%n_mode
         do b3 = 1, dr%n_mode
         do b4 = 1, dr%n_mode
@@ -529,7 +528,8 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
         end do
         end do
         if (verbosity .gt. 0) then
-            if (lo_trueNtimes(ctr, 127, qp%n_full_point)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, qp%n_full_point)
+            if (lo_trueNtimes(ctr, 127, qp%n_full_point*dr%n_mode)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, &
+            qp%n_full_point*dr%n_mode)
         end if
     end do
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -552,5 +552,5 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     end do
     call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point,qp%n_full_point, walltime() - t0)
+    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point*dr%n_mode,qp%n_full_point*dr%n_mode, walltime() - t0)
 end subroutine
