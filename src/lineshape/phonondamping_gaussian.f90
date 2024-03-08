@@ -421,6 +421,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
 
     invf = se%n_energy/se%energy_axis(se%n_energy)
 
+    if (verbosity .gt. 0) call lo_progressbar_init()
     omega = 0.0_r8
     ctr = 0
     se%im_4ph = 0.0_r8
@@ -521,7 +522,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 egv(:,4)=conjg(dr%aq(q2)%egv(:,b4))
 
                 psisq = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
-                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*psisq*pref
+                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
             end if
         end do
         end do
@@ -551,6 +552,5 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     end do
     call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', dr%n_mode*qp%n_full_point,&
-    dr%n_mode*qp%n_full_point, walltime() - t0)
+    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point,qp%n_full_point, walltime() - t0)
 end subroutine
