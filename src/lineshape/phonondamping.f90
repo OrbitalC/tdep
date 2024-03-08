@@ -67,7 +67,7 @@ type lo_phonon_selfenergy
     !> scaling factor to get proper normalization
     real(r8), dimension(:), allocatable :: scalingfactor
     !> integrated squared spectral function to get lifetime
-    real(r8), dimension (:), allocatable :: tau
+    real(r8), dimension(:), allocatable :: tau
 contains
     procedure :: generate
     procedure :: generate_interp

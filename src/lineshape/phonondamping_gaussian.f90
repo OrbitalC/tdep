@@ -373,7 +373,6 @@ subroutine threephonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, tempera
     if (verbosity .gt. 0) call lo_progressbar(' ... threephonon imaginary selfenergy', dr%n_mode*qp%n_full_point, dr%n_mode*qp%n_full_point, walltime() - t0)
 end subroutine
 
-
 !> fourphonon self energy gaussian
 subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpoint, qpoint, uc, closedgrid, temperature, mw, mem, verbosity)
     !> harmonic properties at this q-point
@@ -426,114 +425,110 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     ctr = 0
     se%im_4ph = 0.0_r8
     call mem%allocate(buf, se%n_energy, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(egv,[dr%n_mode,4],persistent=.false.,scalable=.false.,file=__FILE__,line=__LINE__)
+    call mem%allocate(egv, [dr%n_mode, 4], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     buf = 0.0_r8
-    egv=0.0_r8
+    egv = 0.0_r8
 
-    do q2=1, qp%n_full_point
-        pref = fourphonon_imag_prefactor * qp%ap(q2)%integration_weight
-        qv1 = qpoint%r * lo_twopi
+    do q2 = 1, qp%n_full_point
+        pref = fourphonon_imag_prefactor*qp%ap(q2)%integration_weight
+        qv1 = qpoint%r*lo_twopi
         qv2 = -qv1
-        qv3 = qp%ap(q2)%r * lo_twopi
+        qv3 = qp%ap(q2)%r*lo_twopi
         qv4 = -qv3
         do b1 = 1, dr%n_mode
-        ctr = ctr + 1
-        if (mod(ctr, mw%n) .ne. mw%r) cycle
+            ctr = ctr + 1
+            if (mod(ctr, mw%n) .ne. mw%r) cycle
 
-        om1 = wp%omega(b1)
-        if (om1 .lt. lo_freqtol) cycle
-        do b2 = 1, dr%n_mode
-        om2 = wp%omega(b2)
-        if (om2 .lt. lo_freqtol) cycle
-        do b3 = 1, dr%n_mode
-        om3 = dr%aq(q2)%omega(b3)
-        if (om3 .lt. lo_freqtol) cycle
-        do b4 = b3, dr%n_mode
-        om4 = dr%aq(q2)%omega(b4)
-        if (om4 .lt. lo_freqtol) cycle
+            om1 = wp%omega(b1)
+            if (om1 .lt. lo_freqtol) cycle
+            do b2 = 1, dr%n_mode
+                om2 = wp%omega(b2)
+                if (om2 .lt. lo_freqtol) cycle
+                do b3 = 1, dr%n_mode
+                    om3 = dr%aq(q2)%omega(b3)
+                    if (om3 .lt. lo_freqtol) cycle
+                    do b4 = b3, dr%n_mode
+                        om4 = dr%aq(q2)%omega(b4)
+                        if (om4 .lt. lo_freqtol) cycle
 
-            select case (se%integrationtype)
-            case (1)
-                sigma = 1.0_r8*lo_frequency_THz_to_Hartree
-            case (2)
-                !s2 = qp%adaptive_sigma(qpoint%radius, qpoint%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
-                s2 = qp%adaptive_sigma(qp%ap(q2)%radius, wp%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
-                s3 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
-                s4 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
-                sigma = sqrt(s2**2 + s3**2 + s4**2)
-            end select
+                        select case (se%integrationtype)
+                        case (1)
+                            sigma = 1.0_r8*lo_frequency_THz_to_Hartree
+                        case (2)
+                            s2 = qp%adaptive_sigma(qp%ap(q2)%radius, wp%vel(:, b2), dr%default_smearing(b2), se%smearing_prefactor)
+                            s3 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b3), dr%default_smearing(b3), se%smearing_prefactor)
+                            s4 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b4), dr%default_smearing(b4), se%smearing_prefactor)
+                            sigma = sqrt(s2**2 + s3**2 + s4**2)
+                        end select
 
-            n2 = lo_planck(temperature, om2)
-            n3 = lo_planck(temperature, om3)
-            n4 = lo_planck(temperature, om4)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+                        n4 = lo_planck(temperature, om4)
 
-            ilo = lo_hugeint
-            ihi = -lo_hugeint
-            buf = 0.0_r8
+                        ilo = lo_hugeint
+                        ihi = -lo_hugeint
+                        buf = 0.0_r8
 
-                plf1 = (n2 + 1) * (n3 + 1) * (n4 + 1)
-                plf2 = n2 * n3 * n4
-                omdiff = om2 +  om3 + om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
-                omdiff = -om2 - om3 - om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) - (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
+                        plf1 = (n2 + 1)*(n3 + 1)*(n4 + 1)
+                        plf2 = n2*n3*n4
+                        omdiff = om2 + om3 + om4
+                        ii = max(floor((omdiff - 4*sigma)*invf), 1)
+                        jj = min(ceiling((omdiff + 4*sigma)*invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) + (plf1 - plf2)*lo_gauss(se%energy_axis(i), omdiff, sigma)
+                        end do
+                        omdiff = -om2 - om3 - om4
+                        ii = max(floor((omdiff - 4*sigma)*invf), 1)
+                        jj = min(ceiling((omdiff + 4*sigma)*invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) - (plf1 - plf2)*lo_gauss(se%energy_axis(i), omdiff, sigma)
+                        end do
 
-                plf1 = n2 * (n3 + 1) * (n4 + 1)
-                plf2 = (n2 + 1) * n3 * n4
-                omdiff = om2 - om3 - om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) - 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
-                omdiff = -om2 + om3 + om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
+                        plf1 = n2*(n3 + 1)*(n4 + 1)
+                        plf2 = (n2 + 1)*n3*n4
+                        omdiff = om2 - om3 - om4
+                        ii = max(floor((omdiff - 4*sigma)*invf), 1)
+                        jj = min(ceiling((omdiff + 4*sigma)*invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) - 3*(plf1 - plf2)*lo_gauss(se%energy_axis(i), omdiff, sigma)
+                        end do
+                        omdiff = -om2 + om3 + om4
+                        ii = max(floor((omdiff - 4*sigma)*invf), 1)
+                        jj = min(ceiling((omdiff + 4*sigma)*invf), se%n_energy)
+                        ilo = min(ilo, ii)
+                        ihi = max(ihi, jj)
+                        do i = ii, jj
+                            buf(i) = buf(i) + 3*(plf1 - plf2)*lo_gauss(se%energy_axis(i), omdiff, sigma)
+                        end do
 
-            if (ilo .lt. ihi) then
-                omega(1) = om1
-                omega(2) = om2
-                omega(3) = om3
-                omega(4) = om4
+                        if (ilo .lt. ihi) then
+                            omega = [om1, om2, om3, om4]
 
-                egv(:,1)=wp%egv(:,b1)
-                egv(:,2)=conjg(wp%egv(:,b2))
-                egv(:,3)=dr%aq(q2)%egv(:,b3)
-                egv(:,4)=conjg(dr%aq(q2)%egv(:,b4))
+                            egv(:, 1) = wp%egv(:, b1)
+                            egv(:, 2) = conjg(wp%egv(:, b2))
+                            egv(:, 3) = dr%aq(q2)%egv(:, b3)
+                            egv(:, 4) = conjg(dr%aq(q2)%egv(:, b4))
 
-                psisq = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
-                if (b3 .eq. b4) then
-                    se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
-                else
-                    se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + 2 * buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
-                end if
-            end if
-        end do
-        end do
-        end do
-        end do
+                            psisq = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
+                            if (b3 .eq. b4) then
+                                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
+                            else
+                                se%im_4ph(ilo:ihi, b1) = se%im_4ph(ilo:ihi, b1) + 2*buf(ilo:ihi)*abs(psisq*conjg(psisq))*pref
+                            end if
+                        end if
+                    end do ! b4
+                end do ! b3
+            end do ! b2
+        end do ! b1
         if (verbosity .gt. 0) then
             if (lo_trueNtimes(ctr, 127, qp%n_full_point*dr%n_mode)) call lo_progressbar(' ... fourphonon imaginary selfenergy', ctr, &
-            qp%n_full_point*dr%n_mode)
+                                                                                        qp%n_full_point*dr%n_mode)
         end if
     end do
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -548,7 +543,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
             b2 = wp%degenmode(i, b1)
             buf = buf + se%im_4ph(:, b2)
         end do
-        buf = buf / real(wp%degeneracy(b1), r8)
+        buf = buf/real(wp%degeneracy(b1), r8)
         do i = 1, wp%degeneracy(b1)
             b2 = wp%degenmode(i, b1)
             se%im_4ph(:, b2) = buf
@@ -556,5 +551,5 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
     end do
     call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point*dr%n_mode,qp%n_full_point*dr%n_mode, walltime() - t0)
+    if (verbosity .gt. 0) call lo_progressbar(' ... fourphonon imaginary selfenergy', qp%n_full_point*dr%n_mode, qp%n_full_point*dr%n_mode, walltime() - t0)
 end subroutine

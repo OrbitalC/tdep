@@ -183,7 +183,7 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
             case default
                 call lo_stop_gracefully(['Unknown integration type'], lo_exitcode_param, __FILE__, __LINE__, mw%comm)
             end select
-        call tmr%tock('four-phonon integrals')
+            call tmr%tock('four-phonon integrals')
         end block fourthorder_imag
     end if
 
@@ -254,7 +254,6 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
         end block kktransform
         call tmr%tock('Kramers-Kronig transformation')
     end if
-
 
     ! Kramers-Kronig-transform the imaginary part to get the real for the four phonon
     if (se%fourthorder_scattering) then
@@ -340,7 +339,7 @@ subroutine generate(se, qpoint, qdir, wp, uc, fc, fct, fcf, ise, isf, qp, dr, op
         se%xmid = 0.0_r8
         se%xlo = 0.0_r8
         se%xhi = 0.0_r8
-        se%tau= 0.0_r8
+        se%tau = 0.0_r8
         do imode = 1, dr%n_mode
             if (wp%omega(imode) .lt. lo_freqtol) cycle
             if (mod(imode, mw%n) .ne. mw%r) cycle
