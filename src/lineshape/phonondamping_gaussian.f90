@@ -479,7 +479,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) + 2 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
+                    buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
                 omdiff = -om2 - om3 - om4
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
@@ -487,7 +487,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                 ilo = min(ilo, ii)
                 ihi = max(ihi, jj)
                 do i = ii, jj
-                    buf(i) = buf(i) - 2 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
+                    buf(i) = buf(i) - (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
 
                 plf1 = n2 * (n3 + 1) * (n4 + 1)
@@ -501,26 +501,6 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
                     buf(i) = buf(i) - 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
                 end do
                 omdiff = -om2 + om3 + om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
-
-                ! the same but reversing n2 and n3 -> more processes not included otherwise
-                plf1 = (n2 + 1) * n3 * (n4 + 1)
-                plf2 = n2 * (n3 + 1) * n4
-                omdiff = -om2 + om3 - om4
-                ii = max(floor((omdiff - 4 * sigma)*invf), 1)
-                jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
-                ilo = min(ilo, ii)
-                ihi = max(ihi, jj)
-                do i = ii, jj
-                    buf(i) = buf(i) - 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), omdiff, sigma)
-                end do
-                omdiff = om2 - om3 + om4
                 ii = max(floor((omdiff - 4 * sigma)*invf), 1)
                 jj = min(ceiling((omdiff + 4 * sigma)*invf), se%n_energy)
                 ilo = min(ilo, ii)
