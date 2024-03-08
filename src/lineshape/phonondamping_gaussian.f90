@@ -512,9 +512,9 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, fc, fcf, qp, dr, gpo
 
             if (ilo .lt. ihi) then
                 omega(1) = om1
-                omega(2) = om1
-                omega(3) = om2
-                omega(4) = om2
+                omega(2) = om2
+                omega(3) = om3
+                omega(4) = om4
 
                 egv(:,1)=wp%egv(:,b1)
                 egv(:,2)=conjg(wp%egv(:,b2))
