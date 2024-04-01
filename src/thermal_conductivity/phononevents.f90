@@ -254,10 +254,10 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
 
             if (sc%fourphonon) then
                 select case (sc%integrationtype)
-                case(1:2) ! gaussian
+                case (1:2) ! gaussian
                     call fourphonon_gaussian_oneqp(qp, dr, sc%q4(lqp), gi1, sc%gaussian_threshold, &
                                                    sc%smearing_prefactor, sc%integrationtype, mem)
-                case(3)
+                case (3)
                     call lo_stop_gracefully(['This routine only works with gaussian integration'], lo_exitcode_param, __FILE__, __LINE__)
                 end select
             end if
@@ -520,7 +520,6 @@ contains
         l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
     end function
 end function
-
 
 !> returns the index on the grid that gives q4=-q3-q2-q1
 pure function fft_fourth_grid_index(i1, i2, i3, dims) result(i4)

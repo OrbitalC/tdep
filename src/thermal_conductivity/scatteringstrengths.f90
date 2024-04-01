@@ -75,7 +75,7 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw, fcf)
                     egv(:, 2) = dr%aq(gi2)%egv(:, b2)
                     egv(:, 3) = dr%aq(gi3)%egv(:, b3)
                     ! and the scattering amplitude
-                    c0 = fct%scatteringamplitude(omega(:3), egv(:,:3), q2, q3)
+                    c0 = fct%scatteringamplitude(omega(:3), egv(:, :3), q2, q3)
                     !sc%q(i)%plus(b1,b2,b3)%e(j)%psisquare=1E-10_r8 !abs(conjg(c0)*c0)
                     sc%q(i)%plus(b1, b2, b3)%e(j)%psisquare = abs(conjg(c0)*c0)
                     !write(*,*) abs(conjg(c0)*c0)
@@ -103,7 +103,7 @@ subroutine calculate_scattering_amplitudes(uc, qp, sc, dr, fct, mw, fcf)
                     egv(:, 2) = dr%aq(gi2)%egv(:, b2)
                     egv(:, 3) = dr%aq(gi3)%egv(:, b3)
                     ! and the scattering amplitude
-                    c0 = fct%scatteringamplitude(omega(:3), egv(:,:3), q2, q3)
+                    c0 = fct%scatteringamplitude(omega(:3), egv(:, :3), q2, q3)
                     !sc%q(i)%minus(b1,b2,b3)%e(j)%psisquare=1E-10_r8 ! abs(conjg(c0)*c0)
                     sc%q(i)%minus(b1, b2, b3)%e(j)%psisquare = abs(conjg(c0)*c0)
                 end if

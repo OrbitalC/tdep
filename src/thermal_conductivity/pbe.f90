@@ -281,7 +281,7 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                         n3 = lo_planck(temperature, om3)
                         n4 = lo_planck(temperature, om4)
 
-                        f0 = n1*(n2+1)*(n3 + 1)*(n4 + 1)*fourphonon_prefactor
+                        f0 = n1*(n2 + 1)*(n3 + 1)*(n4 + 1)*fourphonon_prefactor
                         f0 = f0*sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%psisquare*sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%deltafunction
                         ! Store intermediate scattering strength
                         sc%q4(lqp)%minusminus(b1, b2, b3, b4)%e(j)%W = f0
@@ -411,9 +411,9 @@ subroutine calculate_qs(qp, sc, dr, temperature, mw, mem)
                                qs_boundary
             if (sc%fourphonon) then
                 dr%iq(iq)%qs(b1) = dr%iq(iq)%qs(b1) + &
-                                   dr%iq(iq)%p_plusplus(b1) * 0.5_r8 + &
-                                   dr%iq(iq)%p_plusminus(b1) * 0.5_r8 + &
-                                   dr%iq(iq)%p_minusminus(b1) / 6.0_r8
+                                   dr%iq(iq)%p_plusplus(b1)*0.5_r8 + &
+                                   dr%iq(iq)%p_plusminus(b1)*0.5_r8 + &
+                                   dr%iq(iq)%p_minusminus(b1)/6.0_r8
             end if
             dr%iq(iq)%linewidth(b1) = 0.5_r8*dr%iq(iq)%qs(b1)/(n1*(n1 + 1.0_r8))
 
@@ -559,7 +559,7 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
                                     Fp = Fbb(:, b2, ii)
                                     Fpp = Fbb(:, b3, jj)
                                     Fppp = Fbb(:, b4, kk)
-                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs * 0.5_r8
+                                    v0 = v0 + (Fppp + Fpp + Fp)*W*iQs*0.5_r8
                                 end do
                                 do j = 1, sc%q4(lqp)%plusminus(b1, b2, b3, b4)%n
                                     ! Scatterstrength
@@ -570,7 +570,7 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
                                     Fp = Fbb(:, b2, ii)
                                     Fpp = Fbb(:, b3, jj)
                                     Fppp = Fbb(:, b4, kk)
-                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs * 0.5_r8
+                                    v0 = v0 + (Fppp + Fpp + Fp)*W*iQs*0.5_r8
                                 end do
                                 do j = 1, sc%q4(lqp)%minusminus(b1, b2, b3, b4)%n
                                     ! Scatterstrength
@@ -581,7 +581,7 @@ subroutine get_selfconsistent_solution(sc, dr, qp, uc, temperature, niter, tol, 
                                     Fp = Fbb(:, b2, ii)
                                     Fpp = Fbb(:, b3, jj)
                                     Fppp = Fbb(:, b4, kk)
-                                    v0 = v0 + (Fppp + Fpp + Fp) * W * iQs / 6.0_r8
+                                    v0 = v0 + (Fppp + Fpp + Fp)*W*iQs/6.0_r8
                                 end do
                             end do
                         end if

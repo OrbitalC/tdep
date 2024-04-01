@@ -360,53 +360,53 @@ subroutine fourphonon_gaussian_oneqp(qp, dr, scq, gi1, thres, smearing_prefactor
 
     ! Do the actual counting
     do i = 1, qp%n_full_point
-       do j = 1, qp%n_full_point
-           ! get q''', this is q1+q2+q3+q4=G
-           gi2 = i
-           gi3 = j
-           gi4 = fft_fourth_grid_index(gi1, gi2, gi3, dims)
+        do j = 1, qp%n_full_point
+            ! get q''', this is q1+q2+q3+q4=G
+            gi2 = i
+            gi3 = j
+            gi4 = fft_fourth_grid_index(gi1, gi2, gi3, dims)
 
-           omr2 = dr%aq(gi2)%omega
-           omr3 = dr%aq(gi3)%omega
-           omr4 = dr%aq(gi4)%omega
-           vel2 = dr%aq(gi2)%vel
-           vel3 = dr%aq(gi3)%vel
-           vel4 = dr%aq(gi4)%vel
-           do b1 = 1, dr%n_mode
-           do b2 = 1, dr%n_mode
-           do b3 = 1, dr%n_mode
-           do b4 = 1, dr%n_mode
-              om1 = omr1(b1)
-              om2 = omr2(b2)
-              om3 = omr3(b3)
-              om4 = omr4(b4)
-              select case (integrationtype)
-              case (1)
-                  sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing_prefactor
-              case (2)
-                  sig1 = qp%adaptive_sigma(qp%ap(gi1)%radius, vel1(:, b1), dr%default_smearing(b1), smearing_prefactor)
-                  sig2 = qp%adaptive_sigma(qp%ap(gi2)%radius, vel2(:, b2), dr%default_smearing(b2), smearing_prefactor)
-                  sig3 = qp%adaptive_sigma(qp%ap(gi3)%radius, vel3(:, b3), dr%default_smearing(b3), smearing_prefactor)
-                  sig4 = qp%adaptive_sigma(qp%ap(gi4)%radius, vel4(:, b4), dr%default_smearing(b4), smearing_prefactor)
-                  sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
-              end select
+            omr2 = dr%aq(gi2)%omega
+            omr3 = dr%aq(gi3)%omega
+            omr4 = dr%aq(gi4)%omega
+            vel2 = dr%aq(gi2)%vel
+            vel3 = dr%aq(gi3)%vel
+            vel4 = dr%aq(gi4)%vel
+            do b1 = 1, dr%n_mode
+            do b2 = 1, dr%n_mode
+            do b3 = 1, dr%n_mode
+            do b4 = 1, dr%n_mode
+                om1 = omr1(b1)
+                om2 = omr2(b2)
+                om3 = omr3(b3)
+                om4 = omr4(b4)
+                select case (integrationtype)
+                case (1)
+                    sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing_prefactor
+                case (2)
+                    sig1 = qp%adaptive_sigma(qp%ap(gi1)%radius, vel1(:, b1), dr%default_smearing(b1), smearing_prefactor)
+                    sig2 = qp%adaptive_sigma(qp%ap(gi2)%radius, vel2(:, b2), dr%default_smearing(b2), smearing_prefactor)
+                    sig3 = qp%adaptive_sigma(qp%ap(gi3)%radius, vel3(:, b3), dr%default_smearing(b3), smearing_prefactor)
+                    sig4 = qp%adaptive_sigma(qp%ap(gi4)%radius, vel4(:, b4), dr%default_smearing(b4), smearing_prefactor)
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+                end select
 
-              if (om1 .gt. omthres .and. om2 .gt. omthres .and. om3 .gt. omthres .and. om4 .gt. omthres) then
-                  if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
-                     bc1(b1, b2, b3, b4) = bc1(b1, b2, b3, b4) + 1
-                  end if
-                  if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
-                     bc2(b1, b2, b3, b4) = bc2(b1, b2, b3, b4) + 1
-                  end if
-                  if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
-                     bc3(b1, b2, b3, b4) = bc3(b1, b2, b3, b4) + 1
-                  end if
-              end if
-           end do ! b1
-           end do ! b2
-           end do ! b3
-           end do ! b4
-       end do ! qpt i
+                if (om1 .gt. omthres .and. om2 .gt. omthres .and. om3 .gt. omthres .and. om4 .gt. omthres) then
+                    if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
+                        bc1(b1, b2, b3, b4) = bc1(b1, b2, b3, b4) + 1
+                    end if
+                    if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
+                        bc2(b1, b2, b3, b4) = bc2(b1, b2, b3, b4) + 1
+                    end if
+                    if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
+                        bc3(b1, b2, b3, b4) = bc3(b1, b2, b3, b4) + 1
+                    end if
+                end if
+            end do ! b1
+            end do ! b2
+            end do ! b3
+            end do ! b4
+        end do ! qpt i
     end do ! qpt j
 
     ! And now, allocate storage
@@ -414,18 +414,18 @@ subroutine fourphonon_gaussian_oneqp(qp, dr, scq, gi1, thres, smearing_prefactor
     do b2 = 1, dr%n_mode
     do b3 = 1, dr%n_mode
     do b4 = 1, dr%n_mode
-       scq%plusplus(b1, b2, b3, b4)%n = bc1(b1, b2, b3, b4)
-       scq%plusminus(b1, b2, b3, b4)%n = bc2(b1, b2, b3, b4)
-       scq%minusminus(b1, b2, b3, b4)%n = bc3(b1, b2, b3, b4)
-       if (scq%plusplus(b1, b2, b3, b4)%n .gt. 0) then
-           allocate (scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4)))
-       end if
-       if (scq%plusminus(b1, b2, b3, b4)%n .gt. 0) then
-           allocate (scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4)))
-       end if
-       if (scq%minusminus(b1, b2, b3, b4)%n .gt. 0) then
-           allocate (scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4)))
-       end if
+        scq%plusplus(b1, b2, b3, b4)%n = bc1(b1, b2, b3, b4)
+        scq%plusminus(b1, b2, b3, b4)%n = bc2(b1, b2, b3, b4)
+        scq%minusminus(b1, b2, b3, b4)%n = bc3(b1, b2, b3, b4)
+        if (scq%plusplus(b1, b2, b3, b4)%n .gt. 0) then
+            allocate (scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4)))
+        end if
+        if (scq%plusminus(b1, b2, b3, b4)%n .gt. 0) then
+            allocate (scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4)))
+        end if
+        if (scq%minusminus(b1, b2, b3, b4)%n .gt. 0) then
+            allocate (scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4)))
+        end if
     end do ! b1
     end do ! b2
     end do ! b3
@@ -437,63 +437,63 @@ subroutine fourphonon_gaussian_oneqp(qp, dr, scq, gi1, thres, smearing_prefactor
     bc3 = 0 ! minus minus
     do i = 1, qp%n_full_point
         ! This is q1+q2+q3+q4=G
-       do j = 1, qp%n_full_point
-           ! get q''', this is q1+q2+q3=G
-           gi2 = i
-           gi3 = j
-           gi4 = fft_fourth_grid_index(gi1, gi2, gi3, dims)
+        do j = 1, qp%n_full_point
+            ! get q''', this is q1+q2+q3=G
+            gi2 = i
+            gi3 = j
+            gi4 = fft_fourth_grid_index(gi1, gi2, gi3, dims)
 
-           omr2 = dr%aq(gi2)%omega
-           omr3 = dr%aq(gi3)%omega
-           omr4 = dr%aq(gi4)%omega
-           vel2 = dr%aq(gi2)%vel
-           vel3 = dr%aq(gi3)%vel
-           vel4 = dr%aq(gi4)%vel
-           do b1 = 1, dr%n_mode
-           do b2 = 1, dr%n_mode
-           do b3 = 1, dr%n_mode
-           do b4 = 1, dr%n_mode
-              om1 = omr1(b1)
-              om2 = omr2(b2)
-              om3 = omr3(b3)
-              om4 = omr4(b4)
-              select case (integrationtype)
-              case (1)
-                  sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing_prefactor
-              case (2)
-                  sig1 = qp%adaptive_sigma(qp%ap(gi1)%radius, vel1(:, b1), dr%default_smearing(b1), smearing_prefactor)
-                  sig2 = qp%adaptive_sigma(qp%ap(gi2)%radius, vel2(:, b2), dr%default_smearing(b2), smearing_prefactor)
-                  sig3 = qp%adaptive_sigma(qp%ap(gi3)%radius, vel3(:, b3), dr%default_smearing(b3), smearing_prefactor)
-                  sig4 = qp%adaptive_sigma(qp%ap(gi4)%radius, vel4(:, b4), dr%default_smearing(b4), smearing_prefactor)
-                  sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
-              end select
+            omr2 = dr%aq(gi2)%omega
+            omr3 = dr%aq(gi3)%omega
+            omr4 = dr%aq(gi4)%omega
+            vel2 = dr%aq(gi2)%vel
+            vel3 = dr%aq(gi3)%vel
+            vel4 = dr%aq(gi4)%vel
+            do b1 = 1, dr%n_mode
+            do b2 = 1, dr%n_mode
+            do b3 = 1, dr%n_mode
+            do b4 = 1, dr%n_mode
+                om1 = omr1(b1)
+                om2 = omr2(b2)
+                om3 = omr3(b3)
+                om4 = omr4(b4)
+                select case (integrationtype)
+                case (1)
+                    sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing_prefactor
+                case (2)
+                    sig1 = qp%adaptive_sigma(qp%ap(gi1)%radius, vel1(:, b1), dr%default_smearing(b1), smearing_prefactor)
+                    sig2 = qp%adaptive_sigma(qp%ap(gi2)%radius, vel2(:, b2), dr%default_smearing(b2), smearing_prefactor)
+                    sig3 = qp%adaptive_sigma(qp%ap(gi3)%radius, vel3(:, b3), dr%default_smearing(b3), smearing_prefactor)
+                    sig4 = qp%adaptive_sigma(qp%ap(gi4)%radius, vel4(:, b4), dr%default_smearing(b4), smearing_prefactor)
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+                end select
 
-              if (om1 .gt. omthres .and. om2 .gt. omthres .and. om3 .gt. omthres .and. om4 .gt. omthres) then
-                  if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
-                      deltafunction = lo_gauss(om1, -om2 - om3 + om4, sigma)
-                      bc1(b1, b2, b3, b4) = bc1(b1, b2, b3, b4) + 1
-                      scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi2 = gi2
-                      scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi3 = gi3
-                      scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi4 = gi4
-                      scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
-                  end if
-                  if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
-                      bc2(b1, b2, b3, b4) = bc2(b1, b2, b3, b4) + 1
-                      deltafunction = lo_gauss(om1, -om2 + om3 + om4, sigma)
-                      scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi2 = gi2
-                      scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi3 = gi3
-                      scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi4 = gi4
-                      scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
-                  end if
-                  if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
-                      bc3(b1, b2, b3, b4) = bc3(b1, b2, b3, b4) + 1
-                      deltafunction = lo_gauss(om1, om2 + om3 + om4, sigma)
-                      scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi2 = gi2
-                      scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi3 = gi3
-                      scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi4 = gi4
-                      scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
-                  end if
-              end if
+                if (om1 .gt. omthres .and. om2 .gt. omthres .and. om3 .gt. omthres .and. om4 .gt. omthres) then
+                    if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
+                        deltafunction = lo_gauss(om1, -om2 - om3 + om4, sigma)
+                        bc1(b1, b2, b3, b4) = bc1(b1, b2, b3, b4) + 1
+                        scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi2 = gi2
+                        scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi3 = gi3
+                        scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%gi4 = gi4
+                        scq%plusplus(b1, b2, b3, b4)%e(bc1(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
+                    end if
+                    if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
+                        bc2(b1, b2, b3, b4) = bc2(b1, b2, b3, b4) + 1
+                        deltafunction = lo_gauss(om1, -om2 + om3 + om4, sigma)
+                        scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi2 = gi2
+                        scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi3 = gi3
+                        scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%gi4 = gi4
+                        scq%plusminus(b1, b2, b3, b4)%e(bc2(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
+                    end if
+                    if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
+                        bc3(b1, b2, b3, b4) = bc3(b1, b2, b3, b4) + 1
+                        deltafunction = lo_gauss(om1, om2 + om3 + om4, sigma)
+                        scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi2 = gi2
+                        scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi3 = gi3
+                        scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%gi4 = gi4
+                        scq%minusminus(b1, b2, b3, b4)%e(bc3(b1, b2, b3, b4))%deltafunction = deltafunction*qp%ap(i)%integration_weight*qp%ap(j)%integration_weight
+                    end if
+                end if
             end do ! b1
             end do ! b2
             end do ! b3
@@ -512,4 +512,4 @@ subroutine fourphonon_gaussian_oneqp(qp, dr, scq, gi1, thres, smearing_prefactor
     call mem%deallocate(vel2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(vel3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(vel4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    end subroutine
+end subroutine
