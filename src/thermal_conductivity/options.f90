@@ -14,6 +14,7 @@ type lo_opts
     real(flyt) :: trangemax         !< max temperature
     logical :: logtempaxis          !< logarithmically spaced temperature points
     real(flyt) :: sigma             !< scaling factor for adaptice gaussian
+    real(flyt) :: sigma4ph          !< scaling factor for adaptice gaussian
     real(flyt) :: thres             !< consider Gaussian 0 if x-mu is larger than this number times sigma.
     real(flyt) :: tau_boundary      !< add a constant as boundary scattering
     real(flyt) :: mfp_max           !< add a length as boundary scattering
@@ -76,6 +77,10 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--sigma', &
                  help='Global scaling factor for adaptive Gaussian smearing.', &
+                 required=.false., act='store', def='1.0', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--sigma_fourphonon', &
+                 help='Fourphonon scaling factor for adaptive Gaussian smearing.', &
                  required=.false., act='store', def='1.0', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--threshold', &
@@ -174,6 +179,7 @@ subroutine parse(opts)
     end if
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
     call cli%get(switch='--sigma', val=opts%sigma)
+    call cli%get(switch='--sigma_fourphonon', val=opts%sigma4ph)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt

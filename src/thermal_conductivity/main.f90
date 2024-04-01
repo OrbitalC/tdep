@@ -137,7 +137,7 @@ weights_elements: block
     real(r8) :: t0
     t0 = walltime()
     timer_count = walltime()
-    call lo_find_all_scattering_events(sc, qp, dr, uc, mw, mem, opts%sigma, opts%thres, opts%integrationtype, &
+    call lo_find_all_scattering_events(sc, qp, dr, uc, mw, mem, opts%sigma, opts%sigma4ph, opts%thres, opts%integrationtype, &
                                        opts%correctionlevel, opts%mfp_max, opts%isotopescattering, opts%fourthorder)
     call mpi_barrier(mw%comm, mw%error)
 

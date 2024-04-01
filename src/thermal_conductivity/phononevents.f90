@@ -99,6 +99,8 @@ type lo_threephononevents
     real(r8) :: gaussian_threshold = -lo_huge
     !> how to adjust the automatic smearing
     real(r8) :: smearing_prefactor
+    !> how to adjust the automatic smearing for four phonon
+    real(r8) :: smearing_prefactor4ph
     !> How to integrate
     integer :: integrationtype = -lo_hugeint
     !> should I include isotope scattering?
@@ -116,7 +118,7 @@ contains
 #include "phononevents_tetrahedron.f90"
 
 !> Count all scattering events, threephonon and isotope
-subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, integrationtype, &
+subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, sigma4ph, thres, integrationtype, &
                                          correctionlevel, mfpmax, isotopescattering, fourphonon)
     !> scattering events
     type(lo_threephononevents), intent(out) :: sc
@@ -132,6 +134,8 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
     type(lo_mem_helper), intent(inout) :: mem
     !> smearing parameter
     real(r8), intent(in) :: sigma
+    !> smearing parameter
+    real(r8), intent(in) :: sigma4ph
     !> threshold for gaussians
     real(r8), intent(in) :: thres
     !> integration type
@@ -160,6 +164,7 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
         ! Store some parameters
         sc%gaussian_threshold = thres
         sc%smearing_prefactor = sigma
+        sc%smearing_prefactor4ph = sigma4ph
         sc%integrationtype = integrationtype
         sc%isotopescattering = isotopescattering
         sc%fourphonon = fourphonon
@@ -173,6 +178,9 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
                 write (*, *) '... fixed gaussian smearing'
             case (2)
                 write (*, *) '... adaptive gaussian smearing, scalingfactor=', sc%smearing_prefactor
+                if (sc%fourphonon) then
+                    write (*, *) '... adaptive gaussian smearing for four phonon processes, scalingfactor=', sc%smearing_prefactor4ph
+                end if
             case (3)
                 write (*, *) '... tetrahedron integration'
             case default
@@ -256,7 +264,7 @@ subroutine lo_find_all_scattering_events(sc, qp, dr, p, mw, mem, sigma, thres, i
                 select case (sc%integrationtype)
                 case (1:2) ! gaussian
                     call fourphonon_gaussian_oneqp(qp, dr, sc%q4(lqp), gi1, sc%gaussian_threshold, &
-                                                   sc%smearing_prefactor, sc%integrationtype, mem)
+                                                   sc%smearing_prefactor4ph, sc%integrationtype, mem)
                 case (3)
                     call lo_stop_gracefully(['This routine only works with gaussian integration'], lo_exitcode_param, __FILE__, __LINE__)
                 end select
