@@ -524,42 +524,42 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
                     rnd = rng%rnd_real()
                     if (rnd .lt. ratio4ph) ismm = .true.
 
-                    if (abs(om1 + om2 - om3) &
-                        abs(om1 - om2 - om3 - om4) &
+                    if (abs(om1 + om2 + om3 - om4) &
+                        abs(om1 + om2 - om3 - om4) &
                         abs(om1 - om2 - om3 - om4) ) then
                         if (ispp .or. ispm .or. ismm) then
                             c0 = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
                         end if
                     end if
 
-                    if (abs(om1 + om2 + om3 + om4) .lt. thres*sigma) then
+                    if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
                             plf = n2 + n3 + n4
                             npp_sample(q1, b1) = npp_sample(q1, b1) + 1
-                            deltafunction = lo_gauss(om1, -om2 - om3 - om4)
+                            deltafunction = lo_gauss(om1, -om2 - om3 + om4, sigma)
                             scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
                                             qp%ap%(q3)%integration_weight*plf
                         end if
                     end if
 
-                    if (abs(om1 + om2 + om3 + om4) .lt. thres*sigma) then
+                    if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
                             plf = n2 + n3 + n4
                             npp_sample(q1, b1) = npp_sample(q1, b1) + 1
-                            deltafunction = lo_gauss(om1, -om2 - om3 - om4)
+                            deltafunction = lo_gauss(om1, -om2 + om3 + om4, sigma)
                             scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
                                             qp%ap%(q3)%integration_weight*plf
                         end if
                     end if
 
-                    if (abs(om1 + om2 + om3 + om4) .lt. thres*sigma) then
+                    if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
                             plf = n2 + n3 + n4
                             npp_sample(q1, b1) = npp_sample(q1, b1) + 1
-                            deltafunction = lo_gauss(om1, -om2 - om3 - om4)
+                            deltafunction = lo_gauss(om1, om2 + om3 + om4, sigma)
                             scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
                                             qp%ap%(q3)%integration_weight*plf
                         end if
@@ -618,5 +618,72 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     call mem%deallocate(scatmm, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
 end subroutine
+
+!> returns the index on the grid that gives q4=-q3-q2-q1
+pure function fft_fourth_grid_index(i1, i2, i3, dims) result(i4)
+    !> index to q1
+    integer, intent(in) :: i1
+    !> index to q2
+    integer, intent(in) :: i2
+    !> index to q3
+    integer, intent(in) :: i3
+    !> dimensions of the grid
+    integer, dimension(3), intent(in) :: dims
+    !> index to q4
+    integer :: i4
+
+    integer, dimension(3) :: gi1, gi2, gi3, gi4
+    integer :: l, k
+    ! Convert triplet to singlet
+    gi1 = singlet_to_triplet(i1, dims(2), dims(3))
+    gi2 = singlet_to_triplet(i2, dims(2), dims(3))
+    gi3 = singlet_to_triplet(i3, dims(2), dims(3))
+    do l = 1, 3
+        gi4(l) = 4 - gi1(l) - gi2(l) - gi3(l)
+    end do
+    do k = 1, 3
+    do l = 1, 3
+        if (gi4(l) .lt. 1) gi4(l) = gi4(l) + dims(l)
+        if (gi4(l) .gt. dims(l)) gi4(l) = gi4(l) - dims(l)
+    end do
+    end do
+
+    ! convert it back to a singlet
+    i4 = triplet_to_singlet(gi4, dims(2), dims(3))
+
+contains
+    !> convert a linear index to a triplet
+    pure function singlet_to_triplet(l, ny, nz) result(gi)
+        !> linear index
+        integer, intent(in) :: l
+        !> second dimension
+        integer, intent(in) :: ny
+        !> third dimension
+        integer, intent(in) :: nz
+        !> grid-index
+        integer, dimension(3) :: gi
+
+        integer :: i, j, k
+
+        k = mod(l, nz)
+        if (k .eq. 0) k = nz
+        j = mod((l - k)/nz, ny) + 1
+        i = (l - k - (j - 1)*nz)/(nz*ny) + 1
+        gi = [i, j, k]
+    end function
+    !> convert a triplet index to a singlet
+    pure function triplet_to_singlet(gi, ny, nz) result(l)
+        !> grid-index
+        integer, dimension(3), intent(in) :: gi
+        !> second dimension
+        integer, intent(in) :: ny
+        !> third dimension
+        integer, intent(in) :: nz
+        !> linear index
+        integer :: l
+
+        l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
+    end function
+end function
 
 end module
