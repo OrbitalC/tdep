@@ -414,11 +414,13 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     ! The number of scattering
     integer, dimension(:, :), allocatable :: npp_tot, npp_sample, npm_tot, npm_sample, nmm_tot, nmm_sample
     ! The scattering
-    real(r8), dimension(:, :), allocatable :: scatpp, scapm, scattmm
+    real(r8), dimension(:, :), allocatable :: scatpp, scatpm, scatmm
     ! Eigenvectors
     complex(r8), dimension(:, :), allocatable :: egv
     ! The frequencies
-    real(r8), dimension(3) :: omega, qvec
+    real(r8), dimension(4) :: omega
+    ! the qvector
+    real(r8), dimension(3) :: qvec
     ! The grid dimensions
     integer, dimension(3) :: dims
     ! Some buffers
@@ -449,7 +451,7 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     call mem%allocate(npm_sample, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(scatpm, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(nmm_tot, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(npp_sample, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(nmm_sample, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(scatmm, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     npp_tot = 0
     npp_sample = 0
@@ -524,44 +526,47 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
                     rnd = rng%rnd_real()
                     if (rnd .lt. ratio4ph) ismm = .true.
 
-                    if (abs(om1 + om2 + om3 - om4) &
-                        abs(om1 + om2 - om3 - om4) &
-                        abs(om1 - om2 - om3 - om4) ) then
+                    if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma .or. &
+                        abs(om1 + om2 - om3 - om4) .lt. thres*sigma .or. &
+                        abs(om1 - om2 - om3 - om4) .lt. thres*sigma ) then
                         if (ispp .or. ispm .or. ismm) then
                             c0 = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
+                            psisq = abs(c0*conjg(c0))
                         end if
+                    else
+                        cycle
                     end if
 
                     if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
-                            plf = n2 + n3 + n4
+                            plf = n2 * n3 * (n4 + 1)
                             npp_sample(q1, b1) = npp_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, -om2 - om3 + om4, sigma)
-                            scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                            qp%ap%(q3)%integration_weight*plf
+                            scatpp(q1, b1) = scatpp(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                                             qp%ap(q3)%integration_weight*plf
                         end if
                     end if
 
                     if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
-                            plf = n2 + n3 + n4
-                            npp_sample(q1, b1) = npp_sample(q1, b1) + 1
+                            plf = n2 + (n3 + 1) + (n4 + 1)
+                            npm_sample(q1, b1) = npm_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, -om2 + om3 + om4, sigma)
-                            scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                            qp%ap%(q3)%integration_weight*plf
+                            scatpm(q1, b1) = scatpm(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                                             qp%ap(q3)%integration_weight*plf
                         end if
                     end if
 
                     if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
-                            plf = n2 + n3 + n4
-                            npp_sample(q1, b1) = npp_sample(q1, b1) + 1
+                            plf = (n2 + 1) * (n3 + 1) * (n4 + 1)
+                            nmm_sample(q1, b1) = nmm_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, om2 + om3 + om4, sigma)
-                            scatpp(q1, b1) = scatpp(q1, b1) * deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                            qp%ap%(q3)%integration_weight*plf
+                            scatmm(q1, b1) = scatmm(q1, b1) + deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                                             qp%ap(q3)%integration_weight*plf / 6.0_r8
                         end if
                     end if
                 end do ! b3
@@ -593,13 +598,13 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
             bufpp = 0.0_r8
             bufpm = 0.0_r8
             bufmm = 0.0_r8
-            if (npp_sample(q1, b1) .ne. 0) then
+            if (npp_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufpp = bufpp + scatpp(q1, b1) * real(npp_tot(q1, b1), r8) / real(npp_sample(q1, b1), r8)
             end if
-            if (npm_sample(q1, b1) .ne. 0) then
+            if (npm_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufpm = bufpm + scatpm(q1, b1) * real(npm_tot(q1, b1), r8) / real(npm_sample(q1, b1), r8)
             end if
-            if (nmm_sample(q1, b1) .ne. 0) then
+            if (nmm_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufmm = bufmm + scatmm(q1, b1) * real(nmm_tot(q1, b1), r8) / real(nmm_sample(q1, b1), r8)
             end if
             ! Direct application of Mathiessen's rule
@@ -614,7 +619,7 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     call mem%deallocate(npm_sample, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(scatpm, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(nmm_tot, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(npp_sample, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(nmm_sample, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(scatmm, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
 end subroutine

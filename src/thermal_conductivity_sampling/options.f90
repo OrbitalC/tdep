@@ -17,7 +17,7 @@ type lo_opts
     real(flyt) :: ratio3ph           !< the ratio of 3ph scattering process to actually compute
     real(flyt) :: ratio4ph           !< the ratio of 4ph scattering process to actually compute
     logical :: readiso               !< read isotope distribution from file
-    logical :: fourthorder = .false. !< use fourth order contribution
+    logical :: fourthorder           !< use fourth order contribution
     integer :: integrationtype       !< gaussian or tetrahedron
 
     integer :: correctionlevel       !< how hard to correct
@@ -66,7 +66,7 @@ subroutine parse(opts)
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--fourthorder', &
-                 help='Consider four-phonon contributions to the scattering.', hidden=.true., &
+                 help='Consider four-phonon contributions to the scattering.',  &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_qpoint_grid
@@ -150,9 +150,11 @@ subroutine parse(opts)
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
     call cli%get(switch='--ratio3ph', val=opts%ratio3ph)
+    call cli%get(switch='--ratio4ph', val=opts%ratio4ph)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
+    call cli%get(switch='--fourthorder', val=opts%fourthorder)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt
     call cli%get(switch='--readqmesh', val=opts%readqmesh)
     call cli%get(switch='--integrationtype', val=opts%integrationtype)
