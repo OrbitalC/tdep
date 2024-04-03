@@ -22,7 +22,7 @@ public :: compute_scattering_isotopes
 
 contains
 ! Compute the scattering for three phonons
-subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, integrationtype, &
+subroutine compute_scattering_threephonon(qp, dr, fct, temperature, nsample3ph, integrationtype, &
                                           smearing_prefactor, thres, rng, mw, mem)
     ! The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
@@ -32,8 +32,8 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
     type(lo_forceconstant_thirdorder), intent(in) :: fct
     ! The temperature
     real(r8), intent(in) :: temperature
-    ! The ratio of 3 phonon scattering actually computed
-    real(r8), intent(in) :: ratio3ph
+    ! The number of 3 phonon scattering actually computed
+    integer, intent(in) :: nsample3ph
     ! Integration type
     integer, intent(in) :: integrationtype
     ! The smearing prefactor
@@ -55,19 +55,22 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
     real(r8), dimension(:, :), allocatable :: scatplus, scatminus
     ! Eigenvectors
     complex(r8), dimension(:, :), allocatable :: egv
+    ! The full qpoint grid
+    integer, dimension(:), allocatable :: qgridfull
     ! The frequencies
     real(r8), dimension(3) :: omega, qvec
     ! The grid dimensions
     integer, dimension(3) :: dims
     ! Some buffers
-    real(r8) :: bufplus, bufminus, plf, rnd, omthres, deltafunction, om1, om2, om3, n2, n3, psisq
+    real(r8) :: bufplus, bufminus, plf, rnd, omthres, deltafunction, om1, om2, om3, n1, n2, n3, psisq
     real(r8) :: sigma, sig1, sig2, sig3
-    real(r8), dimension(3) :: qv2, qv3, vel1, vel2, vel3
+    real(r8), dimension(3) :: qv2, qv3, qv3frac, vel1, vel2, vel3
+    integer :: np_count, nps_count, nm_count, nms_count
     real(r8) :: t0
     complex(r8) :: c0
     logical :: isplus, isminus
 
-    integer :: q1, b1, q2, b2, q3, b3, ctr
+    integer :: i, q1, b1, q2, b2, q3, b3, ctr
 
     t0 = walltime()
     if (mw%talk) call lo_progressbar_init()
@@ -95,6 +98,10 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
 
     call mem%allocate(egv, [dr%n_mode, 3], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
+    ! We start by creating and shuffling an array with the qpoint index
+    call mem%allocate(qgridfull, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    qgridfull = (/ (i, i=1, qp%n_full_point) /)
+
     omthres = dr%omega_min*0.5_r8
     ctr = 0
     do q1 = 1, qp%n_irr_point
@@ -103,31 +110,35 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
             ctr = ctr + 1
             if (mod(ctr, mw%n) .ne. mw%r) cycle
             om1 = dr%iq(q1)%omega(b1)
-            vel1 = dr%iq(q1)%vel(:, b1)
             if (om1 .lt. omthres) cycle
-            do q2 = 1, qp%n_full_point
+            vel1 = dr%iq(q1)%vel(:, b1)
+            egv(:, 1) = dr%iq(q1)%egv(:, b1)
+            omega(1) = om1
+            call rng%shuffle_int_array(qgridfull)
+            do i = 1, qp%n_full_point
+                q2 = qgridfull(i)
+                q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+                qv2 = -qp%ap(q2)%r*lo_twopi
+                qv3 = -qp%ap(q3)%r*lo_twopi
                 do b2 = 1, dr%n_mode
+                    om2 = dr%aq(q2)%omega(b2)
+                    if (om2 .lt. omthres) cycle
+                    omega(2) = om2
+                    egv(:, 2) = dr%aq(q2)%egv(:, b2)
+                    vel2 = dr%aq(q2)%vel(:, b2)
+                    n2 = lo_planck(temperature, om2)
                     do b3 = 1, dr%n_mode
-                        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
-                        om2 = dr%aq(q2)%omega(b2)
                         om3 = dr%aq(q3)%omega(b3)
-                        vel2 = dr%aq(q2)%vel(:, b2)
-                        vel3 = dr%aq(q3)%vel(:, b3)
-                        if (om2 .lt. omthres) cycle
                         if (om3 .lt. omthres) cycle
+                        omega(3) = om3
+                        n3 = lo_planck(temperature, om3)
+                        egv(:, 3) = dr%aq(q3)%egv(:, b3)
+
                         isplus = .false.
                         isminus = .false.
-
-                        n2 = lo_planck(temperature, om2)
-                        n3 = lo_planck(temperature, om3)
-                        omega(1) = om1
-                        omega(2) = om2
-                        omega(3) = om3
-                        egv(:, 1) = dr%iq(q1)%egv(:, b1)
-                        egv(:, 2) = dr%aq(q2)%egv(:, b2)
-                        egv(:, 3) = dr%aq(q3)%egv(:, b3)
-                        qv2 = -qp%ap(q2)%r*lo_twopi
-                        qv3 = -qp%ap(q3)%r*lo_twopi
+                        if (nplus_sample(q1, b1) .lt. nsample3ph) isplus = .true.
+                        if (nminus_sample(q1, b1) .lt. nsample3ph) isminus = .true.
+                        vel3 = dr%aq(q3)%vel(:, b3)
 
                         select case (integrationtype)
                         case (1)
@@ -139,14 +150,10 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
                             sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
                         end select
 
-                        rnd = rng%rnd_real()
-                        if (rnd .lt. ratio3ph) isplus = .true.
-                        rnd = rng%rnd_real()
-                        if (rnd .lt. ratio3ph) isminus = .true.
-
-                        ! Let's compute the scattering strength only once
-                        if (abs(om1 + om2 - om3) .lt. thres*sigma .or. abs(om1 - om2 - om3) .lt. thres*sigma) then
+                        if (abs(om1 + om2 - om3) .lt. thres*sigma .or. &
+                            abs(om1 - om2 - om3) .lt. thres*sigma) then
                             if (isplus .or. isminus) then
+                                ! Let's compute the scattering strength only once
                                 c0 = fct%scatteringamplitude(omega, egv, qv2, qv3)
                                 psisq = abs(c0*conjg(c0))
                             end if
@@ -181,6 +188,7 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
             end if
         end do ! b1
     end do ! q1
+    call mem%deallocate(qgridfull, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
     if (mw%talk) call lo_progressbar(' ... threephonon scattering', dr%n_mode*qp%n_irr_point, dr%n_mode*qp%n_irr_point, walltime() - t0)
@@ -193,6 +201,10 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
     call mw%allreduce('sum', nminus_sample)
     call mw%allreduce('sum', scatminus)
 
+    np_count = 0
+    nps_count = 0
+    nm_count = 0
+    nms_count = 0
     do q1 = 1, qp%n_irr_point
         do b1 = 1, dr%n_mode
             if (dr%iq(q1)%omega(b1) .lt. omthres) cycle
@@ -200,14 +212,24 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
             bufminus = 0.0_r8
             if (nplus_sample(q1, b1) .ne. 0) then
                 bufplus = bufplus + scatplus(q1, b1) * real(nplus_tot(q1, b1), r8) / real(nplus_sample(q1, b1), r8)
+                np_count = np_count + nplus_tot(q1, b1)
+                nps_count = nps_count + nplus_sample(q1, b1)
             end if
             if (nminus_sample(q1, b1) .ne. 0) then
                 bufminus = bufminus + scatminus(q1, b1) * real(nminus_tot(q1, b1), r8) / real(nminus_sample(q1, b1), r8)
+                nm_count = nm_count + nminus_tot(q1, b1)
+                nms_count = nms_count + nminus_sample(q1, b1)
             end if
             ! Direct application of Mathiessen's rule
             dr%iq(q1)%linewidth(b1) = dr%iq(q1)%linewidth(b1) + bufplus + bufminus
+            dr%iq(q1)%p_plus(b1) = bufplus * 2 * n1 * (n1 + 1)
+            dr%iq(q1)%p_minus(b1) = bufminus * 2 * n1 * (n1 + 1)
         end do
     end do
+    if (mw%talk) then
+        write(*, *) 'Number of + scattering event ', np_count, 'sampled ', nps_count, 'ratio ', real(nps_count, r8)/real(np_count, r8)
+        write(*, *) 'Number of - scattering event ', nm_count, 'sampled ', nms_count, 'ratio ', real(nms_count, r8)/real(nm_count, r8)
+    end if
 
     ! Deallocate things
     call mem%deallocate(nplus_tot, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -219,13 +241,15 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, ratio3ph, in
 end subroutine
 
 ! Compute the scattering for isotopic defects
-subroutine compute_scattering_isotopes(qp, dr, uc, integrationtype, smearing_prefactor, thres, mw, mem)
+subroutine compute_scattering_isotopes(qp, dr, uc, temperature, integrationtype, smearing_prefactor, thres, mw, mem)
     !> q-point mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> phonon dispersions
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
+    ! The temperature
+    real(r8), intent(in) :: temperature
     ! Integration type
     integer, intent(in) :: integrationtype
     ! The smearing prefactor
@@ -242,8 +266,9 @@ subroutine compute_scattering_isotopes(qp, dr, uc, integrationtype, smearing_pre
 
     real(r8), dimension(:, :), allocatable :: iso_scatter
     integer :: q1, b1, q2, b2, ctr
-    real(r8) :: om1, om2, sigma, scatterstrength, omthres, deltafunction, t0
+    real(r8) :: n1, om1, om2, sigma, scatterstrength, omthres, deltafunction, t0
     complex(r8), dimension(uc%na*3, 2) :: egviso
+    integer :: n_count
 
     t0 = walltime()
     if (mw%talk) call lo_progressbar_init()
@@ -252,6 +277,7 @@ subroutine compute_scattering_isotopes(qp, dr, uc, integrationtype, smearing_pre
     iso_scatter = 0.0_r8
 
     omthres = dr%omega_min*0.5_r8
+    n_count = 0
     ctr = 0
     do q1 = 1, qp%n_irr_point
         do b1 = 1, dr%n_mode
@@ -271,11 +297,14 @@ subroutine compute_scattering_isotopes(qp, dr, uc, integrationtype, smearing_pre
                     sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), smearing_prefactor)
                 end select
 
-                deltafunction = lo_gauss(om1, om2, sigma)
-                egviso(:, 1) = dr%iq(q1)%egv(:, b1)
-                egviso(:, 2) = dr%aq(q2)%egv(:, b2)
-                scatterstrength = isotope_scattering_strength(uc, egviso)*om1*om2
-                iso_scatter(q1, b1) = iso_scatter(q1, b1) + scatterstrength*deltafunction*qp%ap(q2)%integration_weight * isotope_prefactor
+                if (abs(om1 - om2) .lt. thres*sigma) then
+                    deltafunction = lo_gauss(om1, om2, sigma)
+                    egviso(:, 1) = dr%iq(q1)%egv(:, b1)
+                    egviso(:, 2) = dr%aq(q2)%egv(:, b2)
+                    scatterstrength = isotope_scattering_strength(uc, egviso)*om1*om2
+                    iso_scatter(q1, b1) = iso_scatter(q1, b1) + scatterstrength*deltafunction*qp%ap(q2)%integration_weight * isotope_prefactor
+                    n_count = n_count + 1
+                end if
             end do
             end do
             if (mw%talk) then
@@ -290,9 +319,14 @@ subroutine compute_scattering_isotopes(qp, dr, uc, integrationtype, smearing_pre
     do q1 = 1, qp%n_irr_point
         do b1 = 1, dr%n_mode
             dr%iq(q1)%linewidth(b1) = dr%iq(q1)%linewidth(b1) + iso_scatter(q1, b1)
+            n1 = lo_planck(temperature, dr%iq(q1)%omega(b1))
+            dr%iq(q1)%p_iso(b1) = iso_scatter(q1, b1) * 2 * n1 * (n1 + 1)
         end do
     end do
     call mem%deallocate(iso_scatter, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    if (mw%talk) then
+        write(*, *) 'Number of isotope scattering event ', n_count
+    end if
 
 end subroutine
 
@@ -384,8 +418,8 @@ contains
 end function
 
 ! Compute the scattering for three phonons
-subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, integrationtype, &
-                                          smearing_prefactor, thres, rng, mw, mem)
+subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, nsample4ph, integrationtype, &
+                                         smearing_prefactor, thres, rng, mw, mem)
     ! The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     ! Harmonic dispersions
@@ -394,8 +428,8 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     type(lo_forceconstant_fourthorder), intent(in) :: fcf
     ! The temperature
     real(r8), intent(in) :: temperature
-    ! The ratio of 3 phonon scattering actually computed
-    real(r8), intent(in) :: ratio4ph
+    ! The number of 3 phonon scattering actually computed
+    integer, intent(in) :: nsample4ph
     ! Integration type
     integer, intent(in) :: integrationtype
     ! The smearing prefactor
@@ -410,13 +444,15 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     type(lo_mem_helper), intent(inout) :: mem
 
     ! Three phonon prefactor
-    real(r8), parameter :: threephonon_prefactor = lo_pi / 96.0_r8
+    real(r8), parameter :: fourphonon_prefactor = lo_pi / 96.0_r8
     ! The number of scattering
     integer, dimension(:, :), allocatable :: npp_tot, npp_sample, npm_tot, npm_sample, nmm_tot, nmm_sample
     ! The scattering
     real(r8), dimension(:, :), allocatable :: scatpp, scatpm, scatmm
     ! Eigenvectors
     complex(r8), dimension(:, :), allocatable :: egv
+    ! The full qpoint grid
+    integer, dimension(:), allocatable :: qgridfull1, qgridfull2
     ! The frequencies
     real(r8), dimension(4) :: omega
     ! the qvector
@@ -427,11 +463,12 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     real(r8) :: bufpp, bufpm, bufmm, plf, rnd, omthres, deltafunction, om1, om2, om3, om4, n2, n3, n4, psisq
     real(r8) :: sigma, sig1, sig2, sig3, sig4
     real(r8), dimension(3) :: qv2, qv3, qv4, vel1, vel2, vel3, vel4
+    integer :: npp_count, npps_count, npm_count, npms_count, nmm_count, nmms_count
     real(r8) :: t0
     complex(r8) :: c0
     logical :: ispp, ispm, ismm
 
-    integer :: q1, b1, q2, b2, q3, b3, q4, b4, ctr
+    integer :: i, j, q1, b1, q2, b2, q3, b3, q4, b4, ctr
 
     t0 = walltime()
     if (mw%talk) call lo_progressbar_init()
@@ -465,6 +502,11 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
 
     call mem%allocate(egv, [dr%n_mode, 4], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
+    call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    qgridfull1 = (/ (i, i=1, qp%n_full_point) /)
+    qgridfull2 = (/ (i, i=1, qp%n_full_point) /)
+
     omthres = dr%omega_min*0.5_r8
     ctr = 0
     do q1 = 1, qp%n_irr_point
@@ -475,23 +517,30 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
             om1 = dr%iq(q1)%omega(b1)
             vel1 = dr%iq(q1)%vel(:, b1)
             if (om1 .lt. omthres) cycle
-            do q2 = 1, qp%n_full_point
-            do q3 = 1, qp%n_full_point
+            call rng%shuffle_int_array(qgridfull1)
+            call rng%shuffle_int_array(qgridfull2)
+            do i = 1, qp%n_full_point
+            do j = 1, qp%n_full_point
+                q2 = qgridfull1(i)
+                q3 = qgridfull1(j)
                 do b2 = 1, dr%n_mode
                 do b3 = 1, dr%n_mode
+                    ispp = .false.
+                    ispm = .false.
+                    ismm = .false.
+                    rnd = rng%rnd_real()
+                    if (npp_sample(q1, b1) .lt. nsample4ph) ispp = .true.
+                    if (npm_sample(q1, b1) .lt. nsample4ph) ispm = .true.
+                    if (nmm_sample(q1, b1) .lt. nsample4ph) ismm = .true.
+
                     q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
                     om2 = dr%aq(q2)%omega(b2)
                     om3 = dr%aq(q3)%omega(b3)
                     om4 = dr%aq(q4)%omega(b4)
+                    if (minval([om2, om3, om4]) .lt. omthres) cycle
                     vel2 = dr%aq(q2)%vel(:, b2)
                     vel3 = dr%aq(q3)%vel(:, b3)
                     vel4 = dr%aq(q4)%vel(:, b4)
-                    if (om2 .lt. omthres) cycle
-                    if (om3 .lt. omthres) cycle
-                    if (om4 .lt. omthres) cycle
-                    ispp = .false.
-                    ispm = .false.
-                    ismm = .false.
 
                     n2 = lo_planck(temperature, om2)
                     n3 = lo_planck(temperature, om3)
@@ -519,17 +568,11 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
                         sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
                     end select
 
-                    rnd = rng%rnd_real()
-                    if (rnd .lt. ratio4ph) ispp = .true.
-                    rnd = rng%rnd_real()
-                    if (rnd .lt. ratio4ph) ispm = .true.
-                    rnd = rng%rnd_real()
-                    if (rnd .lt. ratio4ph) ismm = .true.
-
                     if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. thres*sigma .or. &
-                        abs(om1 - om2 - om3 - om4) .lt. thres*sigma ) then
-                        if (ispp .or. ispm .or. ismm) then
+                        abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
+                        if (any([ispp, ispm, ismm])) then
+                            ! Compute the scattering matrix element
                             c0 = fcf%scatteringamplitude(omega, egv, qv2, qv3, qv4)
                             psisq = abs(c0*conjg(c0))
                         end if
@@ -540,33 +583,39 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
                     if (abs(om1 + om2 + om3 - om4) .lt. thres*sigma) then
                         npp_tot(q1, b1) = npp_tot(q1, b1) + 1
                         if (ispp) then
-                            plf = n2 * n3 * (n4 + 1)
+                            plf = n2 * n3 * (n4 + 1) * fourphonon_prefactor
                             npp_sample(q1, b1) = npp_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, -om2 - om3 + om4, sigma)
-                            scatpp(q1, b1) = scatpp(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                             qp%ap(q3)%integration_weight*plf
+                            ! scatpp(q1, b1) = scatpp(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                            !                  qp%ap(q3)%integration_weight*plf
+                            scatpp(q1, b1) = scatpp(q1, b1) + 0.5_r8 * deltafunction*psisq*plf*&
+                                             qp%ap(q2)%integration_weight
                         end if
                     end if
 
                     if (abs(om1 + om2 - om3 - om4) .lt. thres*sigma) then
-                        npp_tot(q1, b1) = npp_tot(q1, b1) + 1
-                        if (ispp) then
-                            plf = n2 + (n3 + 1) + (n4 + 1)
+                        npm_tot(q1, b1) = npm_tot(q1, b1) + 1
+                        if (ispm) then
+                            plf = n2 * (n3 + 1) * (n4 + 1) * fourphonon_prefactor
                             npm_sample(q1, b1) = npm_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, -om2 + om3 + om4, sigma)
-                            scatpm(q1, b1) = scatpm(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                             qp%ap(q3)%integration_weight*plf
+                            ! scatpm(q1, b1) = scatpm(q1, b1) + 0.5_r8 * deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                            !                  qp%ap(q3)%integration_weight*plf
+                            scatpm(q1, b1) = scatpm(q1, b1) + 0.5_r8 * deltafunction*psisq*plf*&
+                                             qp%ap(q2)%integration_weight
                         end if
                     end if
 
                     if (abs(om1 - om2 - om3 - om4) .lt. thres*sigma) then
-                        npp_tot(q1, b1) = npp_tot(q1, b1) + 1
-                        if (ispp) then
-                            plf = (n2 + 1) * (n3 + 1) * (n4 + 1)
+                        nmm_tot(q1, b1) = nmm_tot(q1, b1) + 1
+                        if (ismm) then
+                            plf = (n2 + 1) * (n3 + 1) * (n4 + 1) * fourphonon_prefactor
                             nmm_sample(q1, b1) = nmm_sample(q1, b1) + 1
                             deltafunction = lo_gauss(om1, om2 + om3 + om4, sigma)
-                            scatmm(q1, b1) = scatmm(q1, b1) + deltafunction*psisq*qp%ap(q2)%integration_weight*&
-                                             qp%ap(q3)%integration_weight*plf / 6.0_r8
+                            ! scatmm(q1, b1) = scatmm(q1, b1) + deltafunction*psisq*qp%ap(q2)%integration_weight*&
+                            !                  qp%ap(q3)%integration_weight*plf / 6.0_r8
+                            scatmm(q1, b1) = scatmm(q1, b1) + deltafunction*psisq*plf*&
+                                             qp%ap(q2)%integration_weight / 6.0_r8
                         end if
                     end if
                 end do ! b3
@@ -578,6 +627,8 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
             end if
         end do ! b1
     end do ! q1
+    call mem%deallocate(qgridfull1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
     if (mw%talk) call lo_progressbar(' ... fourphonon scattering', dr%n_mode*qp%n_irr_point, dr%n_mode*qp%n_irr_point, walltime() - t0)
@@ -592,6 +643,12 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
     call mw%allreduce('sum', nmm_sample)
     call mw%allreduce('sum', scatmm)
 
+    npp_count = 0
+    npps_count = 0
+    npm_count = 0
+    npms_count = 0
+    nmm_count = 0
+    nmms_count = 0
     do q1 = 1, qp%n_irr_point
         do b1 = 1, dr%n_mode
             if (dr%iq(q1)%omega(b1) .lt. omthres) cycle
@@ -600,17 +657,28 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, ratio4ph, int
             bufmm = 0.0_r8
             if (npp_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufpp = bufpp + scatpp(q1, b1) * real(npp_tot(q1, b1), r8) / real(npp_sample(q1, b1), r8)
+                npp_count = npp_count + npp_tot(q1, b1)
+                npps_count = npps_count + npp_sample(q1, b1)
             end if
             if (npm_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufpm = bufpm + scatpm(q1, b1) * real(npm_tot(q1, b1), r8) / real(npm_sample(q1, b1), r8)
+                npm_count = npm_count + npm_tot(q1, b1)
+                npms_count = npms_count + npm_sample(q1, b1)
             end if
             if (nmm_sample(q1, b1) .ne. 0) then ! shouldn't matter, but we don't want to divide by zero
                 bufmm = bufmm + scatmm(q1, b1) * real(nmm_tot(q1, b1), r8) / real(nmm_sample(q1, b1), r8)
+                nmm_count = nmm_count + nmm_tot(q1, b1)
+                nmms_count = nmms_count + nmm_sample(q1, b1)
             end if
             ! Direct application of Mathiessen's rule
             dr%iq(q1)%linewidth(b1) = dr%iq(q1)%linewidth(b1) + bufpp + bufpm + bufmm
         end do
     end do
+    if (mw%talk) then
+        write(*, *) 'Number of ++ scattering event ', npp_count, 'sampled ', npps_count, 'ratio ', real(npps_count, r8)/real(npp_count, r8)
+        write(*, *) 'Number of +- scattering event ', npm_count, 'sampled ', npms_count, 'ratio ', real(npms_count, r8)/real(npm_count, r8)
+        write(*, *) 'Number of -- scattering event ', nmm_count, 'sampled ', nmms_count, 'ratio ', real(nmms_count, r8)/real(nmm_count, r8)
+    end if
 
     call mem%deallocate(npp_tot, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(npp_sample, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -644,14 +712,14 @@ pure function fft_fourth_grid_index(i1, i2, i3, dims) result(i4)
     gi2 = singlet_to_triplet(i2, dims(2), dims(3))
     gi3 = singlet_to_triplet(i3, dims(2), dims(3))
     do l = 1, 3
-        gi4(l) = 4 - gi1(l) - gi2(l) - gi3(l)
-    end do
-    do k = 1, 3
-    do l = 1, 3
-        if (gi4(l) .lt. 1) gi4(l) = gi4(l) + dims(l)
-        if (gi4(l) .gt. dims(l)) gi4(l) = gi4(l) - dims(l)
-    end do
-    end do
+         gi4(l) = 4 - gi1(l) - gi2(l) - gi3(l)
+   end do
+   do k = 1, 3
+   do l = 1, 3
+       if (gi4(l) .lt. 1) gi4(l) = gi4(l) + dims(l)
+       if (gi4(l) .gt. dims(l)) gi4(l) = gi4(l) - dims(l)
+   end do
+   end do
 
     ! convert it back to a singlet
     i4 = triplet_to_singlet(gi4, dims(2), dims(3))
@@ -690,5 +758,4 @@ contains
         l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
     end function
 end function
-
 end module

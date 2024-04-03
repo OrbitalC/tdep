@@ -1,6 +1,6 @@
 #include "precompilerdefinitions"
 module options
-use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr
+use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr, lo_hugeint
 use flap, only: command_line_interface
 implicit none
 private
@@ -14,8 +14,8 @@ type lo_opts
     real(flyt) :: thres              !< consider Gaussian 0 if x-mu is larger than this number times sigma.
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
-    real(flyt) :: ratio3ph           !< the ratio of 3ph scattering process to actually compute
-    real(flyt) :: ratio4ph           !< the ratio of 4ph scattering process to actually compute
+    integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
+    integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
     logical :: readiso               !< read isotope distribution from file
     logical :: fourthorder           !< use fourth order contribution
     integer :: integrationtype       !< gaussian or tetrahedron
@@ -100,13 +100,13 @@ subroutine parse(opts)
                  help='Do not consider isotope scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--ratio3ph', &
-                 help='The ratio of 3 phonon scattering to sample to estimate the lifetimes.', &
-                 required=.false., act='store', def='1', error=lo_status)
+    call cli%add(switch='--nsample3ph', &
+                 help='The number of 3 phonon scattering to sample to estimate the lifetimes for each mode.', &
+                 required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--ratio4ph', &
-                 help='The ratio of 4 phonon scattering to sample to estimate the lifetimes.', &
-                 required=.false., act='store', def='1', error=lo_status)
+    call cli%add(switch='--nsample4ph', &
+                 help='The number of 4 phonon scattering to sample to estimate the lifetimes for each mode.', &
+                 required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -149,8 +149,10 @@ subroutine parse(opts)
 
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
-    call cli%get(switch='--ratio3ph', val=opts%ratio3ph)
-    call cli%get(switch='--ratio4ph', val=opts%ratio4ph)
+    call cli%get(switch='--nsample3ph', val=opts%nsample3ph)
+    if (opts%nsample3ph .lt. 0) opts%nsample3ph = lo_hugeint
+    call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
+    if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)

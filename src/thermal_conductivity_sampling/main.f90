@@ -35,7 +35,7 @@ type(lo_mem_helper) :: mem
 ! Small stuff
 real(r8), dimension(:, :), allocatable :: thermal_cond
 ! timers
-real(r8) :: timer_init, timer_scatt, timer_kappa, timer_count, tt0
+real(r8) :: timer_init, timer_scatt, timer_kappa, timer_count, tt0, timer_3ph, timer_4ph, timer_iso
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
@@ -138,11 +138,17 @@ scatters: block
         allocate (dr%iq(i)%linewidth(dr%n_mode))
         allocate (dr%iq(i)%F0(3, dr%n_mode))
         allocate (dr%iq(i)%Fn(3, dr%n_mode))
+        allocate (dr%iq(i)%p_plus(dr%n_mode))
+        allocate (dr%iq(i)%p_minus(dr%n_mode))
+        allocate (dr%iq(i)%p_iso(dr%n_mode))
         allocate (dr%iq(i)%mfp(3, dr%n_mode))
         allocate (dr%iq(i)%scalar_mfp(dr%n_mode))
         dr%iq(i)%linewidth = 0.0_r8
         dr%iq(i)%F0 = 0.0_r8
         dr%iq(i)%Fn = 0.0_r8
+        dr%iq(i)%p_plus = 0.0_r8
+        dr%iq(i)%p_minus = 0.0_r8
+        dr%iq(i)%p_iso = 0.0_r8
         dr%iq(i)%mfp = 0.0_r8
         dr%iq(i)%scalar_mfp = 0.0_r8
     end do
@@ -155,13 +161,39 @@ scatters: block
     call rng%init(iseed=mw%r, rseed=walltime())
     ! For the isotopes
     if (opts%isotopescattering) then
-        call compute_scattering_isotopes(qp, dr, uc, opts%integrationtype, opts%sigma, opts%thres, mw, mem)
+        if (mw%talk) then
+            timer_iso = walltime()
+            write(*, *) 'Computing isotope scattering'
+        end if
+        call compute_scattering_isotopes(qp, dr, uc, opts%temperature, opts%integrationtype, opts%sigma, opts%thres, mw, mem)
+        if (mw%talk) then
+            timer_iso = walltime() - timer_iso
+            write(*, "(A,F12.3,A)") 'done in ', timer_iso, ' s'
+        end if
     end if
     ! For the third order
-    call compute_scattering_threephonon(qp, dr, fct, opts%temperature, opts%ratio3ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
+        if (mw%talk) then
+            timer_3ph = walltime()
+            write(*, *) ''
+            write(*, "(A,F12.3,A)") 'Computing threephonon scattering'
+        end if
+    call compute_scattering_threephonon(qp, dr, fct, opts%temperature, opts%nsample3ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
+        if (mw%talk) then
+            timer_3ph = walltime() - timer_3ph
+            write(*, "(A,F12.3,A)") 'done in ', timer_3ph, ' s'
+        end if
     ! For the fourth order
     if (opts%fourthorder) then
-        call compute_scattering_fourphonon(qp, dr, fcf, opts%temperature, opts%ratio4ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
+        if (mw%talk) then
+            timer_4ph = walltime()
+            write(*, *) ''
+            write(*, *) 'Computing fourphonon scattering'
+        end if
+        call compute_scattering_fourphonon(qp, dr, fcf, opts%temperature, opts%nsample4ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
+        if (mw%talk) then
+            timer_4ph = walltime() - timer_4ph
+            write(*, "(A,F12.3,A)") 'done in ', timer_4ph, ' s'
+        end if
     end if
 
     ! stop counting timer, start matrixelement timer
@@ -231,14 +263,17 @@ end block kappa
 finalize_and_write: block
     real(r8) :: t0
     ! Write thermal conductivity to file
-    if (mw%talk) call lo_dump_gnuplot_2d_real(thermal_cond, 'outfile.thermal_conductivity_sampling', &
-                                              ylabel='\kappa W/mK', xlabel='Temperature (K)')
 
     ! sum up the total time
-    if (mw%talk) tt0 = walltime() - tt0
+    if (mw%talk) then
+        tt0 = walltime() - tt0
+        write(*, *) ''
+        write(*, *) '... dumping auxiliary data to files'
+        call dr%write_to_hdf5(qp, uc, 'outfile.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
+        call lo_dump_gnuplot_2d_real(thermal_cond, 'outfile.thermal_conductivity_sampling', &
+                                     ylabel='\kappa W/mK', xlabel='Temperature (K)')
 
     ! Print timings
-    if (mw%talk) then
         write (*, *) ''
         write (*, '(1X,A21)') 'Suggested citations :'
         write (*, '(1X,A41,A56)') 'Software : ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
@@ -246,12 +281,16 @@ finalize_and_write: block
         write (*, '(1X,A41,A43)') 'Iterative Boltzmann transport equation : ', 'M. Omini et al., Phys Rev B 53, 9064 (1996)'
         write (*, '(1X,A41,A49)') 'Algorithm : ', 'A. H. Romero et al., Phys Rev B 91, 214310 (2015)'
         write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
+        write (*, '(1X,A41,A46)') 'Sampling method for scattering : ', 'Z. Guo et al., npj Comput Matter 10, 31 (2024)'
 
         t0 = timer_init + timer_count + timer_kappa
         write (*, *) ' '
         write (*, *) 'Timings:'
         write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    scattering computation:', timer_scatt, ' s, ', real(timer_scatt*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '        isotope scattering:', timer_iso, ' s, ', real(timer_iso*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '            3ph scattering:', timer_3ph, ' s, ', real(timer_3ph*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '            4ph scattering:', timer_4ph, ' s, ', real(timer_4ph*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '                     kappa:', timer_kappa, ' s, ', real(timer_kappa*100/tt0), '%'
         write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
     end if
