@@ -7,22 +7,22 @@ private
 public :: lo_opts
 
 type lo_opts
-    integer, dimension(3) :: qgrid  !< the main q-grid
-    logical :: readqmesh            !< read q-grid from file
-    integer :: trangenpts           !< how many temperatures
-    real(flyt) :: trangemin         !< minimum temperature
-    real(flyt) :: trangemax         !< max temperature
-    logical :: logtempaxis          !< logarithmically spaced temperature points
-    real(flyt) :: sigma             !< scaling factor for adaptice gaussian
-    real(flyt) :: thres             !< consider Gaussian 0 if x-mu is larger than this number times sigma.
-    real(flyt) :: tau_boundary      !< add a constant as boundary scattering
-    real(flyt) :: mfp_max           !< add a length as boundary scattering
-    logical :: readiso              !< read isotope distribution from file
-    integer :: integrationtype      !< gaussian or tetrahedron
+    integer, dimension(3) :: qgrid   !< the main q-grid
+    logical :: readqmesh             !< read q-grid from file
+    real(flyt) :: temperature        !< temperature
+    real(flyt) :: sigma              !< scaling factor for adaptice gaussian
+    real(flyt) :: thres              !< consider Gaussian 0 if x-mu is larger than this number times sigma.
+    real(flyt) :: tau_boundary       !< add a constant as boundary scattering
+    real(flyt) :: mfp_max            !< add a length as boundary scattering
+    real(flyt) :: ratio3ph           !< the ratio of 3ph scattering process to actually compute
+    real(flyt) :: ratio4ph           !< the ratio of 4ph scattering process to actually compute
+    logical :: readiso               !< read isotope distribution from file
+    logical :: fourthorder = .false. !< use fourth order contribution
+    integer :: integrationtype       !< gaussian or tetrahedron
 
-    integer :: correctionlevel      !< how hard to correct
-    integer :: mfppts               !< number of points on mfp-plots
-    logical :: dumpgrid             !< print everything on a grid
+    integer :: correctionlevel       !< how hard to correct
+    integer :: mfppts                !< number of points on mfp-plots
+    logical :: dumpgrid              !< print everything on a grid
     !logical :: thinfilm             !< Austins thin film thing
 
     ! Debugging things
@@ -57,13 +57,16 @@ subroutine parse(opts)
                               &phonon Boltzmann equation. In addition, cumulative plots and raw data dumps &
                               &of intermediate values are available.', &
                   examples=["mpirun thermal_conductivity --temperature 300                              ", &
-                            "mpirun thermal_conductivity -qg 15 15 15 --temperature_range 200 600 50    ", &
                             "mpirun thermal_conductivity --integrationtype 2 -qg 30 30 30 --max_mfp 1E-6"], &
                   epilog=new_line('a')//"...")
     ! real options
     call cli%add(switch='--readiso', &
                  help='Read the isotope distribution from `infile.isotopes`.', &
                  help_markdown='The format is specified [here](../page/files.html#infile.isotopes).', &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--fourthorder', &
+                 help='Consider four-phonon contributions to the scattering.', hidden=.true., &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_qpoint_grid
@@ -85,13 +88,6 @@ subroutine parse(opts)
                  help='Evaluate thermal conductivity at a single temperature.', &
                  required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--temperature_range', &
-                 help='Series of temperatures for thermal conductivity. Specify min, max and the number of points.', &
-                 nargs='3', required=.false., act='store', def='100 300 5', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--logtempaxis', &
-                 help='Space the temperature points logarithmically instead of linearly.', &
-                 required=.false., act='store_true', def='.false.', error=lo_status)
     call cli%add(switch='--max_mfp', &
                  help='Add a limit on the mean free path as an approximation of domain size.', &
                  required=.false., act='store', def='-1', error=lo_status)
@@ -103,6 +99,14 @@ subroutine parse(opts)
     call cli%add(switch='--noisotope', &
                  help='Do not consider isotope scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--ratio3ph', &
+                 help='The ratio of 3 phonon scattering to sample to estimate the lifetimes.', &
+                 required=.false., act='store', def='1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--ratio4ph', &
+                 help='The ratio of 4 phonon scattering to sample to estimate the lifetimes.', &
+                 required=.false., act='store', def='1', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -143,25 +147,15 @@ subroutine parse(opts)
 
     ! store things in the right place
 
-    call cli%get(switch='--temperature', val=f0)
-    call cli%get(switch='--temperature_range', val=dumflytv)
-    opts%trangemin = dumflytv(1)
-    opts%trangemax = dumflytv(2)
-    opts%trangenpts = int(anint(dumflytv(3)))
-    ! if --temperature is specified, override the range
-    if (f0 .gt. 0.0_flyt) then
-        opts%trangemin = f0
-        opts%trangemax = f0
-        opts%trangenpts = 1
-    end if
+    call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
+    call cli%get(switch='--ratio3ph', val=opts%ratio3ph)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt
     call cli%get(switch='--readqmesh', val=opts%readqmesh)
     call cli%get(switch='--integrationtype', val=opts%integrationtype)
-    call cli%get(switch='--logtempaxis', val=opts%logtempaxis)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
