@@ -525,6 +525,7 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, nsample4ph, i
                 q3 = qgridfull2(j)
                 do b2 = 1, dr%n_mode
                 do b3 = 1, dr%n_mode
+                do b4 = 1, dr%n_mode
                     ispp = .false.
                     ispm = .false.
                     ismm = .false.
@@ -617,6 +618,7 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, nsample4ph, i
                                              qp%ap(q2)%integration_weight / 6.0_r8
                         end if
                     end if
+                end do ! b4
                 end do ! b3
                 end do ! b2
             end do !q3
