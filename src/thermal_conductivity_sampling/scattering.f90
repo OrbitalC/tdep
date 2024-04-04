@@ -62,7 +62,7 @@ subroutine compute_scattering_threephonon(qp, dr, fct, temperature, nsample3ph, 
     ! The grid dimensions
     integer, dimension(3) :: dims
     ! Some buffers
-    real(r8) :: bufplus, bufminus, plf, rnd, omthres, deltafunction, om1, om2, om3, n1, n2, n3, psisq
+    real(r8) :: bufplus, bufminus, plf, omthres, deltafunction, om1, om2, om3, n1, n2, n3, psisq
     real(r8) :: sigma, sig1, sig2, sig3
     real(r8), dimension(3) :: qv2, qv3, qv3frac, vel1, vel2, vel3
     integer :: np_count, nps_count, nm_count, nms_count
@@ -460,7 +460,7 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, nsample4ph, i
     ! The grid dimensions
     integer, dimension(3) :: dims
     ! Some buffers
-    real(r8) :: bufpp, bufpm, bufmm, plf, rnd, omthres, deltafunction, om1, om2, om3, om4, n2, n3, n4, psisq
+    real(r8) :: bufpp, bufpm, bufmm, plf, omthres, deltafunction, om1, om2, om3, om4, n2, n3, n4, psisq
     real(r8) :: sigma, sig1, sig2, sig3, sig4
     real(r8), dimension(3) :: qv2, qv3, qv4, vel1, vel2, vel3, vel4
     integer :: npp_count, npps_count, npm_count, npms_count, nmm_count, nmms_count
@@ -522,13 +522,12 @@ subroutine compute_scattering_fourphonon(qp, dr, fcf, temperature, nsample4ph, i
             do i = 1, qp%n_full_point
             do j = 1, qp%n_full_point
                 q2 = qgridfull1(i)
-                q3 = qgridfull1(j)
+                q3 = qgridfull2(j)
                 do b2 = 1, dr%n_mode
                 do b3 = 1, dr%n_mode
                     ispp = .false.
                     ispm = .false.
                     ismm = .false.
-                    rnd = rng%rnd_real()
                     if (npp_sample(q1, b1) .lt. nsample4ph) ispp = .true.
                     if (npm_sample(q1, b1) .lt. nsample4ph) ispm = .true.
                     if (nmm_sample(q1, b1) .lt. nsample4ph) ismm = .true.
