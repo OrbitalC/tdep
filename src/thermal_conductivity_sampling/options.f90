@@ -105,8 +105,8 @@ subroutine parse(opts)
                  required=.false., act='store', def='0.75', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--scftol', &
-                 help='Tolerance for the self-consistent linewidth, in meV.', &
-                 required=.false., act='store', def='0.00001', error=lo_status)
+                 help='Tolerance for the self-consistent linewidth.', &
+                 required=.false., act='store', def='1e-2', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--dumpgrid', &
                  help='Write files with q-vectors, frequencies, eigenvectors and group velocities for a grid.', &

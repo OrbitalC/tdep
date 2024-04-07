@@ -135,12 +135,7 @@ initharmonic: block
             call read_linewidths(dr, qp, 'infile.grid_thermal_conductivity_sampling.hdf5', mw, mem)
             is_lw_read = .true.
         else
-            write(*, "(1x,A)") '... no starting point file found, starting from scratch'
-            ! We still need to allocate the linewidths
-            do i = 1, qp%n_irr_point
-                allocate (dr%iq(i)%linewidth(dr%n_mode))
-                dr%iq(i)%linewidth = 0.0_r8
-            end do
+            if (mw%talk) write(*, "(1x,A)") '... no starting point file found, starting from scratch'
         end if
     end if
 
@@ -215,8 +210,9 @@ scatters: block
         maxdif = -lo_huge
         do q1 = 1, qp%n_irr_point
             do b1 = 1, dr%n_mode
+                if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
                 dr%iq(q1)%linewidth(b1) = opts%mixing * dr%iq(q1)%linewidth(b1) + (1 - opts%mixing) * buf_linewidth(q1, b1)
-                maxdif = maxval([maxdif, abs(dr%iq(q1)%linewidth(b1) - buf_linewidth(q1, b1)) * lo_Hartree_to_eV * 1000_r8])
+                maxdif = maxval([maxdif, abs(dr%iq(q1)%linewidth(b1) - buf_linewidth(q1, b1)) / dr%iq(q1)%linewidth(b1)])
                 buf_linewidth(q1, b1) = dr%iq(q1)%linewidth(b1)
             end do
         end do
@@ -224,8 +220,8 @@ scatters: block
         call get_kappa(dr, qp, uc, opts%temperature, kappa)
         m0 = kappa*lo_kappa_au_to_SI
         if (mw%talk) then
-            write(*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-            write(*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+            write(*, "(1X,A4,6(1X,A14),1X,A16)") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaGamma/Gamma'
+            write(*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), maxdif
             write(*, "(1x,A)") '... writing checkpoint to file'
             call dr%write_to_hdf5(qp, uc, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
         end if
