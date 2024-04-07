@@ -14,11 +14,15 @@ type lo_opts
     real(flyt) :: thres              !< consider Gaussian 0 if x-mu is larger than this number times sigma.
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
+    real(flyt) :: mixing             !< mixing parameter for self consistent linewidth
+    real(flyt) :: scftol             !< tolerance for the self-consistent linewidth
     integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
     integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
+    integer :: niter                 !< Number of iteration for the self consistent linewidths
     logical :: readiso               !< read isotope distribution from file
+    logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
-    integer :: integrationtype       !< gaussian or tetrahedron
+    logical :: readlw                !< Do we read the linewidths from a file ?
 
     integer :: correctionlevel       !< how hard to correct
     integer :: mfppts                !< number of points on mfp-plots
@@ -48,7 +52,7 @@ subroutine parse(opts)
     real(flyt), dimension(3) :: dumflytv
 
     ! basic info
-    call cli%init(progname='thermal_conductivity', &
+    call cli%init(progname='thermal_conductivity_sampling', &
                   authors=lo_author, &
                   version=lo_version, &
                   license=lo_licence, &
@@ -57,7 +61,7 @@ subroutine parse(opts)
                               &phonon Boltzmann equation. In addition, cumulative plots and raw data dumps &
                               &of intermediate values are available.', &
                   examples=["mpirun thermal_conductivity --temperature 300                              ", &
-                            "mpirun thermal_conductivity --integrationtype 2 -qg 30 30 30 --max_mfp 1E-6"], &
+                            "mpirun thermal_conductivity --fourthorder --nsample4ph 10000 -qg 30 30 30  "], &
                   epilog=new_line('a')//"...")
     ! real options
     call cli%add(switch='--readiso', &
@@ -65,15 +69,19 @@ subroutine parse(opts)
                  help_markdown='The format is specified [here](../page/files.html#infile.isotopes).', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--nothirdorder', &
+                 help='Not consider third order contributions to the scattering.',  &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--fourthorder', &
                  help='Consider four-phonon contributions to the scattering.',  &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    cli_qpoint_grid
-    call cli%add(switch='--integrationtype', switch_ab='-it', &
-                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian and 3 Tetrahedron.', &
-                 required=.false., act='store', def='2', choices='1,2,3', error=lo_status)
+    call cli%add(switch='--read_linewidths', &
+                 help='Read the linewidths from a infile.grid_thermal_conductivity_sampling.hdf5.',  &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
+    cli_qpoint_grid
     call cli%add(switch='--sigma', &
                  help='Global scaling factor for adaptive Gaussian smearing.', &
                  required=.false., act='store', def='1.0', error=lo_status)
@@ -92,6 +100,14 @@ subroutine parse(opts)
                  help='Add a limit on the mean free path as an approximation of domain size.', &
                  required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--mixing', &
+                 help='Mixing parameter for the self-consistent linewidth.', &
+                 required=.false., act='store', def='0.75', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--scftol', &
+                 help='Tolerance for the self-consistent linewidth, in meV.', &
+                 required=.false., act='store', def='0.00001', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--dumpgrid', &
                  help='Write files with q-vectors, frequencies, eigenvectors and group velocities for a grid.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
@@ -107,6 +123,10 @@ subroutine parse(opts)
     call cli%add(switch='--nsample4ph', &
                  help='The number of 4 phonon scattering to sample to estimate the lifetimes for each mode.', &
                  required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--niter', &
+                 help='Number of iterations for the self consistent computation of the linewidths.', &
+                 required=.false., act='store', def='1', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -153,16 +173,25 @@ subroutine parse(opts)
     if (opts%nsample3ph .lt. 0) opts%nsample3ph = lo_hugeint
     call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
     if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
+    call cli%get(switch='--niter', val=opts%niter)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
+    call cli%get(switch='--nothirdorder', val=dumlog)
+    opts%thirdorder = .not. dumlog
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt
+    call cli%get(switch='--read_linewidths', val=opts%readlw)
     call cli%get(switch='--readqmesh', val=opts%readqmesh)
-    call cli%get(switch='--integrationtype', val=opts%integrationtype)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
+    call cli%get(switch='--mixing', val=opts%mixing)
+    if (opts%mixing .lt. 0.0_flyt .or. opts%mixing .gt. 1.0_flyt) then
+        write (*, *) 'Mixing parameter should be between 0.0 and 1.0.'
+        stop
+    end if
+    call cli%get(switch='--scftol', val=opts%scftol)
     call cli%get(switch='--dumpgrid', val=opts%dumpgrid)
     ! stuff that's not really an option
     call cli%get(switch='--correctionlevel', val=opts%correctionlevel)

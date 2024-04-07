@@ -1,7 +1,8 @@
 #include "precompilerdefinitions"
 program thermal_conductivity_sampling
-use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol
-use gottochblandat, only: walltime, tochar, lo_linspace, lo_logspace, lo_mean
+use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
+                      lo_frequency_THz_to_Hartree, lo_huge, lo_Hartree_to_eV
+use gottochblandat, only: walltime, tochar, lo_linspace, lo_logspace, lo_mean, lo_does_file_exist
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -15,9 +16,11 @@ use dump_data, only: lo_dump_gnuplot_2d_real
 use lo_randomnumbers, only: lo_mersennetwister
 !
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag
-use scattering, only: compute_scattering_isotopes, compute_scattering_threephonon, &
-                      compute_scattering_fourphonon
+use kappa, only: get_kappa, get_kappa_offdiag, compute_qs
+!use scattering, only: compute_scattering_isotopes, compute_scattering_threephonon, &
+!                      compute_scattering_fourphonon
+use scattering, only: compute_scattering
+use file_io, only: read_linewidths
 
 implicit none
 ! Standard from libolle
@@ -36,6 +39,8 @@ type(lo_mem_helper) :: mem
 real(r8), dimension(:, :), allocatable :: thermal_cond
 ! timers
 real(r8) :: timer_init, timer_scatt, timer_kappa, timer_count, tt0, timer_3ph, timer_4ph, timer_iso
+! Do we read the linewidths ?
+logical :: is_lw_read
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
@@ -107,7 +112,7 @@ initharmonic: block
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
     ! Also the phonon DOS, for diagnostics
     call pd%generate(dr, qp, uc, mw, mem, verbosity=opts%verbosity, &
-                     sigma=opts%sigma, n_dos_point=opts%mfppts*2, integrationtype=opts%integrationtype)
+                     sigma=opts%sigma, n_dos_point=opts%mfppts*2, integrationtype=2)
 
     ! Make sure it's stable, no point in going further if it is unstable.
     if (dr%omega_min .lt. -lo_freqtol) then
@@ -118,13 +123,40 @@ initharmonic: block
         stop
     end if
 
+    is_lw_read = .false.
+    !if (opts%readlw .and. lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
+    if (opts%readlw) then
+        if (lo_does_file_exist('checkpoint.grid_thermal_conductivity_sampling.hdf5')) then
+            ! We need to allocate space for the linewidths
+            do i = 1, qp%n_irr_point
+                allocate (dr%iq(i)%linewidth(dr%n_mode))
+            end do
+            write(*, "(1X,A)") '... found checkpoint.grid_thermal_conductivity_sampling.hdf5'
+            call read_linewidths(dr, qp, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mw, mem)
+            is_lw_read = .true.
+        else if (lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
+            ! We need to allocate space for the linewidths
+            do i = 1, qp%n_irr_point
+                allocate (dr%iq(i)%linewidth(dr%n_mode))
+            end do
+            write(*, "(1X,A)") '... found infile.grid_thermal_conductivity_sampling.hdf5'
+            call read_linewidths(dr, qp, 'infile.grid_thermal_conductivity_sampling.hdf5', mw, mem)
+            is_lw_read = .true.
+        else
+            write(*, "(1x,A)") '... no starting point file found, starting from scratch'
+        end if
+    end if
+
     ! now I have all harmonic things, stop the init timer
     timer_init = walltime() - timer_init
 end block initharmonic
 
 scatters: block
-    integer :: i
-    real(r8) :: t0
+    integer :: i, iter, q1, b1
+    real(r8), dimension(3, 3) :: kappa, m0
+    real(r8), dimension(qp%n_irr_point, dr%n_mode) :: buf_linewidth
+    real(r8) :: t0, maxdif
+    logical :: isconverged = .false.
     t0 = walltime()
     timer_scatt = walltime()
 
@@ -134,70 +166,83 @@ scatters: block
     end if
 
     ! Make some space to keep intermediate values
-    do i = 1, qp%n_irr_point
-        allocate (dr%iq(i)%linewidth(dr%n_mode))
-        allocate (dr%iq(i)%F0(3, dr%n_mode))
-        allocate (dr%iq(i)%Fn(3, dr%n_mode))
-        allocate (dr%iq(i)%p_plus(dr%n_mode))
-        allocate (dr%iq(i)%p_minus(dr%n_mode))
-        allocate (dr%iq(i)%p_iso(dr%n_mode))
-        allocate (dr%iq(i)%mfp(3, dr%n_mode))
-        allocate (dr%iq(i)%scalar_mfp(dr%n_mode))
-        dr%iq(i)%linewidth = 0.0_r8
-        dr%iq(i)%F0 = 0.0_r8
-        dr%iq(i)%Fn = 0.0_r8
-        dr%iq(i)%p_plus = 0.0_r8
-        dr%iq(i)%p_minus = 0.0_r8
-        dr%iq(i)%p_iso = 0.0_r8
-        dr%iq(i)%mfp = 0.0_r8
-        dr%iq(i)%scalar_mfp = 0.0_r8
+    do q1 = 1, qp%n_irr_point
+        if (.not. is_lw_read) allocate (dr%iq(q1)%linewidth(dr%n_mode))
+        allocate (dr%iq(q1)%F0(3, dr%n_mode))
+        allocate (dr%iq(q1)%Fn(3, dr%n_mode))
+        allocate (dr%iq(q1)%p_plus(dr%n_mode))
+        allocate (dr%iq(q1)%p_minus(dr%n_mode))
+        allocate (dr%iq(q1)%p_iso(dr%n_mode))
+        allocate (dr%iq(q1)%qs(dr%n_mode))
+        allocate (dr%iq(q1)%mfp(3, dr%n_mode))
+        allocate (dr%iq(q1)%scalar_mfp(dr%n_mode))
+        do b1 = 1, dr%n_mode
+            if (.not. is_lw_read) then
+                dr%iq(q1)%linewidth(b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                                                            dr%default_smearing(b1), opts%sigma) / sqrt(3.0_r8)
+            end if
+            buf_linewidth(q1, b1) = dr%iq(q1)%linewidth(b1)
+        end do
+        dr%iq(q1)%F0 = 0.0_r8
+        dr%iq(q1)%Fn = 0.0_r8
+        dr%iq(q1)%p_plus = 0.0_r8
+        dr%iq(q1)%p_minus = 0.0_r8
+        dr%iq(q1)%p_iso = 0.0_r8
+        dr%iq(q1)%qs = 0.0_r8
+        dr%iq(q1)%mfp = 0.0_r8
+        dr%iq(q1)%scalar_mfp = 0.0_r8
+        if (opts%fourthorder) then
+            allocate (dr%iq(q1)%p_plusplus(dr%n_mode))
+            allocate (dr%iq(q1)%p_plusminus(dr%n_mode))
+            allocate (dr%iq(q1)%p_minusminus(dr%n_mode))
+            dr%iq(q1)%p_plusplus = 0.0_r8
+            dr%iq(q1)%p_plusminus = 0.0_r8
+            dr%iq(q1)%p_minusminus = 0.0_r8
+        end if
     end do
-    do i = 1, qp%n_full_point
-        allocate (dr%aq(i)%kappa(3, 3, dr%n_mode))
-        dr%aq(i)%kappa = 0.0_r8
+    do q1 = 1, qp%n_full_point
+        allocate (dr%aq(q1)%kappa(3, 3, dr%n_mode))
+        dr%aq(q1)%kappa = 0.0_r8
     end do
-    ! First we compute the scattering strength
-    ! We start by initializing the random number generator
-    call rng%init(iseed=mw%r, rseed=walltime())
-    ! For the isotopes
-    if (opts%isotopescattering) then
-        if (mw%talk) then
-            timer_iso = walltime()
-            write(*, *) 'Computing isotope scattering'
-        end if
-        call compute_scattering_isotopes(qp, dr, uc, opts%temperature, opts%integrationtype, opts%sigma, opts%thres, mw, mem)
-        if (mw%talk) then
-            timer_iso = walltime() - timer_iso
-            write(*, "(A,F12.3,A)") 'done in ', timer_iso, ' s'
-        end if
-    end if
-    ! For the third order
-        if (mw%talk) then
-            timer_3ph = walltime()
-            write(*, *) ''
-            write(*, "(A,F12.3,A)") 'Computing threephonon scattering'
-        end if
-    call compute_scattering_threephonon(qp, dr, fct, opts%temperature, opts%nsample3ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
-        if (mw%talk) then
-            timer_3ph = walltime() - timer_3ph
-            write(*, "(A,F12.3,A)") 'done in ', timer_3ph, ' s'
-        end if
-    ! For the fourth order
-    if (opts%fourthorder) then
-        if (mw%talk) then
-            timer_4ph = walltime()
-            write(*, *) ''
-            write(*, *) 'Computing fourphonon scattering'
-        end if
-        call compute_scattering_fourphonon(qp, dr, fcf, opts%temperature, opts%nsample4ph, opts%integrationtype, opts%sigma, opts%thres, rng, mw, mem)
-        if (mw%talk) then
-            timer_4ph = walltime() - timer_4ph
-            write(*, "(A,F12.3,A)") 'done in ', timer_4ph, ' s'
-        end if
-    end if
 
-    ! stop counting timer, start matrixelement timer
-    timer_scatt = walltime() - timer_scatt
+    ! First we compute the scattering strength
+    kappa = 0.0_r8
+    if (mw%talk) timer_scatt = walltime()
+    if (mw%talk) write (*, *) 'THERMAL CONDUCTIVITY'
+    do iter=1, opts%niter
+        if (mw%talk) write(*, "(1X,A,I3,A,I3)") '... iteration ', iter, ' of ', opts%niter
+
+        call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem)
+        call compute_qs(dr, qp, uc, opts%temperature, opts%mfp_max, opts%fourthorder)
+
+        maxdif = -lo_huge
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
+                dr%iq(q1)%linewidth(b1) = opts%mixing * dr%iq(q1)%linewidth(b1) + (1 - opts%mixing) * buf_linewidth(q1, b1)
+                maxdif = maxval([maxdif, abs(dr%iq(q1)%linewidth(b1) - buf_linewidth(q1, b1)) * lo_Hartree_to_eV * 1000_r8])
+                buf_linewidth(q1, b1) = dr%iq(q1)%linewidth(b1)
+            end do
+        end do
+
+        call get_kappa(dr, qp, uc, opts%temperature, kappa)
+        m0 = kappa*lo_kappa_au_to_SI
+        if (mw%talk) then
+            write(*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+            write(*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+            write(*, "(1x,A)") '... writing checkpoint to file'
+            call dr%write_to_hdf5(qp, uc, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
+        end if
+        if (maxdif .lt. opts%scftol) exit
+    end do
+    if (mw%talk) then
+        if (maxdif .lt. opts%scftol) then
+            write(*, "(1X,A)") '... calculation converged'
+        else
+            write(*, "(1X,A)") '... max iteration reached'
+        end if
+        timer_scatt = walltime() - timer_scatt
+        write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
+    end if
 end block scatters
 
 kappa: block
@@ -288,9 +333,6 @@ finalize_and_write: block
         write (*, *) 'Timings:'
         write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    scattering computation:', timer_scatt, ' s, ', real(timer_scatt*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '        isotope scattering:', timer_iso, ' s, ', real(timer_iso*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '            3ph scattering:', timer_3ph, ' s, ', real(timer_3ph*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '            4ph scattering:', timer_4ph, ' s, ', real(timer_4ph*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '                     kappa:', timer_kappa, ' s, ', real(timer_kappa*100/tt0), '%'
         write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
     end if

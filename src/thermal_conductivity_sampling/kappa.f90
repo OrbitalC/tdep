@@ -15,9 +15,65 @@ use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 implicit none
 
 private
+public :: compute_qs
 public :: get_kappa
 public :: get_kappa_offdiag
 contains
+
+
+subroutine compute_qs(dr, qp, uc, temperature, mfpmax, fourthorder)
+    !> dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    !> q-mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> temperature
+    real(r8), intent(in) :: temperature
+    ! Maximum mean free path
+    real(r8), intent(in) :: mfpmax
+    ! Did we do fourthorder ?
+    logical, intent(in) :: fourthorder
+
+    ! some buffer
+    real(r8) :: qs_boundary, n1, omthres, velnorm
+    ! Some integers for the do loops
+    integer :: q1, b1
+
+    omthres = dr%omega_min*0.5_r8
+    do q1 = 1, qp%n_irr_point
+        do b1 = 1, dr%n_mode
+            ! Skip gamma for acoustic branches
+            if (dr%iq(q1)%omega(b1) .lt. omthres) cycle
+            ! First we get the mfp and F0
+            n1 = lo_planck(temperature, dr%iq(q1)%omega(b1))
+            velnorm = norm2(dr%iq(q1)%vel(:, b1))
+            if (mfpmax .gt. 0.0_r8) then
+                qs_boundary = n1 * (n1 + 1.0_r8) * velnorm / mfpmax
+            else
+                qs_boundary = 0.0_r8
+            end if
+
+            dr%iq(q1)%qs(b1) = dr%iq(q1)%p_plus(b1) + &
+                               dr%iq(q1)%p_minus(b1) * 0.5_r8 + &
+                               dr%iq(q1)%p_iso(b1) + &
+                               qs_boundary
+            if (fourthorder) then
+                dr%iq(q1)%qs(b1) = dr%iq(q1)%qs(b1) + dr%iq(q1)%p_plusplus(b1) * 0.5_r8 + &
+                                                      dr%iq(q1)%p_plusminus(b1) * 0.5_r8 + &
+                                                      dr%iq(q1)%p_minusminus(b1) / 6.0_r8
+            end if
+            dr%iq(q1)%linewidth(b1) = 0.5_r8 * dr%iq(q1)%qs(b1) / (n1 * (n1 + 1.0_r8))
+
+            if (velnorm .gt. lo_phonongroupveltol) then
+                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) * 0.5_r8 / dr%iq(q1)%linewidth(b1)
+                dr%iq(q1)%scalar_mfp(b1) = velnorm * 0.5_r8 / dr%iq(q1)%linewidth(b1)
+                dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1) * dr%iq(q1)%omega(b1) / temperature
+                dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
+            end if
+        end do
+    end do
+end subroutine
 
 !> Calculate the thermal conductivity
 subroutine get_kappa(dr, qp, uc, temperature, kappa)
@@ -47,20 +103,12 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
             l = qp%ap(i)%irreducible_index
             ! Skip gamma for acoustic branches
             if (dr%aq(i)%omega(j) .lt. omthres) cycle
-            ! First we get the mfp and F0
-            velnorm = norm2(dr%iq(l)%vel(:, j))
-            if (velnorm .gt. lo_phonongroupveltol) then
-                dr%iq(l)%mfp(:, j) = dr%iq(l)%vel(:, j)*0.5/dr%iq(l)%linewidth(j)
-                dr%iq(l)%scalar_mfp(j) = velnorm*0.5_r8/dr%iq(l)%linewidth(j)
-                dr%iq(l)%F0(:, j) = dr%iq(l)%mfp(:, j)*dr%iq(l)%omega(j)/temperature
-                dr%iq(l)%Fn(:, j) = dr%iq(l)%F0(:, j)
-            end if
             ! Rotate things to this points. Negative is the time reversal thingy, but does not really matter here.
             if (k .gt. 0) then
-                v0 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%F0(:, j), reciprocal=.true.)
+                v0 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%Fn(:, j), reciprocal=.true.)
                 v1 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%vel(:, j), reciprocal=.true.)
             else
-                v0 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%F0(:, j), reciprocal=.true.)
+                v0 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%Fn(:, j), reciprocal=.true.)
                 v1 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%vel(:, j), reciprocal=.true.)
             end if
             ! Get kappa for this q-point
@@ -75,7 +123,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     kappa = 0.0_r8
     do i = 1, qp%n_full_point
         do j = 1, dr%n_mode
-            kappa = kappa + dr%aq(i)%kappa(:, :, j)/qp%n_full_point
+            kappa = kappa + dr%aq(i)%kappa(:, :, j) / qp%n_full_point
         end do
     end do
     f0 = sum(abs(kappa))

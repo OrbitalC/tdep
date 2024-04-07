@@ -49,6 +49,12 @@ type lo_phonon_dispersions_qpoint
     real(r8), dimension(:), allocatable :: p_minus
     !> isotope scattering rate
     real(r8), dimension(:), allocatable :: p_iso
+    !> plus plus scattering rate
+    real(r8), dimension(:), allocatable :: p_plusplus
+    !> plus minus scattering rate
+    real(r8), dimension(:), allocatable :: p_plusminus
+    !> minus minus scattering rate
+    real(r8), dimension(:), allocatable :: p_minusminus
     !> QS parameter for thermal conductivity
     real(r8), dimension(:), allocatable :: qs
     !> Helper for thermal conductivity
@@ -560,6 +566,49 @@ subroutine write_to_hdf5(dr, qp, uc, filename, mem, temperature)
         end do
         call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
         call mem%deallocate(dd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        if (allocated(dr%iq(1)%p_plusplus)) then
+            call mem%allocate(dd, [dr%n_mode, qp%n_full_point], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            dname = 'scattering_rates_plusplus'
+            do i=1, qp%n_full_point
+                k = qp%ap(i)%irreducible_index
+                do j=1, dr%n_mode
+                    if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                        dd(j, i) = 0.0_r8
+                    else
+                        n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                        dd(j, i) = dr%iq(k)%p_plusplus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                    end if
+                end do
+            end do
+            call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+            dname = 'scattering_rates_plusminus'
+            do i=1, qp%n_full_point
+                k = qp%ap(i)%irreducible_index
+                do j=1, dr%n_mode
+                    if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                        dd(j, i) = 0.0_r8
+                    else
+                        n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                        dd(j, i) = dr%iq(k)%p_plusminus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                    end if
+                end do
+            end do
+            call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+            dname = 'scattering_rates_minusminus'
+            do i=1, qp%n_full_point
+                k = qp%ap(i)%irreducible_index
+                do j=1, dr%n_mode
+                    if (dr%aq(i)%omega(j) .lt. dr%omega_min*0.5_r8) then
+                        dd(j, i) = 0.0_r8
+                    else
+                        n1 = lo_planck(temperature, dr%aq(i)%omega(j))
+                        dd(j, i) = dr%iq(k)%p_minusminus(j)*lo_frequency_hartree_to_Hz/(n1*(n1 + 1.0_r8))
+                    end if
+                end do
+            end do
+            call h5%store_data(dd, h5%file_id, trim(dname), enhet='Hz', dimensions='q-vector,mode')
+            call mem%deallocate(dd, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        end if
 
         call mem%allocate(dddd, [3, 3, dr%n_mode, qp%n_full_point], &
                           persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -1198,6 +1247,9 @@ function phonon_dispersions_qpoint_size_in_mem(p) result(mem)
     if (allocated(p%p_plus)) mem = mem + storage_size(p%p_plus)*size(p%p_plus)
     if (allocated(p%p_minus)) mem = mem + storage_size(p%p_minus)*size(p%p_minus)
     if (allocated(p%p_iso)) mem = mem + storage_size(p%p_iso)*size(p%p_iso)
+    if (allocated(p%p_plusplus)) mem = mem + storage_size(p%p_plusplus)*size(p%p_plusplus)
+    if (allocated(p%p_plusminus)) mem = mem + storage_size(p%p_plusminus)*size(p%p_plusminus)
+    if (allocated(p%p_minusminus)) mem = mem + storage_size(p%p_minusminus)*size(p%p_minusminus)
     if (allocated(p%qs)) mem = mem + storage_size(p%qs)*size(p%qs)
     if (allocated(p%F0)) mem = mem + storage_size(p%F0)*size(p%F0)
     if (allocated(p%Fn)) mem = mem + storage_size(p%Fn)*size(p%Fn)
