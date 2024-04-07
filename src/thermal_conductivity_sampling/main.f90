@@ -127,23 +127,20 @@ initharmonic: block
     !if (opts%readlw .and. lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
     if (opts%readlw) then
         if (lo_does_file_exist('checkpoint.grid_thermal_conductivity_sampling.hdf5')) then
-            ! We need to allocate space for the linewidths
-            do i = 1, qp%n_irr_point
-                allocate (dr%iq(i)%linewidth(dr%n_mode))
-            end do
-            write(*, "(1X,A)") '... found checkpoint.grid_thermal_conductivity_sampling.hdf5'
+            if (mw%talk) write(*, "(1X,A)") '... found checkpoint.grid_thermal_conductivity_sampling.hdf5'
             call read_linewidths(dr, qp, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mw, mem)
             is_lw_read = .true.
         else if (lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
-            ! We need to allocate space for the linewidths
-            do i = 1, qp%n_irr_point
-                allocate (dr%iq(i)%linewidth(dr%n_mode))
-            end do
-            write(*, "(1X,A)") '... found infile.grid_thermal_conductivity_sampling.hdf5'
+            if (mw%talk) write(*, "(1X,A)") '... found infile.grid_thermal_conductivity_sampling.hdf5'
             call read_linewidths(dr, qp, 'infile.grid_thermal_conductivity_sampling.hdf5', mw, mem)
             is_lw_read = .true.
         else
             write(*, "(1x,A)") '... no starting point file found, starting from scratch'
+            ! We still need to allocate the linewidths
+            do i = 1, qp%n_irr_point
+                allocate (dr%iq(i)%linewidth(dr%n_mode))
+                dr%iq(i)%linewidth = 0.0_r8
+            end do
         end if
     end if
 

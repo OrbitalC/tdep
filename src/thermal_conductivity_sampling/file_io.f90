@@ -36,7 +36,7 @@ subroutine read_linewidths(dr, qp, filename, mw, mem)
     integer, dimension(2) :: buf_shape
 
 
-    write(*, "(1X,A)") '... reading linewidth'
+    if (mw%talk) write(*, "(1X,A)") '... reading linewidth'
 
     readrnk = mw%n - 1
     n_mode = -1
@@ -72,9 +72,17 @@ subroutine read_linewidths(dr, qp, filename, mw, mem)
             end do
         end do
     end if
+
     ! And now we broadcast
+    if (mw%r .ne. readrnk) then
+        allocate(lw(dr%n_mode, qp%n_full_point))
+    end if
     call mw%bcast(lw, from=readrnk)
 
+    do q1 = 1, qp%n_irr_point
+        allocate (dr%iq(q1)%linewidth(dr%n_mode))
+        dr%iq(q1)%linewidth = 0.0_r8
+    end do
     ! Now we can populate the linewidths
     do q1=1, qp%n_full_point
         do b1=1, dr%n_mode
