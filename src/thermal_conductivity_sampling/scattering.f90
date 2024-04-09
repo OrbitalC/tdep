@@ -133,6 +133,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
         end do
     end do
 
+    ! We can allocate all we need
     sr%nlocal_point = nlocal_point
     allocate(sr%q1(nlocal_point))
     allocate(sr%b1(nlocal_point))
@@ -140,6 +141,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     if (opts%thirdorder) allocate(sr%threephonon(nlocal_point))
     if (opts%fourthorder) allocate(sr%fourphonon(nlocal_point))
 
+    ! Let's attribute the q1/b1 indices to the rank
     i = 0
     ctr = 0
     do q1=1, qp%n_irr_point
@@ -168,7 +170,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     if (opts%thirdorder) then
         nqpt = minval([opts%nsample3ph, qp%n_full_point])
         sr%nqpt3ph = nqpt
-        sr%mle_ratio3ph = real(qp%n_full_point, r8) / real(nqpt, r8)
+        sr%mle_ratio3ph = real(qp%n_full_point, r8) / real(sr%nqpt3ph, r8)
 
         do i=1, sr%nlocal_point
             allocate(sr%threephonon(i)%q2(nqpt))
@@ -191,7 +193,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     if (opts%fourthorder) then
         nqpt = minval([opts%nsample4ph, qp%n_full_point**2])
         sr%nqpt4ph = nqpt
-        sr%mle_ratio4ph = real(qp%n_full_point**2, r8) / real(nqpt, r8)
+        sr%mle_ratio4ph = real(qp%n_full_point**2, r8) / real(sr%nqpt4ph, r8)
 
         do i=1, sr%nlocal_point
             allocate(sr%fourphonon(i)%q2(nqpt))
@@ -323,7 +325,10 @@ subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
     ! Integers for do loops
     integer :: i, q1, q2, q3, b1, b2, b3
 
-    ! Already set some buffer values for mode (q1, b1)
+    complex(r8), dimension(dr%n_mode, 3) :: tmp
+    real(r8), dimension(3) :: tmpomega
+
+    ! Already set some values for mode (q1, b1)
     q1 = sr%q1(il)
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
@@ -342,15 +347,16 @@ subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+
+            evp1 = 0.0_r8
+            call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
 
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                evp1 = 0.0_r8
                 evp2 = 0.0_r8
-                call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
                 call zgeru(dr%n_mode, dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                 evp2 = conjg(evp2)
                 c0 = dot_product(evp2, ptf)
@@ -419,22 +425,22 @@ subroutine fourphonon_scattering(il, sr, qp, dr, fcf, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+            evp1 = 0.0_r8
+            call zgeru(dr%n_mode, dr%n_mode,    (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
 
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                evp2 = 0.0_r8
+                call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                 do b4=1, dr%n_mode
                     om4 = dr%aq(q4)%omega(b4)
                     if (om4 .lt. lo_freqtol) cycle
 
                     egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
 
-                    evp1 = 0.0_r8
-                    evp2 = 0.0_r8
                     evp3 = 0.0_r8
-                    call zgeru(dr%n_mode, dr%n_mode,    (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
-                    call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                     call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
                     evp3 = conjg(evp3)
                     c0 = dot_product(evp3, ptf)

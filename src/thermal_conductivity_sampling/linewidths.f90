@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module linewidths
 use konstanter, only: r8, lo_freqtol, lo_huge, lo_phonongroupveltol
-use gottochblandat, only: walltime, lo_lorentz, lo_planck
+use gottochblandat, only: walltime, lo_lorentz, lo_planck, lo_gauss
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -35,7 +35,7 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
     real(r8), dimension(:, :), allocatable :: buf_lw, old_lw
     real(r8) :: maxdif, t0, buf, n1, velnorm
     !> Integers for the loops
-    integer :: i, il, q1, b1, b2
+    integer :: i, j, il, q1, b1, b2
 
     call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(old_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -57,10 +57,7 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
         buf_lw = 0.0_r8
         ! Lets compute the scattering rates
         do il=1, sr%nlocal_point
-            q1 = sr%q1(il)
-            b1 = sr%b1(il)
             buf = 0.0_r8
-
             if (opts%isotopescattering) then
                 call compute_scatteringrate_isotope(il, buf, old_lw, dr, qp, sr, opts%temperature, mw, mem)
             end if
@@ -70,6 +67,9 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
             if (opts%fourthorder) then
                 call compute_scatteringrate_fourphonon(il, buf, old_lw, dr, qp, sr, opts%temperature, mw, mem)
             end if
+
+            q1 = sr%q1(il)
+            b1 = sr%b1(il)
             n1 = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
             ! Let's add the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
@@ -85,6 +85,20 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
         do q1=1, qp%n_irr_point
             do b1=1, dr%n_mode
                 if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+
+                ! First we fix the degeneracy
+                buf = 0.0_r8
+                do j=1, dr%iq(q1)%degeneracy(b1)
+                    b2 = dr%iq(q1)%degenmode(j, b1)
+                    buf = buf + buf_lw(q1, b2)
+                end do
+                buf = buf / real(dr%iq(q1)%degeneracy(b1), r8)
+                do j=1, dr%iq(q1)%degeneracy(b1)
+                    b2 = dr%iq(q1)%degenmode(j, b1)
+                    buf_lw(q1, b2) = buf
+                end do
+
+                ! Now we update the value
                 buf_lw(q1, b1) = opts%mixing * buf_lw(q1, b1) + (1 - opts%mixing) * old_lw(q1, b1)
                 maxdif = maxval([maxdif, abs(buf_lw(q1, b1) - old_lw(q1, b1)) / buf_lw(q1, b1)])
             end do
@@ -98,23 +112,24 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
     ! Now we need to compute the Fn
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
-            if (buf_lw(q1, b1) .lt. lo_freqtol) cycle
+            ! Skip gamma for acoustic branches
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
 
             ! First we fix the degeneracy
             buf = 0.0_r8
-            do i=1, dr%iq(q1)%degeneracy(b1)
-                b2 = dr%iq(q1)%degenmode(i, b1)
+            do j=1, dr%iq(q1)%degeneracy(b1)
+                b2 = dr%iq(q1)%degenmode(j, b1)
                 buf = buf + buf_lw(q1, b2)
             end do
             buf = buf / real(dr%iq(q1)%degeneracy(b1), r8)
-            do i=1, dr%iq(q1)%degeneracy(b1)
-                b2 = dr%iq(q1)%degenmode(i, b1)
+            do j=1, dr%iq(q1)%degeneracy(b1)
+                b2 = dr%iq(q1)%degenmode(j, b1)
                 buf_lw(q1, b2) = buf
             end do
 
             n1 = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
             dr%iq(q1)%linewidth(b1) = buf_lw(q1, b1)
-            dr%iq(q1)%qs(b1) = 2.0_r8 * (n1 * (n1 + 1.0_r8)) * buf_lw(q1, b1)
+            dr%iq(q1)%qs(b1) = 2.0_r8 * n1 * (n1 + 1.0_r8) * buf_lw(q1, b1)
 
             velnorm = norm2(dr%iq(q1)%vel(:, b1))
             if (velnorm .gt. lo_phonongroupveltol) then
@@ -169,8 +184,18 @@ subroutine compute_scatteringrate_isotope(il, buf, lw, dr, qp, sr, temperature, 
             n2 = lo_planck(temperature, om2)
             sig2 = lw(q2i, b2)
 
-            sigma = 2.0_r8 * (sig1 + sig2)
-            f0 = sr%iso(il)%psisq(b2, q2) * lo_lorentz(om1, om2, sigma)
+
+
+            sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)
+            sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+            sigma = sqrt(sig1**2 + sig2**2)
+
+            f0 = sr%iso(il)%psisq(b2, q2) * lo_gauss(om1, om2, sigma)
+
+
+
+            !sigma = 2.0_r8 * (sig1 + sig2)
+            !f0 = sr%iso(il)%psisq(b2, q2) * lo_lorentz(om1, om2, sigma)
             f0 = f0 * om1 * om2 * n1 * (n2 + 1.0_r8)
             buf = buf + f0
             sr%iso(il)%W(b2, q2) = f0
@@ -214,28 +239,40 @@ subroutine compute_scatteringrate_threephonon(il, buf, lw, dr, qp, sr, temperatu
         q2i = qp%ap(q2)%irreducible_index
         q3i = qp%ap(q3)%irreducible_index
         do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
             do b3=1, dr%n_mode
-
-                om2 = dr%aq(q2)%omega(b2)
                 om3 = dr%aq(q3)%omega(b3)
+                if (om3 .lt. lo_freqtol) cycle
 
-                if (any([om2, om3] .lt. lo_freqtol)) cycle
+                ! if (any([om2, om3] .lt. lo_freqtol)) cycle
 
                 n2 = lo_planck(temperature, om2)
                 n3 = lo_planck(temperature, om3)
-                sig2 = lw(q2i, b2)
-                sig3 = lw(q3i, b3)
+!               sig2 = lw(q2i, b2)
+!               sig3 = lw(q3i, b3)
 
-                sigma = 2.0_r8 * (sig2 + sig3)
+!               sigma = 2.0_r8 * (sig2 + sig3)
 
-                plf = n1 * n2 * (n3 + 1.0_r8) * lo_lorentz(om1, -om2 + om3, sigma)
+
+
+                sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)
+                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)
+                sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+
+
+
+                plf = n1 * n2 * (n3 + 1.0_r8) * lo_gauss(om1, -om2 + om3, sigma)
+                !plf = n1 * n2 * (n3 + 1.0_r8) * lo_lorentz(om1, -om2 + om3, sigma)
                 f0 = plf * sr%threephonon(il)%psisq(b2, b3, i)
                 buf = buf + f0 * sr%mle_ratio3ph
                 sr%threephonon(il)%Wplus(b2, b3, i) = f0
 
-                plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * lo_lorentz(om1, om2 + om3, sigma)
+                plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
+                !plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * lo_lorentz(om1, om2 + om3, sigma)
                 f0 = plf * sr%threephonon(il)%psisq(b2, b3, i)
-                buf = buf + f0 * sr%mle_ratio3ph
+                buf = buf + f0 * sr%mle_ratio3ph * 0.5_r8
                 sr%threephonon(il)%Wminus(b2, b3, i) = f0
             end do
         end do
@@ -296,21 +333,35 @@ subroutine compute_scatteringrate_fourphonon(il, buf, lw, dr, qp, sr, temperatur
                     sig3 = lw(q3i, b3)
                     sig4 = lw(q4i, b4)
 
-                    sigma = 2.0_r8 * (sig2 + sig3 + sig4)
 
-                    plf = n1 * n2 * n3 * (n4 + 1.0_r8) * lo_lorentz(om1, -om2 - om3 + om4, sigma)
+
+
+                sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)
+                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)
+                sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), dr%default_smearing(b4), 1.0_r8)
+                sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+
+
+
+                    !sigma = 2.0_r8 * (sig2 + sig3 + sig4)
+
+                    plf = n1 * n2 * n3 * (n4 + 1.0_r8) * lo_gauss(om1, -om2 - om3 + om4, sigma)
+                    !plf = n1 * n2 * n3 * (n4 + 1.0_r8) * lo_lorentz(om1, -om2 - om3 + om4, sigma)
                     f0 = plf * sr%fourphonon(il)%psisq(b2, b3, b4, i)
-                    buf = buf + f0 * sr%mle_ratio4ph
+                    buf = buf + f0 * sr%mle_ratio4ph * 0.5_r8
                     sr%fourphonon(il)%Wpp(b2, b3, b4, i) = f0
 
-                    plf = n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_lorentz(om1, -om2 + om3 + om4, sigma)
+                    plf = n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_gauss(om1, -om2 + om3 + om4, sigma)
+                    !plf = n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_lorentz(om1, -om2 + om3 + om4, sigma)
                     f0 = plf * sr%fourphonon(il)%psisq(b2, b3, b4, i)
-                    buf = buf + f0 * sr%mle_ratio4ph
+                    buf = buf + f0 * sr%mle_ratio4ph * 0.5_r8
                     sr%fourphonon(il)%Wpm(b2, b3, b4, i) = f0
 
-                    plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_lorentz(om1, om2 + om3 + om4, sigma)
+                    plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_gauss(om1, om2 + om3 + om4, sigma)
+                    !plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_lorentz(om1, om2 + om3 + om4, sigma)
                     f0 = plf * sr%fourphonon(il)%psisq(b2, b3, b4, i)
-                    buf = buf + f0 * sr%mle_ratio4ph
+                    buf = buf + f0 * sr%mle_ratio4ph / 6.0_r8
                     sr%fourphonon(il)%Wmm(b2, b3, b4, i) = f0
                 end do
             end do

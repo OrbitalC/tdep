@@ -347,6 +347,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
 
             Fbb = 0.0_r8
             do iq = 1, qp%n_full_point
+                if (mod(iq, mw%n) .ne. mw%r) cycle
                 iop = qp%ap(iq)%operation_from_irreducible
                 jq = qp%ap(iq)%irreducible_index
                 do b1 = 1, dr%n_mode
@@ -359,6 +360,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                     end if
                 end do
             end do
+            call mw%allreduce('sum', Fbb)
         end block foldout
 
         ! update F to new values
@@ -373,7 +375,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                 q1 = sr%q1(il)
                 b1 = sr%b1(il)
                 ! prefetch some stuff
-                iQS = 1.0_r8/dr%iq(q1)%qs(b1)
+                iQS = 1.0_r8 / dr%iq(q1)%qs(b1)
                 v0 = 0.0_r8
                 if (isotope) then
                     do q2 = 1, qp%n_full_point
@@ -422,7 +424,6 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         end do
                     end do
                 end if
-                !call mw%allreduce('sum', v0)
                 Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0
             end do
             call mw%allreduce('sum', Fnb)
