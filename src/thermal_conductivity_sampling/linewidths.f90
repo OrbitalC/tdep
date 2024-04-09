@@ -271,7 +271,6 @@ subroutine compute_scatteringrate_fourphonon(il, buf, lw, dr, qp, sr, temperatur
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
     n1 = lo_planck(temperature, om1)
-    sig1 = lw(q1, b1)
     do i=1, sr%nqpt4ph
         q2 = sr%fourphonon(il)%q2(i)
         q3 = sr%fourphonon(il)%q3(i)
