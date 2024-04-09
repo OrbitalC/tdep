@@ -16,9 +16,11 @@ type lo_opts
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: mixing             !< mixing parameter for self consistent linewidth
     real(flyt) :: scftol             !< tolerance for the self-consistent linewidth
+    real(flyt) :: btetol             !< tolerance for the self-consistent linewidth
     integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
     integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
     integer :: niter                 !< Number of iteration for the self consistent linewidths
+    integer :: bteniter                 !< Number of iteration for the self consistent linewidths
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
@@ -108,6 +110,10 @@ subroutine parse(opts)
                  help='Tolerance for the self-consistent linewidth.', &
                  required=.false., act='store', def='1e-2', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--btetol', &
+                 help='Tolerance for the iterative BTE solution.', &
+                 required=.false., act='store', def='1e-5', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--dumpgrid', &
                  help='Write files with q-vectors, frequencies, eigenvectors and group velocities for a grid.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
@@ -126,7 +132,11 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--niter', &
                  help='Number of iterations for the self consistent computation of the linewidths.', &
-                 required=.false., act='store', def='1', error=lo_status)
+                 required=.false., act='store', def='100', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--bte_niter', &
+                 help='Number of iterations for the iterative Boltzmann equation.', &
+                 required=.false., act='store', def='200', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -174,6 +184,7 @@ subroutine parse(opts)
     call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
     if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
     call cli%get(switch='--niter', val=opts%niter)
+    call cli%get(switch='--bte_niter', val=opts%bteniter)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
@@ -192,6 +203,7 @@ subroutine parse(opts)
         stop
     end if
     call cli%get(switch='--scftol', val=opts%scftol)
+    call cli%get(switch='--btetol', val=opts%btetol)
     call cli%get(switch='--dumpgrid', val=opts%dumpgrid)
     ! stuff that's not really an option
     call cli%get(switch='--correctionlevel', val=opts%correctionlevel)

@@ -12,68 +12,16 @@ use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transform
 use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
+use new_scattering, only: lo_scattering_rates
+
 implicit none
 
 private
-public :: compute_qs
 public :: get_kappa
 public :: get_kappa_offdiag
+public :: iterative_bte
 contains
 
-
-subroutine compute_qs(dr, qp, uc, temperature, mfpmax, fourthorder)
-    !> dispersions
-    type(lo_phonon_dispersions), intent(inout) :: dr
-    !> q-mesh
-    class(lo_qpoint_mesh), intent(in) :: qp
-    !> structure
-    type(lo_crystalstructure), intent(in) :: uc
-    !> temperature
-    real(r8), intent(in) :: temperature
-    ! Maximum mean free path
-    real(r8), intent(in) :: mfpmax
-    ! Did we do fourthorder ?
-    logical, intent(in) :: fourthorder
-
-    ! some buffer
-    real(r8) :: qs_boundary, n1, omthres, velnorm
-    ! Some integers for the do loops
-    integer :: q1, b1
-
-    omthres = dr%omega_min*0.5_r8
-    do q1 = 1, qp%n_irr_point
-        do b1 = 1, dr%n_mode
-            ! Skip gamma for acoustic branches
-            if (dr%iq(q1)%omega(b1) .lt. omthres) cycle
-            ! First we get the mfp and F0
-            n1 = lo_planck(temperature, dr%iq(q1)%omega(b1))
-            velnorm = norm2(dr%iq(q1)%vel(:, b1))
-            if (mfpmax .gt. 0.0_r8) then
-                qs_boundary = n1 * (n1 + 1.0_r8) * velnorm / mfpmax
-            else
-                qs_boundary = 0.0_r8
-            end if
-
-            dr%iq(q1)%qs(b1) = dr%iq(q1)%p_plus(b1) + &
-                               dr%iq(q1)%p_minus(b1) * 0.5_r8 + &
-                               dr%iq(q1)%p_iso(b1) + &
-                               qs_boundary
-            if (fourthorder) then
-                dr%iq(q1)%qs(b1) = dr%iq(q1)%qs(b1) + dr%iq(q1)%p_plusplus(b1) * 0.5_r8 + &
-                                                      dr%iq(q1)%p_plusminus(b1) * 0.5_r8 + &
-                                                      dr%iq(q1)%p_minusminus(b1) / 6.0_r8
-            end if
-            dr%iq(q1)%linewidth(b1) = 0.5_r8 * dr%iq(q1)%qs(b1) / (n1 * (n1 + 1.0_r8))
-
-            if (velnorm .gt. lo_phonongroupveltol) then
-                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) * 0.5_r8 / dr%iq(q1)%linewidth(b1)
-                dr%iq(q1)%scalar_mfp(b1) = velnorm * 0.5_r8 / dr%iq(q1)%linewidth(b1)
-                dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1) * dr%iq(q1)%omega(b1) / temperature
-                dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
-            end if
-        end do
-    end do
-end subroutine
 
 !> Calculate the thermal conductivity
 subroutine get_kappa(dr, qp, uc, temperature, kappa)
@@ -344,5 +292,202 @@ contains
         ib = (a2 - 1)*3 + iy
         i = (ib - 1)*nb + ia
     end function
+end subroutine
+
+
+subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
+                         isotope, threephonon, fourphonon, mw, mem)
+    !> integration weights
+    type(lo_scattering_rates), intent(inout) :: sr
+    !> dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    !> q-mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> Temperature
+    real(r8), intent(in) :: temperature
+    !> Max number of iterations
+    integer, intent(in) :: niter
+    !> Tolerance
+    real(r8), intent(in) :: tol
+    !> What do we compute ?
+    logical, intent(in) :: isotope, threephonon, fourphonon
+    !> MPI helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
+
+    real(r8), dimension(:, :, :), allocatable :: Fnb, Fbb
+    real(r8), dimension(3, 3) :: kappa
+    real(r8), dimension(niter) :: scfcheck
+    real(r8) :: mixingparameter
+    integer :: iter
+
+    ! set some things and make space
+    init: block
+        real(r8), dimension(3, 3) :: m0
+        mixingparameter = 0.95_r8
+        allocate (Fnb(3, dr%n_mode, dr%n_irr_qpoint))
+        allocate (Fbb(3, dr%n_mode, dr%n_full_qpoint))
+        Fnb = 0.0_r8
+        Fbb = 0.0_r8
+        scfcheck = 0.0_r8
+        ! Get the first kappa-value
+        call get_kappa(dr, qp, uc, temperature, kappa)
+        m0 = kappa*lo_kappa_au_to_SI
+        if (mw%talk) write (*, "(1X,I4,6(1X,F14.4))") 0, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+    end block init
+
+    scfloop: do iter = 1, niter
+        ! get the Fn values all across the BZ
+        foldout: block
+            real(r8), dimension(3) :: v
+            integer :: iq, jq, iop, b1
+
+            Fbb = 0.0_r8
+            do iq = 1, qp%n_full_point
+                iop = qp%ap(iq)%operation_from_irreducible
+                jq = qp%ap(iq)%irreducible_index
+                do b1 = 1, dr%n_mode
+                    if (iop .gt. 0) then
+                        v = lo_operate_on_vector(uc%sym%op(iop), dr%iq(jq)%Fn(:, b1), reciprocal=.true.)
+                        Fbb(:, b1, iq) = v
+                    else
+                        v = -lo_operate_on_vector(uc%sym%op(abs(iop)), dr%iq(jq)%Fn(:, b1), reciprocal=.true.)
+                        Fbb(:, b1, iq) = v
+                    end if
+                end do
+            end do
+        end block foldout
+
+        ! update F to new values
+        updateF: block
+            real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
+            real(r8) :: iQs, W
+            integer :: il, j, b1, b2, b3, b4, q2, q3, q4
+            integer :: q1
+
+            Fnb = 0.0_r8
+            do il=1, sr%nlocal_point
+                q1 = sr%q1(il)
+                b1 = sr%b1(il)
+                ! prefetch some stuff
+                iQS = 1.0_r8/dr%iq(q1)%qs(b1)
+                v0 = 0.0_r8
+                if (isotope) then
+                    do q2 = 1, qp%n_full_point
+                        do b2=1, dr%n_mode
+                            Fp = Fbb(:, b2, q2)
+                            v0 = v0 + sr%iso(il)%W(b2, q2) * iQs * Fp
+                        end do
+                    end do
+                end if
+                if (threephonon) then
+                    do j=1, sr%nqpt3ph
+                        q2 = sr%threephonon(il)%q2(j)
+                        q3 = sr%threephonon(il)%q3(j)
+                        do b2=1, dr%n_mode
+                        do b3=1, dr%n_mode
+                            ! scattering plus
+                            Fp = Fbb(:, b2, q2)
+                            Fpp = Fbb(:, b3, q3)
+                            v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%Wplus(b2, b3, j) * &
+                                    iQs * sr%mle_ratio3ph
+                            v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%Wminus(b2, b3, j) * &
+                                    iQs * sr%mle_ratio3ph * 0.5_r8
+                        end do
+                        end do
+                    end do
+                end if
+                if (fourphonon) then
+                    do j=1, sr%nqpt4ph
+                        q2 = sr%fourphonon(il)%q2(j)
+                        q3 = sr%fourphonon(il)%q3(j)
+                        q4 = sr%fourphonon(il)%q4(j)
+                        do b2=1, dr%n_mode
+                        do b3=1, dr%n_mode
+                        do b4=1, dr%n_mode
+                            Fp = Fbb(:, b2, q2)
+                            Fpp = Fbb(:, b3, q3)
+                            Fppp = Fbb(:, b4, q4)
+                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wpp(b2, b3, b4, j) * &
+                                        iQs * sr%mle_ratio4ph * 0.5_r8
+                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wpm(b2, b3, b4, j) * &
+                                        iQs * sr%mle_ratio4ph * 0.5_r8
+                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wmm(b2, b3, b4, j) * &
+                                        iQs * sr%mle_ratio4ph / 6.0_r8
+                        end do
+                        end do
+                        end do
+                    end do
+                end if
+                !call mw%allreduce('sum', v0)
+                Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0
+            end do
+            call mw%allreduce('sum', Fnb)
+
+            ! make sure degeneracies are satisfied properly and add the previous thing
+            do q1=1, qp%n_irr_point
+                do b1 = 1, dr%n_mode
+                    v0 = 0.0_r8
+                    do j = 1, dr%iq(q1)%degeneracy(b1)
+                        b2 = dr%iq(q1)%degenmode(j, b1)
+                        v0 = v0 + Fnb(:, b2, q1)
+                    end do
+                    v0 = v0/real(dr%iq(q1)%degeneracy(b1), r8)
+                    do j = 1, dr%iq(q1)%degeneracy(b1)
+                        b2 = dr%iq(q1)%degenmode(j, b1)
+                        Fnb(:, b2, q1) = v0
+                    end do
+                    ! Add the previous thing
+                    Fnb(:, b1, q1) = dr%iq(q1)%F0(:, b1) + Fnb(:, b1, q1)
+                end do
+            end do
+        end block updateF
+
+        ! Add everything together and check convergency
+        addandcheck: block
+            real(r8), dimension(3, 3) :: m0
+            real(r8) :: g0, g1, g2
+            integer :: i, j
+
+            g0 = 0.0_r8
+            do i = 1, dr%n_irr_qpoint
+            do j = 1, dr%n_mode
+                g1 = lo_sqnorm(dr%iq(i)%Fn(:, j) - Fnb(:, j, i))
+                g2 = lo_sqnorm(dr%iq(i)%Fn(:, j))
+                if (g2 .gt. lo_sqtol) then
+                    g0 = g0 + g1/g2
+                end if
+                dr%iq(i)%Fn(:, j) = dr%iq(i)%Fn(:, j)*(1.0_r8 - mixingparameter) + &
+                                    mixingparameter*(Fnb(:, j, i))
+            end do
+            end do
+            scfcheck(iter) = g0/qp%n_irr_point/dr%n_mode
+
+            ! Check for convergence. The criterion is that the relative difference between the new
+            ! and old Fn is to be one part in 1E-5, for two consecutive iterations.
+            if (iter .ge. 3) then
+                g0 = sum(scfcheck(iter - 2:iter))
+                if (g0 .lt. tol) then
+                    exit scfloop
+                end if
+            end if
+
+            ! We are not converged if we made it here. Get the current kappa, to print to stdout.
+            call get_kappa(dr, qp, uc, temperature, kappa)
+            m0 = kappa*lo_kappa_au_to_SI
+            if (mw%r .eq. 0) write (*, "(1X,I4,6(1X,F14.4),2X,ES10.3)") &
+                iter, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), scfcheck(iter)
+
+            ! If we had too many iterations I want to adjust the mixing a little
+            if (iter .gt. 15 .and. mixingparameter .gt. 0.10) then
+                mixingparameter = mixingparameter*0.98_r8
+            end if
+        end block addandcheck
+    end do scfloop
+    deallocate(Fnb)
+    deallocate(Fbb)
 end subroutine
 end module

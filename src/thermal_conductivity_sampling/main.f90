@@ -16,10 +16,9 @@ use dump_data, only: lo_dump_gnuplot_2d_real
 use lo_randomnumbers, only: lo_mersennetwister
 !
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag, compute_qs
-!use scattering, only: compute_scattering_isotopes, compute_scattering_threephonon, &
-!                      compute_scattering_fourphonon
-use scattering, only: compute_scattering
+use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
+use new_scattering, only: compute_scattering, lo_scattering_rates
+use linewidths, only: self_consistent_linewidths
 use file_io, only: read_linewidths
 
 implicit none
@@ -35,10 +34,12 @@ class(lo_qpoint_mesh), allocatable :: qp
 type(lo_mersennetwister) :: rng
 type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
+! The scattering rates
+type(lo_scattering_rates) :: sr
 ! Small stuff
 real(r8), dimension(:, :), allocatable :: thermal_cond
 ! timers
-real(r8) :: timer_init, timer_scatt, timer_kappa, timer_count, tt0, timer_3ph, timer_4ph, timer_iso
+real(r8) :: timer_init, timer_scatt, timer_kappa, timer_lw, tt0
 ! Do we read the linewidths ?
 logical :: is_lw_read
 
@@ -53,7 +54,7 @@ initharmonic: block
     call mw%init()
     ! Get options
     call opts%parse()
-    if (mw%r .ne. 0) opts%verbosity = -100
+    if (.not. mw%talk) opts%verbosity = -100
     ! Init memory tracker
     call mem%init()
 
@@ -79,7 +80,7 @@ initharmonic: block
                     uc%isotope(i)%disorderparameter
             end do
         end if
-    elseif (opts%verbosity .gt. 0) then
+    elseif (mw%talk .and. opts%verbosity .gt. 0) then
         do i = 1, uc%na
             do j = 1, uc%isotope(i)%n
                 write (*, "('    isotope: ',I2,' concentration: ',F8.5,' mass: ',F12.6)") &
@@ -134,10 +135,9 @@ initharmonic: block
             if (mw%talk) write(*, "(1X,A)") '... found infile.grid_thermal_conductivity_sampling.hdf5'
             call read_linewidths(dr, qp, 'infile.grid_thermal_conductivity_sampling.hdf5', mw, mem)
             is_lw_read = .true.
-        else
-            if (mw%talk) write(*, "(1x,A)") '... no starting point file found, starting from scratch'
         end if
     end if
+    if (mw%talk .and. .not. is_lw_read) write(*, "(1x,A)") '... no starting point file found, starting from scratch'
 
     ! now I have all harmonic things, stop the init timer
     timer_init = walltime() - timer_init
@@ -156,6 +156,18 @@ scatters: block
         write (*, *) ''
         write (*, *) 'Calculating scattering events'
     end if
+    call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
+    timer_scatt = walltime() - timer_scatt
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
+end block scatters
+
+linewidths: block
+    integer :: i, iter, q1, b1
+    if (mw%talk) then
+        write (*, *) ''
+        write (*, *) 'Calculating linewidths'
+    end if
+    timer_lw = walltime()
 
     ! Make some space to keep intermediate values
     do q1 = 1, qp%n_irr_point
@@ -173,7 +185,6 @@ scatters: block
                 dr%iq(q1)%linewidth(b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
                                                             dr%default_smearing(b1), opts%sigma) / sqrt(3.0_r8)
             end if
-            buf_linewidth(q1, b1) = dr%iq(q1)%linewidth(b1)
         end do
         dr%iq(q1)%F0 = 0.0_r8
         dr%iq(q1)%Fn = 0.0_r8
@@ -197,46 +208,10 @@ scatters: block
         dr%aq(q1)%kappa = 0.0_r8
     end do
 
-    ! First we compute the scattering strength
-    kappa = 0.0_r8
-    if (mw%talk) timer_scatt = walltime()
-    if (mw%talk) write (*, *) 'THERMAL CONDUCTIVITY'
-    do iter=1, opts%niter
-        if (mw%talk) write(*, "(1X,A,I3,A,I3)") '... iteration ', iter, ' of ', opts%niter
-
-        call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem)
-        call compute_qs(dr, qp, uc, opts%temperature, opts%mfp_max, opts%fourthorder)
-
-        maxdif = -lo_huge
-        do q1 = 1, qp%n_irr_point
-            do b1 = 1, dr%n_mode
-                if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-                dr%iq(q1)%linewidth(b1) = opts%mixing * dr%iq(q1)%linewidth(b1) + (1 - opts%mixing) * buf_linewidth(q1, b1)
-                maxdif = maxval([maxdif, abs(dr%iq(q1)%linewidth(b1) - buf_linewidth(q1, b1)) / dr%iq(q1)%linewidth(b1)])
-                buf_linewidth(q1, b1) = dr%iq(q1)%linewidth(b1)
-            end do
-        end do
-
-        call get_kappa(dr, qp, uc, opts%temperature, kappa)
-        m0 = kappa*lo_kappa_au_to_SI
-        if (mw%talk) then
-            write(*, "(1X,A4,6(1X,A14),1X,A16)") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaGamma/Gamma'
-            write(*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), maxdif
-            write(*, "(1x,A)") '... writing checkpoint to file'
-            call dr%write_to_hdf5(qp, uc, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
-        end if
-        if (maxdif .lt. opts%scftol) exit
-    end do
-    if (mw%talk) then
-        if (maxdif .lt. opts%scftol) then
-            write(*, "(1X,A)") '... calculation converged'
-        else
-            write(*, "(1X,A)") '... max iteration reached'
-        end if
-        timer_scatt = walltime() - timer_scatt
-        write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
-    end if
-end block scatters
+    call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
+    timer_lw = walltime() - timer_lw
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
+end block linewidths
 
 kappa: block
     real(r8), dimension(3, 3) :: kappa, kappa_offdiag, kappa_sma, m0
@@ -263,25 +238,40 @@ kappa: block
 
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
-    kappa = kappa_sma + kappa_offdiag
+    if (opts%bteniter .gt. 0) then
+        if (mw%talk) then
+            write(*, *) ''
+            write(*, *) '... solving iterative BTE'
+            write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
+                       'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
+        end if
+        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%bteniter, opts%btetol, &
+                           opts%isotopescattering, opts%thirdorder, opts%fourthorder, mw, mem)
+    end if
+    call get_kappa(dr, qp, uc, opts%temperature, kappa)
     if (mw%talk) then
         write (*, *) ''
         write (*, *) 'THERMAL CONDUCTIVITY'
-        m0 = kappa_sma*lo_kappa_au_to_SI
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
+        m0 = kappa_sma*lo_kappa_au_to_SI
         write (*, "(1X,A85)") 'Single mode relaxation time approximation (RTA) to Boltzmann transport equation (BTE)'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = (kappa - kappa_sma)*lo_kappa_au_to_SI
+        write (*, "(1X,A73)") 'Correction to full solution of the linearized BTE via iterative procedure'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
         m0 = kappa_offdiag*lo_kappa_au_to_SI
         write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        m0 = kappa*lo_kappa_au_to_SI
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = (kappa + kappa_offdiag)*lo_kappa_au_to_SI
         write (*, "(1X,A26)") 'Total thermal conductivity'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4),2X,E10.3)") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
     end if
+    kappa = kappa + kappa_offdiag
 
     ! Store thermal conductivity tensor
     thermal_cond(1, 1) = opts%temperature
@@ -321,11 +311,12 @@ finalize_and_write: block
         write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
         write (*, '(1X,A41,A46)') 'Sampling method for scattering : ', 'Z. Guo et al., npj Comput Matter 10, 31 (2024)'
 
-        t0 = timer_init + timer_count + timer_kappa
+        t0 = timer_init + timer_lw + timer_scatt + timer_kappa
         write (*, *) ' '
         write (*, *) 'Timings:'
         write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    scattering computation:', timer_scatt, ' s, ', real(timer_scatt*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '                linewidths:', timer_lw, ' s, ', real(timer_lw*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '                     kappa:', timer_kappa, ' s, ', real(timer_kappa*100/tt0), '%'
         write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
     end if
