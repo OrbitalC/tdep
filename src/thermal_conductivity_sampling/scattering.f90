@@ -329,7 +329,7 @@ subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
 
-    do i=1, sr%nqpt3ph
+    do i=1, sr%nqpt4ph
         q2 = sr%threephonon(il)%q2(i)
         q3 = sr%threephonon(il)%q3(i)
 

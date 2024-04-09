@@ -35,7 +35,7 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
     real(r8), dimension(:, :), allocatable :: buf_lw, old_lw
     real(r8) :: maxdif, t0, buf, n1, velnorm
     !> Integers for the loops
-    integer :: i, il, q1, b1
+    integer :: i, il, q1, b1, b2
 
     call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(old_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -99,6 +99,18 @@ subroutine self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             if (buf_lw(q1, b1) .lt. lo_freqtol) cycle
+
+            ! First we fix the degeneracy
+            buf = 0.0_r8
+            do i=1, dr%iq(q1)%degeneracy(b1)
+                b2 = dr%iq(q1)%degenmode(i, b1)
+                buf = buf + buf_lw(q1, b2)
+            end do
+            buf = buf / real(dr%iq(q1)%degeneracy(b1), r8)
+            do i=1, dr%iq(q1)%degeneracy(b1)
+                b2 = dr%iq(q1)%degenmode(i, b1)
+                buf_lw(q1, b2) = buf
+            end do
 
             n1 = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
             dr%iq(q1)%linewidth(b1) = buf_lw(q1, b1)
@@ -177,7 +189,7 @@ subroutine compute_scatteringrate_threephonon(il, buf, lw, dr, qp, sr, temperatu
     type(lo_phonon_dispersions), intent(inout) :: dr
     ! The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
-    ! Fourth order force constants
+    ! Scattering rate
     type(lo_scattering_rates), intent(inout) :: sr
     ! The temperature
     real(r8), intent(in) :: temperature
@@ -261,9 +273,9 @@ subroutine compute_scatteringrate_fourphonon(il, buf, lw, dr, qp, sr, temperatur
     n1 = lo_planck(temperature, om1)
     sig1 = lw(q1, b1)
     do i=1, sr%nqpt4ph
-        q2 = sr%fourphonon(q1)%q2(i)
-        q3 = sr%fourphonon(q1)%q3(i)
-        q4 = sr%fourphonon(q1)%q4(i)
+        q2 = sr%fourphonon(il)%q2(i)
+        q3 = sr%fourphonon(il)%q3(i)
+        q4 = sr%fourphonon(il)%q4(i)
         q2i = qp%ap(q2)%irreducible_index
         q3i = qp%ap(q3)%irreducible_index
         q4i = qp%ap(q4)%irreducible_index
