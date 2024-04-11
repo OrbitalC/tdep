@@ -77,6 +77,7 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
         end if
         buf_lw(q1, b1) = 0.5_r8 * buf / (n1 * (n1 + 1.0_r8))
     end do
+    call mw%allreduce('sum', buf_lw)
     call distribute_linewidths(buf_lw, dr, qp, opts)
     call mem%deallocate(buf_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
