@@ -18,7 +18,7 @@ use lo_randomnumbers, only: lo_mersennetwister
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
 use new_scattering, only: compute_scattering, lo_scattering_rates
-use linewidths, only: self_consistent_linewidths
+use linewidths, only: compute_linewidths, self_consistent_linewidths
 use file_io, only: read_linewidths
 
 implicit none
@@ -46,7 +46,7 @@ logical :: is_lw_read
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
 initharmonic: block
-    integer :: i, j
+    integer :: i, j, q1, b1
     ! Start MPI and timers
     tt0 = walltime()
     timer_init = tt0
@@ -139,36 +139,6 @@ initharmonic: block
     end if
     if (mw%talk .and. .not. is_lw_read) write(*, "(1x,A)") '... no starting point file found, starting from scratch'
 
-    ! now I have all harmonic things, stop the init timer
-    timer_init = walltime() - timer_init
-end block initharmonic
-
-scatters: block
-    integer :: i, iter, q1, b1
-    real(r8), dimension(3, 3) :: kappa, m0
-    real(r8), dimension(qp%n_irr_point, dr%n_mode) :: buf_linewidth
-    real(r8) :: t0, maxdif
-    logical :: isconverged = .false.
-    t0 = walltime()
-    timer_scatt = walltime()
-
-    if (mw%talk) then
-        write (*, *) ''
-        write (*, *) 'Calculating scattering events'
-    end if
-    call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
-    timer_scatt = walltime() - timer_scatt
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
-end block scatters
-
-linewidths: block
-    integer :: i, iter, q1, b1
-    if (mw%talk) then
-        write (*, *) ''
-        write (*, *) 'Calculating linewidths'
-    end if
-    timer_lw = walltime()
-
     ! Make some space to keep intermediate values
     do q1 = 1, qp%n_irr_point
         if (.not. is_lw_read) allocate (dr%iq(q1)%linewidth(dr%n_mode))
@@ -208,10 +178,33 @@ linewidths: block
         dr%aq(q1)%kappa = 0.0_r8
     end do
 
-    call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
+    ! now I have all harmonic things, stop the init timer
+    timer_init = walltime() - timer_init
+end block initharmonic
+
+scatters: block
+
+    if (mw%talk) then
+        write (*, *) ''
+        write (*, *) 'Calculating scattering events'
+    end if
+    timer_scatt = walltime()
+    call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
+    timer_scatt = walltime() - timer_scatt
+
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
+    if (mw%talk) then
+        write (*, *) ''
+        write (*, *) 'Calculating linewidths'
+    end if
+    timer_lw = walltime()
+    call compute_linewidths(qp, dr, sr, opts, mw, mem)
+    if (opts%niter .gt. 0) then
+        call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
+    end if
     timer_lw = walltime() - timer_lw
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
-end block linewidths
+end block scatters
 
 kappa: block
     real(r8), dimension(3, 3) :: kappa, kappa_offdiag, kappa_sma, m0

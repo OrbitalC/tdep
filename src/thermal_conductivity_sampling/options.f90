@@ -132,7 +132,7 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--niter', &
                  help='Number of iterations for the self consistent computation of the linewidths.', &
-                 required=.false., act='store', def='100', error=lo_status)
+                 required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--bte_niter', &
                  help='Number of iterations for the iterative Boltzmann equation.', &

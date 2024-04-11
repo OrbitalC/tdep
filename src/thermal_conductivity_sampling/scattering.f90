@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module new_scattering
-use konstanter, only: r8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi
-use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar
+use konstanter, only: r8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi
+use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -20,30 +20,33 @@ private
 public :: lo_scattering_rates
 public :: compute_scattering
 
+!Container for the scatterings
+type lo_scatt
+    ! The qpoints and modes
+    integer :: q1, q2, q3, q4, b2, b3, b4, n
+    ! The scattering rates and matrix elements
+    real(r8) :: W, psisq
+end type
 ! Container for isotope scattering rates
-type iso
-    ! The scattering elements
-    real(r8), dimension(:, :), allocatable :: psisq
-    ! The scattering rates
-    real(r8), dimension(:, :), allocatable :: W
+type lo_iso
+    !> The scattering
+    type(lo_scatt), dimension(:), allocatable :: event
+    !> The number of event
+    integer :: n
 end type
 ! Container for three phonon scattering rates
-type threephonon
-    ! The scattering elements
-    real(r8), dimension(:, :, :), allocatable :: psisq
-    ! The scattering rates
-    real(r8), dimension(:, :, :), allocatable :: Wplus, Wminus
-    ! The qpoints on this rank
-    integer, dimension(:), allocatable :: q2, q3
+type lo_threephonon
+    ! plus scattering
+    type(lo_scatt), dimension(:), allocatable :: plus, minus
+    ! The number of events
+    integer :: nplus, nminus
 end type
 ! Container for four phonon scattering rates
-type fourphonon
-    ! The scattering elements
-    real(r8), dimension(:, :, :, :), allocatable :: psisq
-    ! The scattering rates
-    real(r8), dimension(:, :, :, :), allocatable :: Wpp, Wpm, Wmm
-    ! The qpoints on this rank
-    integer, dimension(:), allocatable :: q2, q3, q4
+type lo_fourphonon
+    !> Scattering events
+    type(lo_scatt), dimension(:), allocatable :: pp, pm, mm
+    ! The number of events
+    integer :: npp, npm, nmm
 end type
 
 ! Container for scattering rates
@@ -53,15 +56,13 @@ type lo_scattering_rates
     !> The list of qpoint and modes for this rank
     integer, dimension(:), allocatable :: q1, b1
     !> The iso phonon scattering
-    type(iso), dimension(:), allocatable :: iso
+    type(lo_iso), dimension(:), allocatable :: iso
     !> The three phonon scattering
-    type(threephonon), dimension(:), allocatable :: threephonon
+    type(lo_threephonon), dimension(:), allocatable :: threephonon
     !> The four phonon scattering
-    type(fourphonon), dimension(:), allocatable :: fourphonon
+    type(lo_fourphonon), dimension(:), allocatable :: fourphonon
     ! The ratio for maximum likelihood estimation of the scattering strengths
-    real(r8) :: mle_ratio3ph, mle_ratio4ph
-    !> The number of three and four phonon scattering
-    integer :: nqpt3ph, nqpt4ph
+!   real(r8) :: mle_ratio3ph, mle_ratio4ph
 end type
 
 
@@ -94,21 +95,23 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     ! To initialize the random number generator and timing
     real(r8) :: rseed, t0
     ! Some integers
-    integer :: q1, b1, q1f, i, j, k, nlocal_point, ctr, nqpt
+    integer :: q1, b1, q1f, i, j, k, nlocal_point, ctr, niso, nplus, nminus, npp, npm, nmm
+    ! To do some counting
+    integer :: bufiso, bufplus, bufminus, bufpp, bufpm, bufmm
 
     ! We start by initializing the random number generator, we need the same on each mpi rank
     rseed = walltime()
     call mw%bcast(rseed, from=mw%n - 1)
     call rng%init(iseed=0, rseed=rseed)
 
-    if (opts%thirdorder .or. opts%fourthorder) then
-        call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        qgridfull1 = (/ (i, i=1, qp%n_full_point) /)
-    end if
-    if (opts%fourthorder) then
-        call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        qgridfull2 = (/ (i, i=1, qp%n_full_point) /)
-    end if
+!   if (opts%thirdorder .or. opts%fourthorder) then
+!       call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+!       qgridfull1 = (/ (i, i=1, qp%n_full_point) /)
+!   end if
+!   if (opts%fourthorder) then
+!       call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+!       qgridfull2 = (/ (i, i=1, qp%n_full_point) /)
+!   end if
 
     ! grid dimensions
     select type(qp)
@@ -117,6 +120,13 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     class default
         call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
     end select
+
+    bufiso = 0
+    bufplus = 0
+    bufminus = 0
+    bufpp = 0
+    bufpm = 0
+    bufmm = 0
 
     ! First we distribute qpoint and modes on mpi ranks
     ctr = 0
@@ -158,101 +168,165 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
         end do
     end do
 
+    ! For isotope, we allocate everything
     if (opts%isotopescattering) then
+        t0 = walltime()
+        if (mw%talk) call lo_progressbar_init()
         do i=1, sr%nlocal_point
-            allocate(sr%iso(i)%psisq(dr%n_mode, qp%n_full_point))
-            allocate(sr%iso(i)%W(dr%n_mode, qp%n_full_point))
-            sr%iso(i)%psisq = 0.0_r8
-            sr%iso(i)%W = 0.0_r8
-        end do
-    end if
+            call count_isotope(i, sr, qp, dr, mw, mem, niso)
+            sr%iso(i)%n = niso
+            bufiso = bufiso + niso
 
-    if (opts%thirdorder) then
-        nqpt = minval([opts%nsample3ph, qp%n_full_point])
-        sr%nqpt3ph = nqpt
-        sr%mle_ratio3ph = real(qp%n_full_point, r8) / real(sr%nqpt3ph, r8)
-
-        do i=1, sr%nlocal_point
-            allocate(sr%threephonon(i)%q2(nqpt))
-            allocate(sr%threephonon(i)%q3(nqpt))
-            allocate(sr%threephonon(i)%psisq(dr%n_mode, dr%n_mode, nqpt))
-            allocate(sr%threephonon(i)%Wplus(dr%n_mode, dr%n_mode, nqpt))
-            allocate(sr%threephonon(i)%Wminus(dr%n_mode, dr%n_mode, nqpt))
-            sr%threephonon(i)%psisq = 0.0_r8
-            sr%threephonon(i)%Wplus = 0.0_r8
-            sr%threephonon(i)%Wminus = 0.0_r8
-            call rng%shuffle_int_array(qgridfull1)
-            q1f = qp%ip(sr%q1(i))%full_index
-            do j=1, nqpt
-                sr%threephonon(i)%q2(j) = qgridfull1(j)
-                sr%threephonon(i)%q3(j) = fft_third_grid_index(q1f, qgridfull1(j), dims)
+            allocate(sr%iso(i)%event(niso))
+            do j=1, sr%iso(i)%n
+                sr%iso(i)%event(j)%W = 0.0_r8
+                sr%iso(i)%event(j)%psisq = 0.0_r8
             end do
+            call compute_isotope_scattering(i, sr, qp, dr, uc, opts%temperature, mw, mem)
+            if (mw%talk) call lo_progressbar(' ... isotope scattering amplitude', i, sr%nlocal_point, walltime() - t0)
         end do
+        if (mw%talk) call lo_progressbar(' ... isotope scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
     end if
 
-    if (opts%fourthorder) then
-        nqpt = minval([opts%nsample4ph, qp%n_full_point**2])
-        sr%nqpt4ph = nqpt
-        sr%mle_ratio4ph = real(qp%n_full_point**2, r8) / real(sr%nqpt4ph, r8)
-
+    ! For third order, we need to check which process are allowed
+    if (opts%thirdorder) then
+        t0 = walltime()
+        if (mw%talk) call lo_progressbar_init()
         do i=1, sr%nlocal_point
-            allocate(sr%fourphonon(i)%q2(nqpt))
-            allocate(sr%fourphonon(i)%q3(nqpt))
-            allocate(sr%fourphonon(i)%q4(nqpt))
-            allocate(sr%fourphonon(i)%psisq(dr%n_mode, dr%n_mode, dr%n_mode, nqpt))
-            allocate(sr%fourphonon(i)%Wpp(dr%n_mode, dr%n_mode, dr%n_mode, nqpt))
-            allocate(sr%fourphonon(i)%Wpm(dr%n_mode, dr%n_mode, dr%n_mode, nqpt))
-            allocate(sr%fourphonon(i)%Wmm(dr%n_mode, dr%n_mode, dr%n_mode, nqpt))
-            sr%fourphonon(i)%psisq = 0.0_r8
-            sr%fourphonon(i)%Wpp = 0.0_r8
-            sr%fourphonon(i)%Wpm = 0.0_r8
-            sr%fourphonon(i)%Wmm = 0.0_r8
-            call rng%shuffle_int_array(qgridfull1)
-            call rng%shuffle_int_array(qgridfull2)
-            q1f = qp%ip(sr%q1(i))%full_index
-            ctr = 0
-            counting4ph: do j=1, qp%n_full_point
-                do k=1, qp%n_full_point
-                    if (ctr .lt. nqpt) then
-                        ctr = ctr + 1
-                        sr%fourphonon(i)%q2(ctr) = qgridfull1(j)
-                        sr%fourphonon(i)%q3(ctr) = qgridfull2(k)
-                        sr%fourphonon(i)%q4(ctr) = fft_fourth_grid_index(q1f, qgridfull1(j), qgridfull2(k), dims)
-                    else
-                        exit counting4ph
-                    end if
-                end do
-            end do counting4ph
+            call count_threephonon(i, sr, qp, dr, dims, mw, mem, nplus, nminus)
+            sr%threephonon(i)%nplus = nplus
+            sr%threephonon(i)%nminus = nminus
+            bufplus = bufplus + nplus
+            bufminus = bufminus + nminus
+
+            allocate(sr%threephonon(i)%plus(nplus))
+            allocate(sr%threephonon(i)%minus(nminus))
+            do j=1, sr%threephonon(i)%nplus
+                sr%threephonon(i)%plus(j)%W = 0.0_r8
+                sr%threephonon(i)%plus(j)%psisq = 0.0_r8
+            end do
+            do j=1, sr%threephonon(i)%nminus
+                sr%threephonon(i)%minus(j)%W = 0.0_r8
+                sr%threephonon(i)%minus(j)%psisq = 0.0_r8
+            end do
+            ! Ok, now we can actually compute the scattering
+            call compute_threephonon_scattering(i, sr, qp, dr, fct, dims, opts%temperature, mw, mem)
+            if (mw%talk) call lo_progressbar(' ... threephonon scattering amplitude', i, sr%nlocal_point, walltime() - t0)
         end do
+        if (mw%talk) call lo_progressbar(' ... threephonon scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
     end if
 
-    ! Deallocate things
-    if (opts%thirdorder .or. opts%fourthorder) then
-        call mem%deallocate(qgridfull1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    if (opts%fourthorder) then
+        t0 = walltime()
+        if (mw%talk) call lo_progressbar_init()
+        do i=1, sr%nlocal_point
+            call count_fourphonon(i, sr, qp, dr, dims, mw, mem, npp, npm, nmm)
+            sr%fourphonon(i)%npp = npp
+            sr%fourphonon(i)%npm = npm
+            sr%fourphonon(i)%nmm = nmm
+
+            bufpp = bufpp + npp
+            bufpm = bufpm + npm
+            bufmm = bufmm + nmm
+
+            allocate(sr%fourphonon(i)%pp(npp))
+            allocate(sr%fourphonon(i)%pm(npm))
+            allocate(sr%fourphonon(i)%mm(nmm))
+            do j=1, sr%fourphonon(i)%npp
+                sr%fourphonon(i)%pp(j)%W = 0.0_r8
+                sr%fourphonon(i)%pp(j)%psisq = 0.0_r8
+            end do
+            do j=1, sr%fourphonon(i)%npm
+                sr%fourphonon(i)%pm(j)%W = 0.0_r8
+                sr%fourphonon(i)%pm(j)%psisq = 0.0_r8
+            end do
+            do j=1, sr%fourphonon(i)%nmm
+                sr%fourphonon(i)%mm(j)%W = 0.0_r8
+                sr%fourphonon(i)%mm(j)%psisq = 0.0_r8
+            end do
+            ! Now, let's compute the scattering
+            call compute_fourphonon_scattering(i, sr, qp, dr, fcf, dims, opts%temperature, mw, mem)
+            if (mw%talk) call lo_progressbar(' ... fourphonon scattering amplitude', i, sr%nlocal_point, walltime() - t0)
+        end do
+        if (mw%talk) call lo_progressbar(' ... fourphonon scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
+    end if
+
+    if (opts%isotopescattering) then
+        call mw%allreduce('sum', bufiso)
+    end if
+    if (opts%thirdorder) then
+        call mw%allreduce('sum', bufplus)
+        call mw%allreduce('sum', bufminus)
     end if
     if (opts%fourthorder) then
-        call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mw%allreduce('sum', bufpp)
+        call mw%allreduce('sum', bufpm)
+        call mw%allreduce('sum', bufmm)
     end if
 
-    t0 = walltime()
-    do i=1, sr%nlocal_point
-        if (opts%isotopescattering) then
-            call isotope_scattering(i, sr, qp, dr, uc, mw, mem)
-        end if
-        if (opts%thirdorder) then
-            call threephonon_scattering(i, sr, qp, dr, fct, mw, mem)
-        end if
-        if (opts%fourthorder) then
-            call fourphonon_scattering(i, sr, qp, dr, fcf, mw, mem)
-        end if
-        if (mw%talk .and. lo_trueNtimes(i, 127, sr%nlocal_point)) then
-            call lo_progressbar(' ... computing scattering amplitude', i, sr%nlocal_point, walltime() - t0)
-        end if
+    talk: block
+        integer :: alleventiso, allevent3ph, allevent4ph
+    alleventiso = qp%n_irr_point * qp%n_full_point * dr%n_mode**2
+    allevent3ph = 2  * qp%n_irr_point * qp%n_full_point * dr%n_mode**3
+    allevent4ph = 3 * qp%n_irr_point * qp%n_full_point**2 * dr%n_mode**4
+    if (mw%talk) then
+            write (*, *) ''
+            write (*, *) '   number of i events:', bufiso
+            write (*, *) '   number of + events:', bufplus
+            write (*, *) '   number of - events:', bufminus
+            write (*, *) '   number of ++ events:', bufpp
+            write (*, *) '   number of +- events:', bufpm
+            write (*, *) '   number of -- events:', bufmm
+            write (*, *) '                % iso:', 100*real(bufiso, r8) / real(alleventiso, r8)
+            write (*, *) '                % 3ph:', 100*real(bufplus + bufplus, r8) / real(allevent3ph, r8)
+            write (*, *) '                % 4ph:', 100*real(bufpp + bufpm + bufmm, r8) / real(allevent4ph, r8)
+    end if
+    end block talk
+end subroutine
+
+
+subroutine count_isotope(il, sr, qp, dr, mw, mem, niso)
+    !> The local point
+    integer, intent(in) :: il
+    !> The scattering amplitudes
+    type(lo_scattering_rates), intent(inout) :: sr
+    !> The q-point mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> phonon dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    !> MPI helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
+    !> The counter
+    integer, intent(out) :: niso
+
+    ! prefactor and phonon buffers
+    real(r8) :: om1, om2, sig1, sig2, sigma
+    ! Integers for do loops
+    integer :: q1, b1, q2, b2
+
+    q1 = sr%q1(il)
+    b1 = sr%b1(il)
+    om1 = dr%iq(q1)%omega(b1)
+
+    niso = 0
+    do q2=1, qp%n_full_point
+        do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+
+            !sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+            !                         dr%default_smearing(b2), 1.0_r8)
+            !sigma = sqrt(sig1**2 + sig2**2)
+            sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
+        end do
     end do
 end subroutine
 
 
-subroutine isotope_scattering(il, sr, qp, dr, uc, mw, mem)
+subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
     !> The local point
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -263,6 +337,8 @@ subroutine isotope_scattering(il, sr, qp, dr, uc, mw, mem)
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
+    !> The temperature
+    real(r8), intent(in) :: temperature
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -270,27 +346,109 @@ subroutine isotope_scattering(il, sr, qp, dr, uc, mw, mem)
 
     ! Isotope prefactor
     real(r8), parameter :: isotope_prefactor = lo_pi / 2.0_r8
-    ! prefactor
-    real(r8) :: prefactor
+    ! prefactor and phonon buffers
+    real(r8) :: psisq, prefactor, om1, n1, om2, n2, sig1, sig2, sigma
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! Integers for do loops
-    integer :: q1, b1, q2, b2
+    integer :: q1, b1, q2, b2, niso
 
     q1 = sr%q1(il)
     b1 = sr%b1(il)
+    om1 = dr%iq(q1)%omega(b1)
+    n1 = lo_planck(temperature, om1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
+
+    niso = 0
     do q2=1, qp%n_full_point
         prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
         do b2=1, dr%n_mode
-            egviso(:, 2) = dr%aq(q2)%egv(:, b2)
-            sr%iso(il)%psisq(b2, q2) = isotope_scattering_strength(uc, egviso) * prefactor
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+
+            n2 = lo_planck(temperature, om2)
+
+            !sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+            !                         dr%default_smearing(b2), 1.0_r8)
+            !sigma = sqrt(sig1**2 + sig2**2)
+            sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
+                niso = niso + 1
+
+                egviso(:, 2) = dr%aq(q2)%egv(:, b2)
+                psisq = isotope_scattering_strength(uc, egviso) * prefactor
+
+                sr%iso(il)%event(niso)%q2 = q2
+                sr%iso(il)%event(niso)%b2 = b2
+                sr%iso(il)%event(niso)%psisq = psisq
+                sr%iso(il)%event(niso)%W = psisq * om1 * om2 * n1 * (n2 + 1.0_r8) * lo_gauss(om1, om2, sigma)
+            end if
         end do
     end do
 end subroutine
 
 
-subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
+subroutine count_threephonon(il, sr, qp, dr, dims, mw, mem, nplus, nminus)
+    ! The qpoint and mode indices considered here
+    integer, intent(in) :: il
+    !> The scattering amplitudes
+    type(lo_scattering_rates), intent(inout) :: sr
+    ! The qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    ! Harmonic dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    ! The dimension of the grid
+    integer, dimension(3), intent(in) :: dims
+    ! Mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    ! Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
+    ! The number of qpoint for this qpoint/mode
+    integer, intent(out) :: nplus, nminus
+
+    ! The gaussian integration width
+    real(r8) :: sig1, sig2, sig3, sigma
+    ! Frequencies, bose-einstein occupation and scattering strength
+    real(r8) :: om1, om2, om3
+    ! Integers for do loops
+    integer :: i, q1, q2, q3, b1, b2, b3
+
+    ! Already set some values for mode (q1, b1)
+    q1 = sr%q1(il)
+    b1 = sr%b1(il)
+    om1 = dr%iq(q1)%omega(b1)
+    sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                             dr%default_smearing(b1), 1.0_r8)
+
+    nplus = 0
+    nminus = 0
+    do q2=1, qp%n_full_point
+        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+   !    if (q3 .gt. q2) cycle
+        do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+            sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                        dr%default_smearing(b2), 1.0_r8)
+
+            do b3=1, dr%n_mode
+                om3 = dr%aq(q3)%omega(b3)
+                if (om3 .lt. lo_freqtol) cycle
+
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                         dr%default_smearing(b3), 1.0_r8)
+                sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+
+               if (abs(om1 + om2 - om3) .lt. 4 * sigma) nplus = nplus + 1
+   !           if (abs(om1 + om3 - om2) .lt. 4 * sigma) nplus = nplus + 1
+               if (abs(om1 - om2 - om3) .lt. 4 * sigma) nminus = nminus + 1
+            end do
+        end do
+    end do
+end subroutine
+
+
+subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -301,6 +459,10 @@ subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
     type(lo_phonon_dispersions), intent(inout) :: dr
     ! Fourth order force constants
     type(lo_forceconstant_thirdorder), intent(in) :: fct
+    ! The dimension of the grid
+    integer, dimension(3), intent(in) :: dims
+    ! The temperature
+    real(r8), intent(in) :: temperature
     ! Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     ! Memory helper
@@ -318,56 +480,178 @@ subroutine threephonon_scattering(il, sr, qp, dr, fct, mw, mem)
     complex(r8), dimension(dr%n_mode**3) :: evp2
     ! The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
+    ! The gaussian integration width
+    real(r8) :: sig1, sig2, sig3, sigma
     ! Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, prefactor
+    real(r8) :: om1, om2, om3, n1, n2, n3, plf, psisq, prefactor
     !
     complex(r8) :: c0
     ! Integers for do loops
-    integer :: i, q1, q2, q3, b1, b2, b3
-
-    complex(r8), dimension(dr%n_mode, 3) :: tmp
-    real(r8), dimension(3) :: tmpomega
+    integer :: iq1, q1, q2, q3, b1, b2, b3, iplus, iminus
 
     ! Already set some values for mode (q1, b1)
     q1 = sr%q1(il)
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
+    n1 = lo_planck(temperature, om1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
 
-    do i=1, sr%nqpt3ph
-        q2 = sr%threephonon(il)%q2(i)
-        q3 = sr%threephonon(il)%q3(i)
+    iplus = 0
+    iminus = 0
+    do q2=1, qp%n_full_point
+        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+   !    if (q3 .gt. q2) cycle
+        !
+       !prefactor = threephonon_prefactor * qp%ap(q2)%integration_weight
+       !if (q3 .ne. q2) prefactor = prefactor * 2.0_r8
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         call pretransform_phi3(fct, qv2, qv3, ptf)
-        prefactor = threephonon_prefactor * qp%ap(q2)%integration_weight
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
+            n2 = lo_planck(temperature, om2)
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
 
-            evp1 = 0.0_r8
-            call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
-
+                n3 = lo_planck(temperature, om3)
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                evp2 = 0.0_r8
-                call zgeru(dr%n_mode, dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
-                evp2 = conjg(evp2)
-                c0 = dot_product(evp2, ptf)
-                sr%threephonon(il)%psisq(b2, b3, i) = abs(c0*conjg(c0)) * prefactor
+                sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                                         dr%default_smearing(b1), 1.0_r8)
+                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                         dr%default_smearing(b2), 1.0_r8)
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                         dr%default_smearing(b3), 1.0_r8)
+                sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+
+                ! Do we need to compute the scattering ?
+                if (abs(om1 + om2 - om3) .lt. 4 * sigma .or. &
+                    abs(om1 + om3 - om2) .lt. 4 * sigma .or. &
+                    abs(om1 - om2 - om3) .lt. 4 * sigma) then
+                    evp1 = 0.0_r8
+                    call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
+                    evp2 = 0.0_r8
+                    call zgeru(dr%n_mode, dr%n_mode*dr%n_mode, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
+                    evp2 = conjg(evp2)
+                    c0 = dot_product(evp2, ptf)
+                    psisq = abs(c0*conjg(c0)) * threephonon_prefactor * qp%ap(q2)%integration_weight
+                end if
+
+                if (abs(om1 + om2 - om3) .lt. 4 * sigma) then
+                    iplus = iplus + 1
+                    plf = n1 * n2 * (n3 + 1.0_r8) * lo_gauss(om1, -om2 + om3, sigma)
+
+                    sr%threephonon(il)%plus(iplus)%q2 = q2
+                    sr%threephonon(il)%plus(iplus)%q3 = q3
+                    sr%threephonon(il)%plus(iplus)%b2 = b2
+                    sr%threephonon(il)%plus(iplus)%b3 = b3
+                    sr%threephonon(il)%plus(iplus)%psisq = psisq
+                    sr%threephonon(il)%plus(iplus)%W = psisq * plf
+                end if
+   !            if (abs(om1 + om3 - om2) .lt. 4 * sigma) then
+   !                iplus = iplus + 1
+   !                plf = n1 * n3 * (n2 + 1.0_r8) * lo_gauss(om1, -om3 + om2, sigma)
+   !                plf = plf * threephonon_prefactor * qp%ap(q3)%integration_weight
+
+   !                sr%threephonon(il)%plus(iplus)%q2 = q3
+   !                sr%threephonon(il)%plus(iplus)%q3 = q2
+   !                sr%threephonon(il)%plus(iplus)%b2 = b3
+   !                sr%threephonon(il)%plus(iplus)%b3 = b2
+   !                sr%threephonon(il)%plus(iplus)%psisq = psisq
+   !                sr%threephonon(il)%plus(iplus)%W = psisq * plf
+   !            end if
+                if (abs(om1 - om2 - om3) .lt. 4 * sigma) then
+                    iminus = iminus + 1
+                    plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
+
+                    sr%threephonon(il)%minus(iminus)%q2 = q2
+                    sr%threephonon(il)%minus(iminus)%q3 = q3
+                    sr%threephonon(il)%minus(iminus)%b2 = b2
+                    sr%threephonon(il)%minus(iminus)%b3 = b3
+                    sr%threephonon(il)%minus(iminus)%psisq = psisq
+                    sr%threephonon(il)%minus(iminus)%W = psisq * plf  ! * 2.0_r8
+                end if
             end do
         end do
     end do
 end subroutine
 
 
-subroutine fourphonon_scattering(il, sr, qp, dr, fcf, mw, mem)
+subroutine count_fourphonon(il, sr, qp, dr, dims, mw, mem, npp, npm, nmm)
+    ! The qpoint and mode indices considered here
+    integer, intent(in) :: il
+    !> The scattering amplitudes
+    type(lo_scattering_rates), intent(inout) :: sr
+    ! The qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    ! Harmonic dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    ! The dimension of the grid
+    integer, dimension(3), intent(in) :: dims
+    ! Mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    ! Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
+    ! The number of events for this qpoint/mode
+    integer, intent(out) :: npp, npm, nmm
+
+    ! The gaussian integration width
+    real(r8) :: sig1, sig2, sig3, sig4, sigma
+    ! Frequencies, bose-einstein occupation and scattering strength
+    real(r8) :: om1, om2, om3, om4
+    ! Integers for do loops
+    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4
+
+    ! Already set some values for mode (q1, b1)
+    q1 = sr%q1(il)
+    b1 = sr%b1(il)
+    om1 = dr%iq(q1)%omega(b1)
+    sig1 = qp%adaptive_sigma(qp%ap(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                             dr%default_smearing(b1), 1.0_r8)
+
+    npp = 0
+    npm = 0
+    nmm = 0
+    do q2=1, qp%n_full_point
+    do q3=1, qp%n_full_point
+        q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+        do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+            sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                     dr%default_smearing(b2), 1.0_r8)
+
+            do b3=1, dr%n_mode
+                om3 = dr%aq(q3)%omega(b3)
+                if (om3 .lt. lo_freqtol) cycle
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                         dr%default_smearing(b3), 1.0_r8)
+                do b4=1, dr%n_mode
+                    om4 = dr%aq(q4)%omega(b4)
+                    if (om4 .lt. lo_freqtol) cycle
+
+                    sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
+                                             dr%default_smearing(b4), 1.0_r8)
+
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+
+                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma) npp = npp + 1
+                    if (abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma) npm = npm + 1
+                    if (abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) nmm = nmm + 1
+                end do
+            end do
+        end do
+    end do
+    end do
+end subroutine
+
+
+subroutine compute_fourphonon_scattering(il, sr, qp, dr, fcf, dims, temperature, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -378,6 +662,10 @@ subroutine fourphonon_scattering(il, sr, qp, dr, fcf, mw, mem)
     type(lo_phonon_dispersions), intent(inout) :: dr
     ! Fourth order force constants
     type(lo_forceconstant_fourthorder), intent(in) :: fcf
+    ! The dimension of the grid
+    integer, dimension(3), intent(in) :: dims
+    ! The temperature
+    real(r8), intent(in) :: temperature
     ! Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     ! Memory helper
@@ -397,23 +685,33 @@ subroutine fourphonon_scattering(il, sr, qp, dr, fcf, mw, mem)
     complex(r8), dimension(dr%n_mode**4) :: evp3
     ! The qpoints in cartesian coordinates
     real(r8), dimension(3) :: qv2, qv3, qv4
-    !
+    !> The complex scattering amplitude
     complex(r8) :: c0
     ! Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, om4, prefactor
+    real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, psisq, prefactor
+    ! The gaussian integration width
+    real(r8) :: sig1, sig2, sig3, sig4, sigma, plf
     ! Integers for do loops
     integer :: i, q1, q2, q3, q4, b1, b2, b3, b4
+    ! Integers for counting
+    integer :: npp, npm, nmm
 
     ! Already set some buffer values for mode (q1, b1)
     q1 = sr%q1(il)
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
+    n1 = lo_planck(temperature, om1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
+    sig1 = qp%adaptive_sigma(qp%ap(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                             dr%default_smearing(b1), 1.0_r8)
 
-    do i=1, sr%nqpt4ph
-        q2 = sr%fourphonon(il)%q2(i)
-        q3 = sr%fourphonon(il)%q3(i)
-        q4 = sr%fourphonon(il)%q4(i)
+    npp = 0
+    npm = 0
+    nmm = 0
+    i = 1
+    do q2=1, qp%n_full_point
+    do q3=1, qp%n_full_point
+        q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         qv4 = qp%ap(q4)%r
@@ -423,31 +721,90 @@ subroutine fourphonon_scattering(il, sr, qp, dr, fcf, mw, mem)
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
-
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+            n2 = lo_planck(temperature, om2)
+            sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                     dr%default_smearing(b2), 1.0_r8)
+
             evp1 = 0.0_r8
             call zgeru(dr%n_mode, dr%n_mode,    (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
-
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                n3 = lo_planck(temperature, om3)
+                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                            dr%default_smearing(b3), 1.0_r8)
+
                 evp2 = 0.0_r8
                 call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                 do b4=1, dr%n_mode
                     om4 = dr%aq(q4)%omega(b4)
                     if (om4 .lt. lo_freqtol) cycle
 
-                    egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+                    sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
+                                             dr%default_smearing(b4), 1.0_r8)
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
 
-                    evp3 = 0.0_r8
-                    call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
-                    evp3 = conjg(evp3)
-                    c0 = dot_product(evp3, ptf)
-                    sr%fourphonon(il)%psisq(b2, b3, b4, i) = abs(c0*conjg(c0)) * prefactor
+                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
+
+                        egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+                        n4 = lo_planck(temperature, om4)
+
+                        evp3 = 0.0_r8
+                        call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
+                        evp3 = conjg(evp3)
+                        c0 = dot_product(evp3, ptf)
+                        psisq = abs(c0*conjg(c0)) * prefactor
+                    end if
+
+                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma) then
+                        npp = npp + 1
+
+                        sr%fourphonon(il)%pp(npp)%q2 = q2
+                        sr%fourphonon(il)%pp(npp)%q3 = q3
+                        sr%fourphonon(il)%pp(npp)%q4 = q4
+                        sr%fourphonon(il)%pp(npp)%b2 = b2
+                        sr%fourphonon(il)%pp(npp)%b3 = b3
+                        sr%fourphonon(il)%pp(npp)%b4 = b4
+                        plf = n1 * n2 * n3 * (n4 + 1.0_r8) * lo_gauss(om1, -om2 - om3 + om4, sigma)
+                        sr%fourphonon(il)%pp(npp)%W = plf * psisq
+                        sr%fourphonon(il)%pp(npp)%psisq = psisq
+                    end if
+
+                    if (abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
+                        npm = npm + 1
+
+                        sr%fourphonon(il)%pm(npm)%q2 = q2
+                        sr%fourphonon(il)%pm(npm)%q3 = q3
+                        sr%fourphonon(il)%pm(npm)%q4 = q4
+                        sr%fourphonon(il)%pm(npm)%b2 = b2
+                        sr%fourphonon(il)%pm(npm)%b3 = b3
+                        sr%fourphonon(il)%pm(npm)%b4 = b4
+                        plf = n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_gauss(om1, -om2 + om3 + om4, sigma)
+                        sr%fourphonon(il)%pm(npm)%W = plf * psisq
+                        sr%fourphonon(il)%pm(npm)%psisq = psisq
+                    end if
+
+                    if (abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
+                        nmm = nmm + 1
+
+                        sr%fourphonon(il)%mm(nmm)%q2 = q2
+                        sr%fourphonon(il)%mm(nmm)%q3 = q3
+                        sr%fourphonon(il)%mm(nmm)%q4 = q4
+                        sr%fourphonon(il)%mm(nmm)%b2 = b2
+                        sr%fourphonon(il)%mm(nmm)%b3 = b3
+                        sr%fourphonon(il)%mm(nmm)%b4 = b4
+                        plf = n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        sr%fourphonon(il)%mm(nmm)%W = plf * psisq
+                        sr%fourphonon(il)%mm(nmm)%psisq = psisq
+                    end if
                 end do
             end do
         end do
+    end do
     end do
 end subroutine
 

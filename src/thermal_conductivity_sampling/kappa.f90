@@ -378,50 +378,69 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                 iQS = 1.0_r8 / dr%iq(q1)%qs(b1)
                 v0 = 0.0_r8
                 if (isotope) then
-                    do q2 = 1, qp%n_full_point
-                        do b2=1, dr%n_mode
-                            Fp = Fbb(:, b2, q2)
-                            v0 = v0 + sr%iso(il)%W(b2, q2) * iQs * Fp
-                        end do
+                    do j=1, sr%iso(il)%n
+                        q2 = sr%iso(il)%event(j)%q2
+                        b2 = sr%iso(il)%event(j)%b2
+                        Fp = Fbb(:, b2, q2)
+                        v0 = v0 + sr%iso(il)%event(j)%W * iQs * Fp
                     end do
                 end if
                 if (threephonon) then
-                    do j=1, sr%nqpt3ph
-                        q2 = sr%threephonon(il)%q2(j)
-                        q3 = sr%threephonon(il)%q3(j)
-                        do b2=1, dr%n_mode
-                        do b3=1, dr%n_mode
-                            ! scattering plus
-                            Fp = Fbb(:, b2, q2)
-                            Fpp = Fbb(:, b3, q3)
-                            v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%Wplus(b2, b3, j) * &
-                                    iQs * sr%mle_ratio3ph
-                            v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%Wminus(b2, b3, j) * &
-                                    iQs * sr%mle_ratio3ph * 0.5_r8
-                        end do
-                        end do
+                    do j=1, sr%threephonon(il)%nplus
+                        q2 = sr%threephonon(il)%plus(j)%q2
+                        q3 = sr%threephonon(il)%plus(j)%q3
+                        b2 = sr%threephonon(il)%plus(j)%b2
+                        b3 = sr%threephonon(il)%plus(j)%b3
+                        Fp = Fbb(:, b2, q2)
+                        Fpp = Fbb(:, b3, q3)
+                        v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%plus(j)%W * iQs
+                    end do
+                    do j=1, sr%threephonon(il)%nminus
+                        q2 = sr%threephonon(il)%minus(j)%q2
+                        q3 = sr%threephonon(il)%minus(j)%q3
+                        b2 = sr%threephonon(il)%minus(j)%b2
+                        b3 = sr%threephonon(il)%minus(j)%b3
+                        Fp = Fbb(:, b2, q2)
+                        Fpp = Fbb(:, b3, q3)
+                        v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%minus(j)%W * iQs * 0.5_r8
                     end do
                 end if
                 if (fourphonon) then
-                    do j=1, sr%nqpt4ph
-                        q2 = sr%fourphonon(il)%q2(j)
-                        q3 = sr%fourphonon(il)%q3(j)
-                        q4 = sr%fourphonon(il)%q4(j)
-                        do b2=1, dr%n_mode
-                        do b3=1, dr%n_mode
-                        do b4=1, dr%n_mode
-                            Fp = Fbb(:, b2, q2)
-                            Fpp = Fbb(:, b3, q3)
-                            Fppp = Fbb(:, b4, q4)
-                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wpp(b2, b3, b4, j) * &
-                                        iQs * sr%mle_ratio4ph * 0.5_r8
-                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wpm(b2, b3, b4, j) * &
-                                        iQs * sr%mle_ratio4ph * 0.5_r8
-                            v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%Wmm(b2, b3, b4, j) * &
-                                        iQs * sr%mle_ratio4ph / 6.0_r8
-                        end do
-                        end do
-                        end do
+                    do j=1, sr%fourphonon(il)%npp
+                        q2 = sr%fourphonon(il)%pp(j)%q2
+                        q3 = sr%fourphonon(il)%pp(j)%q3
+                        q4 = sr%fourphonon(il)%pp(j)%q4
+                        b2 = sr%fourphonon(il)%pp(j)%b2
+                        b3 = sr%fourphonon(il)%pp(j)%b3
+                        b4 = sr%fourphonon(il)%pp(j)%b4
+                        Fp = Fbb(:, b2, q2)
+                        Fpp = Fbb(:, b3, q3)
+                        Fppp = Fbb(:, b4, q4)
+                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%pp(j)%W * iQs * 0.5_r8
+                    end do
+                    do j=1, sr%fourphonon(il)%npm
+                        q2 = sr%fourphonon(il)%pm(j)%q2
+                        q3 = sr%fourphonon(il)%pm(j)%q3
+                        q4 = sr%fourphonon(il)%pm(j)%q4
+                        b2 = sr%fourphonon(il)%pm(j)%b2
+                        b3 = sr%fourphonon(il)%pm(j)%b3
+                        b4 = sr%fourphonon(il)%pm(j)%b4
+                        Fp = Fbb(:, b2, q2)
+                        Fpp = Fbb(:, b3, q3)
+                        Fppp = Fbb(:, b4, q4)
+                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%pm(j)%W * iQs * 0.5_r8
+                    end do
+                    do j=1, sr%fourphonon(il)%nmm
+                        q2 = sr%fourphonon(il)%mm(j)%q2
+                        q3 = sr%fourphonon(il)%mm(j)%q3
+                        q4 = sr%fourphonon(il)%mm(j)%q4
+                        b2 = sr%fourphonon(il)%mm(j)%b2
+                        b3 = sr%fourphonon(il)%mm(j)%b3
+                        b4 = sr%fourphonon(il)%mm(j)%b4
+                        Fp = Fbb(:, b2, q2)
+                        Fpp = Fbb(:, b3, q3)
+                        Fppp = Fbb(:, b4, q4)
+                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%mm(j)%W * iQs / 6.0_r8
                     end do
                 end if
                 Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0
