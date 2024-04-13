@@ -2,7 +2,7 @@
 module kappa
 use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
-use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop
+use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss
 use mpi_wrappers, only: lo_mpi_helper, MPI_SUM, MPI_DOUBLE_PRECISION, MPI_IN_PLACE
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -366,7 +366,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         ! update F to new values
         updateF: block
             real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
-            real(r8) :: iQs, W
+            real(r8) :: iQs, f0
+            real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, sigma, sig1, sig2, sig3, sig4
             integer :: il, j, b1, b2, b3, b4, q2, q3, q4
             integer :: q1
 
@@ -374,73 +375,101 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
             do il=1, sr%nlocal_point
                 q1 = sr%q1(il)
                 b1 = sr%b1(il)
+
+                om1 = dr%iq(q1)%omega(b1)
+                n1 = lo_planck(temperature, om1)
+                sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                                        dr%default_smearing(b1), 1.0_r8)
                 ! prefetch some stuff
                 iQS = 1.0_r8 / dr%iq(q1)%qs(b1)
                 v0 = 0.0_r8
                 if (isotope) then
                     do j=1, sr%iso(il)%n
-                        q2 = sr%iso(il)%event(j)%q2
-                        b2 = sr%iso(il)%event(j)%b2
+                        q2 = sr%iso(il)%q2(j)
+                        b2 = sr%iso(il)%b2(j)
+                        om2 = dr%aq(q2)%omega(b2)
+                        ! distribution function
+                        n2 = lo_planck(temperature, om2)
+                        sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                                 dr%default_smearing(b2), 1.0_r8)
+                        sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+
+                        f0 = sr%iso(il)%psisq(j) * om1 * om2 * n1 * (n2 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, om2, sigma)
+
                         Fp = Fbb(:, b2, q2)
-                        v0 = v0 + sr%iso(il)%event(j)%W * iQs * Fp
+                        v0 = v0 + f0 * iQs * Fp
                     end do
                 end if
                 if (threephonon) then
-                    do j=1, sr%threephonon(il)%nplus
-                        q2 = sr%threephonon(il)%plus(j)%q2
-                        q3 = sr%threephonon(il)%plus(j)%q3
-                        b2 = sr%threephonon(il)%plus(j)%b2
-                        b3 = sr%threephonon(il)%plus(j)%b3
+                    do j=1, sr%threephonon(il)%n
+                        q2 = sr%threephonon(il)%q2(j)
+                        q3 = sr%threephonon(il)%q3(j)
+                        b2 = sr%threephonon(il)%b2(j)
+                        b3 = sr%threephonon(il)%b3(j)
+
+                        om2 = dr%aq(q2)%omega(b2)
+                        om3 = dr%aq(q3)%omega(b3)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+
+                        sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                                 dr%default_smearing(b2), 1.0_r8)
+                        sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                                 dr%default_smearing(b3), 1.0_r8)
+                        sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+
                         Fp = Fbb(:, b2, q2)
                         Fpp = Fbb(:, b3, q3)
-                        v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%plus(j)%W * iQs
-                    end do
-                    do j=1, sr%threephonon(il)%nminus
-                        q2 = sr%threephonon(il)%minus(j)%q2
-                        q3 = sr%threephonon(il)%minus(j)%q3
-                        b2 = sr%threephonon(il)%minus(j)%b2
-                        b3 = sr%threephonon(il)%minus(j)%b3
-                        Fp = Fbb(:, b2, q2)
-                        Fpp = Fbb(:, b3, q3)
-                        v0 = v0 + (Fp + Fpp) * sr%threephonon(il)%minus(j)%W * iQs * 0.5_r8
+
+                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, -om2 + om3, sigma)
+                        v0 = v0 + f0 * iQs * (Fp + Fpp)
+
+                        f0 = sr%threephonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, om2 + om3, sigma)
+                        v0 = v0 + f0 * iQs * (Fp + Fpp) * 0.5_r8
                     end do
                 end if
                 if (fourphonon) then
-                    do j=1, sr%fourphonon(il)%npp
-                        q2 = sr%fourphonon(il)%pp(j)%q2
-                        q3 = sr%fourphonon(il)%pp(j)%q3
-                        q4 = sr%fourphonon(il)%pp(j)%q4
-                        b2 = sr%fourphonon(il)%pp(j)%b2
-                        b3 = sr%fourphonon(il)%pp(j)%b3
-                        b4 = sr%fourphonon(il)%pp(j)%b4
+                    do j=1, sr%fourphonon(il)%n
+                        q2 = sr%fourphonon(il)%q2(j)
+                        q3 = sr%fourphonon(il)%q3(j)
+                        q4 = sr%fourphonon(il)%q4(j)
+                        b2 = sr%fourphonon(il)%b2(j)
+                        b3 = sr%fourphonon(il)%b3(j)
+                        b4 = sr%fourphonon(il)%b4(j)
+
+                        om2 = dr%aq(q2)%omega(b2)
+                        om3 = dr%aq(q3)%omega(b3)
+                        om4 = dr%aq(q4)%omega(b4)
+                        n2 = lo_planck(temperature, om2)
+                        n3 = lo_planck(temperature, om3)
+                        n4 = lo_planck(temperature, om4)
+
+                        sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                                                dr%default_smearing(b2), 1.0_r8)
+                        sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
+                                                dr%default_smearing(b3), 1.0_r8)
+                        sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
+                                                dr%default_smearing(b4), 1.0_r8)
+                        sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+
                         Fp = Fbb(:, b2, q2)
                         Fpp = Fbb(:, b3, q3)
                         Fppp = Fbb(:, b4, q4)
-                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%pp(j)%W * iQs * 0.5_r8
-                    end do
-                    do j=1, sr%fourphonon(il)%npm
-                        q2 = sr%fourphonon(il)%pm(j)%q2
-                        q3 = sr%fourphonon(il)%pm(j)%q3
-                        q4 = sr%fourphonon(il)%pm(j)%q4
-                        b2 = sr%fourphonon(il)%pm(j)%b2
-                        b3 = sr%fourphonon(il)%pm(j)%b3
-                        b4 = sr%fourphonon(il)%pm(j)%b4
-                        Fp = Fbb(:, b2, q2)
-                        Fpp = Fbb(:, b3, q3)
-                        Fppp = Fbb(:, b4, q4)
-                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%pm(j)%W * iQs * 0.5_r8
-                    end do
-                    do j=1, sr%fourphonon(il)%nmm
-                        q2 = sr%fourphonon(il)%mm(j)%q2
-                        q3 = sr%fourphonon(il)%mm(j)%q3
-                        q4 = sr%fourphonon(il)%mm(j)%q4
-                        b2 = sr%fourphonon(il)%mm(j)%b2
-                        b3 = sr%fourphonon(il)%mm(j)%b3
-                        b4 = sr%fourphonon(il)%mm(j)%b4
-                        Fp = Fbb(:, b2, q2)
-                        Fpp = Fbb(:, b3, q3)
-                        Fppp = Fbb(:, b4, q4)
-                        v0 = v0 + (Fp + Fpp + Fppp) * sr%fourphonon(il)%mm(j)%W * iQs / 6.0_r8
+
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3 * (n4 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, -om2 - om3 + om4, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs * 0.5_r8
+
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, -om2 + om3 + om4, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs * 0.5_r8
+
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8)
+                        f0 = f0 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs  / 6.0_r8
                     end do
                 end if
                 Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0

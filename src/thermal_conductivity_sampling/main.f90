@@ -18,7 +18,7 @@ use lo_randomnumbers, only: lo_mersennetwister
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
 use new_scattering, only: compute_scattering, lo_scattering_rates
-use linewidths, only: compute_linewidths, self_consistent_linewidths
+use linewidths, only: compute_linewidths !, self_consistent_linewidths
 use file_io, only: read_linewidths
 
 implicit none
@@ -199,9 +199,9 @@ scatters: block
     end if
     timer_lw = walltime()
     call compute_linewidths(qp, dr, sr, opts, mw, mem)
-    if (opts%niter .gt. 0) then
-        call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
-    end if
+!   if (opts%niter .gt. 0) then
+!       call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
+!   end if
     timer_lw = walltime() - timer_lw
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
 end block scatters
