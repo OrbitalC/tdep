@@ -296,19 +296,21 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
             do q3=1, qp%n_full_point
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q4, dims)
 
-                prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 qv4 = qp%ap(q4)%r
                 call pretransform_phi4(fcf, qv2, qv3, qv4, ptf4)
+
+                prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight
                 do b2=1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
-                    n2 = lo_planck(temperature, om2)
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+                    n2 = lo_planck(temperature, om2)
                     sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                              dr%default_smearing(b2), 1.0_r8)
+
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, &
                                evp1, dr%n_mode)
@@ -316,8 +318,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
-                        n3 = lo_planck(temperature, om3)
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                        n3 = lo_planck(temperature, om3)
                         sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
                                                  dr%default_smearing(b3), 1.0_r8)
                         evp2 = 0.0_r8
@@ -343,6 +345,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             ! For fourphonon, we have four process to take into account, but only two prefactors
                             plf1 = (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) - n2 * n3 * n4
                             plf2 = 3.0_r8 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) - (n2 + 1.0_r8) * n3 * n4
+
                             do n=1, ls%nbasis
                                 ymat(n) = ymat(n) + psisq * plf1 * &
                                     lo_gauss(ls%omega_n(n), om2 + om3 + om4, sigma)

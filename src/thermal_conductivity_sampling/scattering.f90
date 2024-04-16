@@ -229,8 +229,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            !if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
-            niso = niso + 1
+            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
         end do
     end do
 
@@ -250,7 +249,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            !if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
+            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
                 i = i + 1
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
@@ -259,7 +258,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
                 sr%iso(il)%q2(i) = q2
                 sr%iso(il)%b2(i) = b2
                 sr%iso(il)%psisq(i) = psisq
-            !end if
+            end if
         end do
     end do
 end subroutine
@@ -330,9 +329,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                 sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
                                         dr%default_smearing(b3), 1.0_r8)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
-               !if (abs(om1 + om2 - om3) .lt. 100000.0_r8 * sigma .or. &
-               !    abs(om1 - om2 - om3) .lt. 100000.0_r8 * sigma) n3ph = n3ph + 1
-               n3ph = n3ph + 1
+                if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) n3ph = n3ph + 1
             end do
         end do
     end do
@@ -372,8 +370,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
 
                 ! Do we need to compute the scattering ?
-              ! if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
-              !     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) then
+                if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) then
                     i = i + 1
 
                     evp1 = 0.0_r8
@@ -389,7 +387,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                     sr%threephonon(il)%q3(i) = q3
                     sr%threephonon(il)%b2(i) = b2
                     sr%threephonon(il)%b3(i) = b3
-              ! end if
+                end if
             end do
         end do
     end do
