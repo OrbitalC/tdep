@@ -390,8 +390,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         om2 = dr%aq(q2)%omega(b2)
                         ! distribution function
                         n2 = lo_planck(temperature, om2)
-                        sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                                 dr%default_smearing(b2), 1.0_r8)
+                     !  sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
+                     !                           dr%default_smearing(b2), 1.0_r8)
                         sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
 
                         f0 = sr%iso(il)%psisq(j) * om1 * om2 * n1 * (n2 + 1.0_r8)

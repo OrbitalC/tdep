@@ -20,7 +20,8 @@ type lo_opts
     integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
     integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
     integer :: niter                 !< Number of iteration for the self consistent linewidths
-    integer :: bteniter                 !< Number of iteration for the self consistent linewidths
+    integer :: bteniter              !< Number of iteration for the self consistent linewidths
+    integer :: nbasis                !< Number of basis function for the spectral functions
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
@@ -138,6 +139,10 @@ subroutine parse(opts)
                  help='Number of iterations for the iterative Boltzmann equation.', &
                  required=.false., act='store', def='200', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--nbasis', &
+                 help='Number of basis function to represent the lineshape on the frequency axis.', &
+                 required=.false., act='store', def='200', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--tau_boundary', hidden=.true., &
@@ -185,6 +190,7 @@ subroutine parse(opts)
     if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
     call cli%get(switch='--niter', val=opts%niter)
     call cli%get(switch='--bte_niter', val=opts%bteniter)
+    call cli%get(switch='--nbasis', val=opts%nbasis)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)

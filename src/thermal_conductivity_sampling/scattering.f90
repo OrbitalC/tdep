@@ -1,6 +1,6 @@
 #include "precompilerdefinitions"
 module new_scattering
-use konstanter, only: r8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi
+use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -41,6 +41,10 @@ type lo_scattering_rates
     type(lo_psisq), dimension(:), allocatable :: threephonon
     !> The four phonon scattering
     type(lo_psisq), dimension(:), allocatable :: fourphonon
+
+    contains
+        !> destroy the scattering amplitues
+        procedure :: destroy
 end type
 
 
@@ -133,6 +137,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     end do
 
     t0 = walltime()
+    if (mw%talk) call lo_progressbar_init()
     do il=1, sr%nlocal_point
         if (opts%isotopescattering) then
             call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, mw, mem)
@@ -149,8 +154,8 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
 
 
     diagnostic: block
-        integer :: bufiso, buf3ph, buf4ph
-        integer :: totiso, tot3ph, tot4ph
+        integer(i8) :: bufiso, buf3ph, buf4ph
+        integer(i8) :: totiso, tot3ph, tot4ph
         real(r8) :: ratioiso, ratio3ph, ratio4ph
 
         bufiso = 0
@@ -183,7 +188,6 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
             write(*, *) '                                            % 4ph', ratio4ph
         end if
     end block diagnostic
-
 end subroutine
 
 
@@ -206,7 +210,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
     type(lo_mem_helper), intent(inout) :: mem
 
     ! Isotope prefactor
-    real(r8), parameter :: isotope_prefactor = lo_pi / 2.0_r8
+    real(r8), parameter :: isotope_prefactor = lo_pi * 0.5_r8
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
@@ -225,7 +229,8 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
+            !if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
+            niso = niso + 1
         end do
     end do
 
@@ -245,7 +250,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
             if (om2 .lt. lo_freqtol) cycle
 
             sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
+            !if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
                 i = i + 1
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
@@ -254,7 +259,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
                 sr%iso(il)%q2(i) = q2
                 sr%iso(il)%b2(i) = b2
                 sr%iso(il)%psisq(i) = psisq
-            end if
+            !end if
         end do
     end do
 end subroutine
@@ -281,7 +286,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
     type(lo_mem_helper), intent(inout) :: mem
 
     ! Three phonon prefactor
-    real(r8), parameter :: threephonon_prefactor = lo_pi / 4.0_r8
+    real(r8), parameter :: threephonon_prefactor = lo_pi * 0.25_r8
     ! Fourier transform of the matrix elements
     complex(r8), dimension(dr%n_mode**3) :: ptf
     ! Frequency scaled eigenvectors
@@ -325,8 +330,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                 sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
                                         dr%default_smearing(b3), 1.0_r8)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
-                if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) n3ph = n3ph + 1
+               !if (abs(om1 + om2 - om3) .lt. 100000.0_r8 * sigma .or. &
+               !    abs(om1 - om2 - om3) .lt. 100000.0_r8 * sigma) n3ph = n3ph + 1
+               n3ph = n3ph + 1
             end do
         end do
     end do
@@ -353,6 +359,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
             sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                      dr%default_smearing(b2), 1.0_r8)
+            prefactor = threephonon_prefactor * qp%ap(q2)%integration_weight
 
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
@@ -365,8 +372,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
 
                 ! Do we need to compute the scattering ?
-                if (abs(om1 + om2 - om3) .lt. 4 * sigma .or. &
-                    abs(om1 - om2 - om3) .lt. 4 * sigma) then
+              ! if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
+              !     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) then
                     i = i + 1
 
                     evp1 = 0.0_r8
@@ -375,14 +382,14 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                     call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                     evp2 = conjg(evp2)
                     c0 = dot_product(evp2, ptf)
-                    psisq = abs(c0*conjg(c0)) * threephonon_prefactor * qp%ap(q2)%integration_weight
+                    psisq = abs(c0*conjg(c0)) * prefactor
 
                     sr%threephonon(il)%psisq(i) = psisq
                     sr%threephonon(il)%q2(i) = q2
                     sr%threephonon(il)%q3(i) = q3
                     sr%threephonon(il)%b2(i) = b2
                     sr%threephonon(il)%b3(i) = b3
-                end if
+              ! end if
             end do
         end do
     end do
@@ -767,5 +774,44 @@ subroutine pretransform_phi4(fcf, q2, q3, q4, ptf)
     end do
     end do
 end subroutine
+
+
+subroutine destroy(sr)
+    !> The scattering amplitudes
+    class(lo_scattering_rates), intent(inout) :: sr
+
+    integer :: il
+
+    do il=1, sr%nlocal_point
+        if (allocated(sr%iso)) then
+            deallocate(sr%iso(il)%psisq)
+            deallocate(sr%iso(il)%q2)
+            deallocate(sr%iso(il)%b2)
+        end if
+        if (allocated(sr%threephonon)) then
+            deallocate(sr%threephonon(il)%psisq)
+            deallocate(sr%threephonon(il)%q2)
+            deallocate(sr%threephonon(il)%q3)
+            deallocate(sr%threephonon(il)%b2)
+            deallocate(sr%threephonon(il)%b3)
+        end if
+        if (allocated(sr%fourphonon)) then
+            deallocate(sr%fourphonon(il)%psisq)
+            deallocate(sr%fourphonon(il)%q2)
+            deallocate(sr%fourphonon(il)%q3)
+            deallocate(sr%fourphonon(il)%q4)
+            deallocate(sr%fourphonon(il)%b2)
+            deallocate(sr%fourphonon(il)%b3)
+            deallocate(sr%fourphonon(il)%b4)
+        end if
+    end do
+    if (allocated(sr%iso)) deallocate(sr%iso)
+    if (allocated(sr%threephonon)) deallocate(sr%threephonon)
+    if (allocated(sr%fourphonon)) deallocate(sr%fourphonon)
+    if (allocated(sr%q1)) deallocate(sr%q1)
+    if (allocated(sr%b1)) deallocate(sr%b1)
+    sr%nlocal_point = -lo_hugeint
+end subroutine
+
 
 end module

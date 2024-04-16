@@ -19,7 +19,6 @@ use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
 use new_scattering, only: compute_scattering, lo_scattering_rates
 use linewidths, only: compute_linewidths !, self_consistent_linewidths
-use file_io, only: read_linewidths
 
 implicit none
 ! Standard from libolle
@@ -40,8 +39,6 @@ type(lo_scattering_rates) :: sr
 real(r8), dimension(:, :), allocatable :: thermal_cond
 ! timers
 real(r8) :: timer_init, timer_scatt, timer_kappa, timer_lw, tt0
-! Do we read the linewidths ?
-logical :: is_lw_read
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
@@ -124,24 +121,10 @@ initharmonic: block
         stop
     end if
 
-    is_lw_read = .false.
-    !if (opts%readlw .and. lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
-    if (opts%readlw) then
-        if (lo_does_file_exist('checkpoint.grid_thermal_conductivity_sampling.hdf5')) then
-            if (mw%talk) write(*, "(1X,A)") '... found checkpoint.grid_thermal_conductivity_sampling.hdf5'
-            call read_linewidths(dr, qp, 'checkpoint.grid_thermal_conductivity_sampling.hdf5', mw, mem)
-            is_lw_read = .true.
-        else if (lo_does_file_exist('infile.grid_thermal_conductivity_sampling.hdf5')) then
-            if (mw%talk) write(*, "(1X,A)") '... found infile.grid_thermal_conductivity_sampling.hdf5'
-            call read_linewidths(dr, qp, 'infile.grid_thermal_conductivity_sampling.hdf5', mw, mem)
-            is_lw_read = .true.
-        end if
-    end if
-    if (mw%talk .and. .not. is_lw_read) write(*, "(1x,A)") '... no starting point file found, starting from scratch'
 
     ! Make some space to keep intermediate values
     do q1 = 1, qp%n_irr_point
-        if (.not. is_lw_read) allocate (dr%iq(q1)%linewidth(dr%n_mode))
+        allocate (dr%iq(q1)%linewidth(dr%n_mode))
         allocate (dr%iq(q1)%F0(3, dr%n_mode))
         allocate (dr%iq(q1)%Fn(3, dr%n_mode))
         allocate (dr%iq(q1)%p_plus(dr%n_mode))
@@ -151,7 +134,9 @@ initharmonic: block
         allocate (dr%iq(q1)%mfp(3, dr%n_mode))
         allocate (dr%iq(q1)%scalar_mfp(dr%n_mode))
         do b1 = 1, dr%n_mode
-            if (.not. is_lw_read) then
+            if (dr%iq(q1)%linewidth(b1) .lt. lo_freqtol) then
+                dr%iq(q1)%linewidth(b1) = 0.0_r8
+            else
                 dr%iq(q1)%linewidth(b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
                                                             dr%default_smearing(b1), opts%sigma) / sqrt(3.0_r8)
             end if
@@ -202,6 +187,7 @@ scatters: block
 !   if (opts%niter .gt. 0) then
 !       call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
 !   end if
+
     timer_lw = walltime() - timer_lw
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
 end block scatters
@@ -316,6 +302,7 @@ finalize_and_write: block
 end block finalize_and_write
 
 ! And we are done!
+call sr%destroy()
 call mpi_barrier(mw%comm, mw%error)
 call mpi_finalize(lo_status)
 
