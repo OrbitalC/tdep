@@ -294,7 +294,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         if (fourthorder) then
             do q2=1, qp%n_full_point
             do q3=1, qp%n_full_point
-                q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q4, dims)
+                q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
 
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
