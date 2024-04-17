@@ -433,6 +433,7 @@ subroutine write_selfenergy_to_hdf5(ls, filename)
     call h5%store_attribute(nmode, h5%file_id, 'n_mode')
     call h5%store_attribute(ls%nbasis, h5%file_id, 'nbasis')
     call h5%store_attribute(ls%width, h5%file_id, 'width')
+    call h5%store_attribute(ls%omega_max, h5%file_id, 'omega_max')
 
     ! Store actual data
     call h5%store_data(ls%im_weight, h5%file_id, 'weight', enhet='unitless')
