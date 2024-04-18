@@ -157,9 +157,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> The complex scattering amplitude
     complex(r8) :: c0
     !> For the harmonic values
-    real(r8) :: om1, om2, om3, om4, n2, n3, n4
+    real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
     !> For the scattering
-    real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2
+    real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4
     !> Integers for the do loops
     integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4
     !> Integer for the parallelization
@@ -204,6 +204,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                                               ls%width)
         end do
     end do
+    ! We can also precompute Q=A^T * A, it's the same for all irreducible qpoint and mode
+    call dsyrk('U', 'T', ls%nbasis, ls%nbasis, 1.0_r8, amat, ls%nbasis, 0.0_r8, Q, ls%nbasis)
 
     ! Little sanity check, should be useless
     ls%im_weight = 0.0_r8
@@ -246,6 +248,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         if (thirdorder) then
             do q2=1, qp%n_full_point
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+                if (q3 .lt. q2) cycle ! This is for the permuation symmetry
 
                 prefactor = prefactor_3ph * qp%ap(q2)%integration_weight
                 qv2 = qp%ap(q2)%r
@@ -281,10 +284,14 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         plf1 = n2 + n3 + 1.0_r8
                         plf2 = n2 - n3
                         do n=1, ls%nbasis
-                            ymat(n) = ymat(n) + psisq * plf1 * lo_gauss(ls%omega_n(n), om2 + om3, sigma)
-                            ymat(n) = ymat(n) - psisq * plf1 * lo_gauss(ls%omega_n(n),-om2 - om3, sigma)
-                            ymat(n) = ymat(n) + psisq * plf2 * lo_gauss(ls%omega_n(n),-om2 + om3, sigma)
-                            ymat(n) = ymat(n) - psisq * plf2 * lo_gauss(ls%omega_n(n), om2 - om3, sigma)
+                            ! The 2.0 comes from the permutation symmetry of the third order IFC
+                            ! The first term is invariant with permutation, so no thinking needed
+                            ! For the second term, it's actually BOTH processes (+ and -) that
+                            ! are invariant. Subtle.
+                            ymat(n) = ymat(n) + psisq * plf1 * lo_gauss(ls%omega_n(n), om2 + om3, sigma) * 2.0_r8
+                            ymat(n) = ymat(n) - psisq * plf1 * lo_gauss(ls%omega_n(n),-om2 - om3, sigma) * 2.0_r8
+                            ymat(n) = ymat(n) + psisq * plf2 * lo_gauss(ls%omega_n(n),-om2 + om3, sigma) * 2.0_r8
+                            ymat(n) = ymat(n) - psisq * plf2 * lo_gauss(ls%omega_n(n), om2 - om3, sigma) * 2.0_r8
                         end do
                     end do
                 end do
@@ -293,8 +300,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         ! And finally, the fourphonon
         if (fourthorder) then
             do q2=1, qp%n_full_point
-            do q3=1, qp%n_full_point
+            do q3=q2, qp%n_full_point ! We start from q2 to take into account permutation
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+                 if (q4 .lt. q3) cycle  ! This is for permutation
 
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
@@ -308,6 +316,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
                     n2 = lo_planck(temperature, om2)
+                    n2p = n2 + 1.0_r8
                     sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                              dr%default_smearing(b2), 1.0_r8)
 
@@ -320,6 +329,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = lo_planck(temperature, om3)
+                        n3p = n3 + 1.0_r8
                         sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
                                                  dr%default_smearing(b3), 1.0_r8)
                         evp2 = 0.0_r8
@@ -330,6 +340,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             if (om4 .lt. lo_freqtol) cycle
 
                             n4 = lo_planck(temperature, om4)
+                            n4p = n4 + 1.0_r8
                             egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
                             sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
                                                     dr%default_smearing(b4), 1.0_r8)
@@ -342,19 +353,29 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             c0 = dot_product(evp3, ptf4)
                             psisq = abs(c0*conjg(c0)) * prefactor
 
-                            ! For fourphonon, we have four process to take into account, but only two prefactors
-                            plf1 = (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8) - n2 * n3 * n4
-                            plf2 = 3.0_r8 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8) - (n2 + 1.0_r8) * n3 * n4
+                            plf1 = n2p * n3p * n4p - n2 * n3 * n4
+                            plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
+                            plf3 = 3.0_r8 * n3 * n2p * n4p - n3p * n2 * n4
+                            plf4 = 3.0_r8 * n4 * n3p * n2p - n4p * n3 * n2
 
                             do n=1, ls%nbasis
-                                ymat(n) = ymat(n) + psisq * plf1 * &
-                                    lo_gauss(ls%omega_n(n), om2 + om3 + om4, sigma)
-                                ymat(n) = ymat(n) - psisq * plf1 * &
-                                    lo_gauss(ls%omega_n(n), -om2 - om3 - om4, sigma)
-                                ymat(n) = ymat(n) + psisq * plf2 * &
-                                    lo_gauss(ls%omega_n(n), -om2 + om3 + om4, sigma)
-                                ymat(n) = ymat(n) - psisq * plf2 * &
-                                    lo_gauss(ls%omega_n(n), om2 - om3 - om4, sigma)
+                                ! For the first part, every permutation are symmetric, hence the 6.0_r8 factor
+                                ymat(n) = ymat(n) + 6.0_r8 * psisq * plf1 * lo_gauss(ls%omega_n(n), om2 + om3 + om4, sigma)
+                                ymat(n) = ymat(n) - 6.0_r8 * psisq * plf1 * lo_gauss(ls%omega_n(n),-om2 - om3 - om4, sigma)
+
+                                ! So here we have to get everything according to multiplicity
+                                ! Since the equation is symmetric with permutation of index 3 and 4, we have to be careful with prefactor
+                                ! What we do is apply permutation 2<->3 and 2<->4 and then multiply by 2.0_r8
+                                ! This takes into account the application of 3<->4 that would come afterwards
+                                ! But first, the identity permuation
+                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf2 * lo_gauss(ls%omega_n(n),-om2 + om3 + om4, sigma)
+                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf2 * lo_gauss(ls%omega_n(n), om2 - om3 - om4, sigma)
+                                ! Then 2<->3
+                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n),-om3 + om2 + om4, sigma)
+                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n), om3 - om2 - om4, sigma)
+                                ! And finally 2<->4
+                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n),-om4 + om3 + om2, sigma)
+                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n), om4 - om3 - om2, sigma)
                             end do
                         end do
                     end do
@@ -363,11 +384,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
             end do
         end if
         ! Now we can fit the imaginary part of the self-energy
-        Q = 0.0_r8
+        ! We need to compute c=A^T * y
         c = 0.0_r8
-        ! First we compute Q=A^T * A
-        call dsyrk('U', 'T', ls%nbasis, ls%nbasis, 1.0_r8, amat, ls%nbasis, 0.0_r8, Q, ls%nbasis)
-        ! Then we compute c=A^T * y
         call lo_dgemv(transpose(amat), ymat, c)
         ! With this and the inequality constraints, the quadratic programing is equivalent to a non-negative lsq
         call lo_solve_quadratic_program(Q, c, sol, A_equal, A_inequal, &

@@ -35,9 +35,9 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
     !> Some buffer
     real(r8), dimension(:, :), allocatable :: buf_lw
     real(r8) :: maxdif, t0, buf, velnorm, f0
-    real(r8) :: sigma, sig1, sig2, sig3, sig4, n1, n2, n3, n4, om1, om2, om3, om4
+    real(r8) :: sigma, sig1, sig2, sig3, sig4, n1, n2, n3, n4, n2p, n3p, n4p, om1, om2, om3, om4, psisq
     !> Integers for the loops
-    integer :: i, j, il, q1, q2, q3, q4, b1, b2, b3, b4
+    integer :: i, j, il, q1, q2, q3, q4, b1, b2, b3, b4, ii, jj, kk
 
     call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     buf_lw = 0.0_r8
@@ -74,10 +74,13 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                 b2 = sr%threephonon(il)%b2(j)
                 b3 = sr%threephonon(il)%b3(j)
 
+                psisq = sr%threephonon(il)%psisq(j)
                 om2 = dr%aq(q2)%omega(b2)
                 om3 = dr%aq(q3)%omega(b3)
                 n2 = lo_planck(opts%temperature, om2)
                 n3 = lo_planck(opts%temperature, om3)
+                n2p = n2 + 1.0_r8
+                n3p = n3 + 1.0_r8
 
                 sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                          dr%default_smearing(b2), 1.0_r8)
@@ -85,13 +88,12 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                                          dr%default_smearing(b3), 1.0_r8)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
 
-                f0 = sr%threephonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8)
-                f0 = f0 * lo_gauss(om1, -om2 + om3, sigma)
-                buf = buf + f0
-
-                f0 = sr%threephonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8)
-                f0 = f0 * lo_gauss(om1, om2 + om3, sigma)
-                buf = buf + f0 * 0.5_r8
+                ! We have to take care of the permutation here
+                buf = buf + psisq * n1 * n2 * n3p * lo_gauss(om1, -om2 + om3, sigma)
+                buf = buf + psisq * n1 * n3 * n2p * lo_gauss(om1, -om3 + om2, sigma)
+                ! There is a 2.0 prefactor here from permutation,
+                ! But it's cancelled by the 0.5 from the process
+                buf = buf + psisq * n1 * n2p * n3p * lo_gauss(om1, om2 + om3, sigma)
             end do
         end if
         if (opts%fourthorder) then
@@ -103,12 +105,16 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                 b3 = sr%fourphonon(il)%b3(j)
                 b4 = sr%fourphonon(il)%b4(j)
 
+                psisq = sr%fourphonon(il)%psisq(j)
                 om2 = dr%aq(q2)%omega(b2)
                 om3 = dr%aq(q3)%omega(b3)
                 om4 = dr%aq(q4)%omega(b4)
                 n2 = lo_planck(opts%temperature, om2)
                 n3 = lo_planck(opts%temperature, om3)
                 n4 = lo_planck(opts%temperature, om4)
+                n2p = n2 + 1.0_r8
+                n3p = n3 + 1.0_r8
+                n4p = n4 + 1.0_r8
 
                 sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                          dr%default_smearing(b2), 1.0_r8)
@@ -118,17 +124,22 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                                          dr%default_smearing(b4), 1.0_r8)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
 
-                f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3 * (n4 + 1.0_r8)
-                f0 = f0 * lo_gauss(om1, -om2 - om3 + om4, sigma)
-                buf = buf + f0 * 0.5_r8
+                ! This one is invariant with changes of 2<->3 -> factor 2.0_r8, cancels out
+                buf = buf + psisq * n1 * n2 * n3 * n4p * lo_gauss(om1, -om2 - om3 + om4, sigma)
+                ! The same
+                buf = buf + psisq * n1 * n2 * n4 * n3p * lo_gauss(om1, -om2 - om4 + om3, sigma)
+                ! The same
+                buf = buf + psisq * n1 * n3 * n4 * n2p * lo_gauss(om1, -om3 - om4 + om2, sigma)
 
-                f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8)
-                f0 = f0 * lo_gauss(om1, -om2 + om3 + om4, sigma)
-                buf = buf + f0 * 0.5_r8
+                ! This one is invariant with changes of 2<->3 -> factor 2.0_r8, cancels out
+                buf = buf + psisq * n1 * n2 * n3p * n4p * lo_gauss(om1, -om2 + om3 + om4, sigma)
+                ! The same
+                buf = buf + psisq * n1 * n3 * n2p * n4p * lo_gauss(om1, -om3 + om2 + om4, sigma)
+                ! The same
+                buf = buf + psisq * n1 * n4 * n2p * n3p * lo_gauss(om1, -om4 + om2 + om3, sigma)
 
-                f0 = sr%fourphonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8)
-                f0 = f0 * lo_gauss(om1, om2 + om3 + om4, sigma)
-                buf = buf + f0 / 6.0_r8
+                ! Prefactor going away from cancellation from permutation
+                buf = buf + psisq * n1 * n2p * n3p * n4p * lo_gauss(om1, om2 + om3 + om4, sigma)
             end do
         end if
 

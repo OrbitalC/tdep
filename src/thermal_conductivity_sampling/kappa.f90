@@ -367,7 +367,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         updateF: block
             real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
             real(r8) :: iQs, f0
-            real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, sigma, sig1, sig2, sig3, sig4
+            real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, n2p, n3p, n4p, sigma, sig1, sig2, sig3, sig4
             integer :: il, j, b1, b2, b3, b4, q2, q3, q4
             integer :: q1
 
@@ -412,6 +412,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         om3 = dr%aq(q3)%omega(b3)
                         n2 = lo_planck(temperature, om2)
                         n3 = lo_planck(temperature, om3)
+                        n2p = n2 + 1.0_r8
+                        n3p = n3 + 1.0_r8
 
                         sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                                  dr%default_smearing(b2), 1.0_r8)
@@ -422,13 +424,20 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         Fp = Fbb(:, b2, q2)
                         Fpp = Fbb(:, b3, q3)
 
-                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8)
+                        ! First the plus process
+                        ! The permutation gives a 2.0_r8 factor, cancels with the 0.5 from the process
+                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2 * n3p
                         f0 = f0 * lo_gauss(om1, -om2 + om3, sigma)
                         v0 = v0 + f0 * iQs * (Fp + Fpp)
+                        ! The 2<->3 permutation
+                        f0 = sr%threephonon(il)%psisq(j) * n1 * n3 * n2p
+                        f0 = f0 * lo_gauss(om1, -om3 + om2, sigma)
+                        v0 = v0 + f0 * iQs * (Fp + Fpp)
 
-                        f0 = sr%threephonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8)
+                        ! The the minus process, factor 0.5 cancels out with the permutations
+                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2p * n3p
                         f0 = f0 * lo_gauss(om1, om2 + om3, sigma)
-                        v0 = v0 + f0 * iQs * (Fp + Fpp) * 0.5_r8
+                        v0 = v0 + f0 * iQs * (Fp + Fpp)
                     end do
                 end if
                 if (fourphonon) then
@@ -446,6 +455,9 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         n2 = lo_planck(temperature, om2)
                         n3 = lo_planck(temperature, om3)
                         n4 = lo_planck(temperature, om4)
+                        n2p = n2 + 1.0_r8
+                        n3p = n3 + 1.0_r8
+                        n4p = n4 + 1.0_r8
 
                         sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
                                                 dr%default_smearing(b2), 1.0_r8)
@@ -459,17 +471,39 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         Fpp = Fbb(:, b3, q3)
                         Fppp = Fbb(:, b4, q4)
 
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3 * (n4 + 1.0_r8)
+                        ! First the plus-plus process
+                        ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3 * n4p
                         f0 = f0 * lo_gauss(om1, -om2 - om3 + om4, sigma)
-                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs * 0.5_r8
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
+                        ! Permute 3<->4
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n4 * n3p
+                        f0 = f0 * lo_gauss(om1, -om2 - om4 + om3, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
+                        ! Permute 2<->4
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n3 * n4 * n2p
+                        f0 = f0 * lo_gauss(om1, -om3 - om4 + om2, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
 
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * (n3 + 1.0_r8) * (n4 + 1.0_r8)
+                        ! Then the plus-minus process. It's actually like the previous process
+                        ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3p * n4p
                         f0 = f0 * lo_gauss(om1, -om2 + om3 + om4, sigma)
-                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs * 0.5_r8
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
+                        ! Permute 2<->3
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n3 * n2p * n4p
+                        f0 = f0 * lo_gauss(om1, -om3 + om2 + om4, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
+                        ! Permute 2<->4
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n4 * n2p * n3p
+                        f0 = f0 * lo_gauss(om1, -om4 + om2 + om3, sigma)
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
 
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * (n2 + 1.0_r8) * (n3 + 1.0_r8) * (n4 + 1.0_r8)
+                        ! And finally, the minus-minus process, this one takes all permutation
+                        ! So factor 6.0_r8, cancels out with 6.0_r8 of the process
+                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2p * n3p * n4p
                         f0 = f0 * lo_gauss(om1, om2 + om3 + om4, sigma)
-                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs  / 6.0_r8
+                        v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                     end do
                 end if
                 Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0

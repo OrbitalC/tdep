@@ -318,6 +318,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
     do q2=1, qp%n_full_point
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
 
+        if (q3 .lt. q2) cycle
+
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -330,6 +332,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
                                         dr%default_smearing(b3), 1.0_r8)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                    abs(om1 - om2 + om3) .lt. 4.0_r8 * sigma .or. &
                     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) n3ph = n3ph + 1
             end do
         end do
@@ -345,6 +348,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
     i = 0
     do q2=1, qp%n_full_point
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+
+        if (q3 .lt. q2) cycle
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
@@ -371,6 +376,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, fct, dims, temperature
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                    abs(om1 - om2 + om3) .lt. 4.0_r8 * sigma .or. &
                     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) then
                     i = i + 1
 
@@ -450,8 +456,11 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, fcf, dims, temperature,
 
     n4ph = 0
     do q2=1, qp%n_full_point
-    do q3=1, qp%n_full_point
+    do q3=q2, qp%n_full_point
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+
+        if (q4 .lt. q3) cycle
+
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -473,6 +482,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, fcf, dims, temperature,
                     sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
                     if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om3 + om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 - om3 + om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) n4ph = n4ph + 1
                 end do
             end do
@@ -491,8 +504,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, fcf, dims, temperature,
 
     i = 0
     do q2=1, qp%n_full_point
-    do q3=1, qp%n_full_point
+    do q3=q2, qp%n_full_point
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+        if (q4 .lt. q3) cycle
+
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         qv4 = qp%ap(q4)%r
@@ -531,6 +546,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, fcf, dims, temperature,
 
                     if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om3 + om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 - om3 + om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
                         i = i + 1
 
