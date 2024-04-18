@@ -2,7 +2,8 @@
 program thermal_conductivity_sampling
 use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
                       lo_frequency_THz_to_Hartree, lo_huge, lo_Hartree_to_eV
-use gottochblandat, only: walltime, tochar, lo_linspace, lo_logspace, lo_mean, lo_does_file_exist
+use gottochblandat, only: walltime, tochar, lo_linspace, lo_logspace, lo_mean, &
+                          lo_does_file_exist, lo_planck
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -13,7 +14,6 @@ use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_phonon_dos, only: lo_phonon_dos
 use dump_data, only: lo_dump_gnuplot_2d_real
-use lo_randomnumbers, only: lo_mersennetwister
 !
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
@@ -30,7 +30,6 @@ type(lo_phonon_dispersions) :: dr
 type(lo_phonon_dos) :: pd
 type(lo_crystalstructure) :: uc
 class(lo_qpoint_mesh), allocatable :: qp
-type(lo_mersennetwister) :: rng
 type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
 ! The scattering rates
@@ -121,42 +120,20 @@ initharmonic: block
         stop
     end if
 
-
     ! Make some space to keep intermediate values
     do q1 = 1, qp%n_irr_point
         allocate (dr%iq(q1)%linewidth(dr%n_mode))
         allocate (dr%iq(q1)%F0(3, dr%n_mode))
         allocate (dr%iq(q1)%Fn(3, dr%n_mode))
-        allocate (dr%iq(q1)%p_plus(dr%n_mode))
-        allocate (dr%iq(q1)%p_minus(dr%n_mode))
-        allocate (dr%iq(q1)%p_iso(dr%n_mode))
         allocate (dr%iq(q1)%qs(dr%n_mode))
         allocate (dr%iq(q1)%mfp(3, dr%n_mode))
         allocate (dr%iq(q1)%scalar_mfp(dr%n_mode))
-        do b1 = 1, dr%n_mode
-            if (dr%iq(q1)%linewidth(b1) .lt. lo_freqtol) then
-                dr%iq(q1)%linewidth(b1) = 0.0_r8
-            else
-                dr%iq(q1)%linewidth(b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
-                                                            dr%default_smearing(b1), opts%sigma) / sqrt(3.0_r8)
-            end if
-        end do
+        dr%iq(q1)%linewidth = 0.0_r8
         dr%iq(q1)%F0 = 0.0_r8
         dr%iq(q1)%Fn = 0.0_r8
-        dr%iq(q1)%p_plus = 0.0_r8
-        dr%iq(q1)%p_minus = 0.0_r8
-        dr%iq(q1)%p_iso = 0.0_r8
         dr%iq(q1)%qs = 0.0_r8
         dr%iq(q1)%mfp = 0.0_r8
         dr%iq(q1)%scalar_mfp = 0.0_r8
-        if (opts%fourthorder) then
-            allocate (dr%iq(q1)%p_plusplus(dr%n_mode))
-            allocate (dr%iq(q1)%p_plusminus(dr%n_mode))
-            allocate (dr%iq(q1)%p_minusminus(dr%n_mode))
-            dr%iq(q1)%p_plusplus = 0.0_r8
-            dr%iq(q1)%p_plusminus = 0.0_r8
-            dr%iq(q1)%p_minusminus = 0.0_r8
-        end if
     end do
     do q1 = 1, qp%n_full_point
         allocate (dr%aq(q1)%kappa(3, 3, dr%n_mode))

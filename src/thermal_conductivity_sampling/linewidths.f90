@@ -47,19 +47,16 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
         b1 = sr%b1(il)
 
         om1 = dr%iq(q1)%omega(b1)
-        n1 = lo_planck(opts%temperature, om1)
-        sig1 = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
-                                 dr%default_smearing(b1), 1.0_r8)
+        sig1 = sr%sigma_q(q1, b1)
+        n1 = sr%be(q1, b1)
 
         if (opts%isotopescattering) then
             do j = 1, sr%iso(il)%n
                 q2 = sr%iso(il)%q2(j)
                 b2 = sr%iso(il)%b2(j)
                 om2 = dr%aq(q2)%omega(b2)
-                ! distribution function
-                n2 = lo_planck(opts%temperature, om2)
-                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                         dr%default_smearing(b2), 1.0_r8)
+
+                n2 = sr%be(q2, b2)
                 sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
 
                 f0 = sr%iso(il)%psisq(j) * om1 * om2 * n1 * (n2 + 1.0_r8)
@@ -77,15 +74,13 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                 psisq = sr%threephonon(il)%psisq(j)
                 om2 = dr%aq(q2)%omega(b2)
                 om3 = dr%aq(q3)%omega(b3)
-                n2 = lo_planck(opts%temperature, om2)
-                n3 = lo_planck(opts%temperature, om3)
+                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
                 n2p = n2 + 1.0_r8
                 n3p = n3 + 1.0_r8
 
-                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                         dr%default_smearing(b2), 1.0_r8)
-                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
-                                         dr%default_smearing(b3), 1.0_r8)
+                sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
+                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
 
                 ! We have to take care of the permutation here
@@ -109,19 +104,16 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                 om2 = dr%aq(q2)%omega(b2)
                 om3 = dr%aq(q3)%omega(b3)
                 om4 = dr%aq(q4)%omega(b4)
-                n2 = lo_planck(opts%temperature, om2)
-                n3 = lo_planck(opts%temperature, om3)
-                n4 = lo_planck(opts%temperature, om4)
+                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
+                n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                 n2p = n2 + 1.0_r8
                 n3p = n3 + 1.0_r8
                 n4p = n4 + 1.0_r8
 
-                sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                         dr%default_smearing(b2), 1.0_r8)
-                sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
-                                         dr%default_smearing(b3), 1.0_r8)
-                sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
-                                         dr%default_smearing(b4), 1.0_r8)
+                sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
+                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
+                sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
 
                 ! This one is invariant with changes of 2<->3 -> factor 2.0_r8, cancels out

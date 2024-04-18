@@ -150,6 +150,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     complex(r8), dimension(dr%n_mode**3) :: evp2
     ! Helper for Fourier transforms
     complex(r8), dimension(dr%n_mode**4) :: evp3
+    !> To precompute the bose-einstein distribution and the adaptive smearing parameter
+    real(r8), dimension(:, :), allocatable :: bose_einstein, sigma_q
     ! The qpoints in cartesian coordinates
     real(r8), dimension(3) :: qv2, qv3, qv4
     ! The q-point grid dimension
@@ -174,6 +176,17 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     class default
         call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
     end select
+
+    ! Let's precompute some things
+    allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
+    allocate(sigma_q(qp%n_irr_point, dr%n_mode))
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            bose_einstein(q1, b1) = lo_planck(temperature, dr%iq(q1)%omega(b1))
+            sigma_q(q1, b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
+                                                dr%default_smearing(b1), 1.0_r8)
+        end do
+    end do
 
     ! Let's prepare the non-negative least-squares
     allocate(A_inequal(ls%nbasis, ls%nbasis))
@@ -207,7 +220,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     ! We can also precompute Q=A^T * A, it's the same for all irreducible qpoint and mode
     call dsyrk('U', 'T', ls%nbasis, ls%nbasis, 1.0_r8, amat, ls%nbasis, 0.0_r8, Q, ls%nbasis)
 
-    ! Little sanity check, should be useless
+    ! Little sanity check, should be already done
     ls%im_weight = 0.0_r8
 
     ! For the nice progressbar
@@ -258,10 +271,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
-                    n2 = lo_planck(temperature, om2)
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
-                    sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                             dr%default_smearing(b2), 1.0_r8)
+                    n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
+                    sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
@@ -269,10 +281,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
-                        n3 = lo_planck(temperature, om3)
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
-                        sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
-                                                 dr%default_smearing(b3), 1.0_r8)
+                        n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
+                        sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
                         sigma = sqrt(sig2**2 + sig3**2)
 
                         evp2 = 0.0_r8
@@ -315,10 +326,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     if (om2 .lt. lo_freqtol) cycle
 
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
-                    n2 = lo_planck(temperature, om2)
+                    n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
                     n2p = n2 + 1.0_r8
-                    sig2 = qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), &
-                                             dr%default_smearing(b2), 1.0_r8)
+                    sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, &
@@ -328,10 +338,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         if (om3 .lt. lo_freqtol) cycle
 
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
-                        n3 = lo_planck(temperature, om3)
+                        n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
                         n3p = n3 + 1.0_r8
-                        sig3 = qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), &
-                                                 dr%default_smearing(b3), 1.0_r8)
+                        sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
                         evp2 = 0.0_r8
                         call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, &
                                    evp2, dr%n_mode)
@@ -339,11 +348,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             om4 = dr%aq(q4)%omega(b4)
                             if (om4 .lt. lo_freqtol) cycle
 
-                            n4 = lo_planck(temperature, om4)
-                            n4p = n4 + 1.0_r8
                             egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
-                            sig4 = qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q4)%vel(:, b4), &
-                                                    dr%default_smearing(b4), 1.0_r8)
+                            n4 = bose_einstein(qp%ap(q4)%irreducible_index, b4)
+                            n4p = n4 + 1.0_r8
+                            sig4 = sigma_q(qp%ap(q4)%irreducible_index, b4)
                             sigma = sqrt(sig2**2 + sig3**2 + sig4**2)
 
                             evp3 = 0.0_r8
