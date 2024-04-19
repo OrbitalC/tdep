@@ -1,6 +1,6 @@
 #include "precompilerdefinitions"
 module selfenergy
-use konstanter, only: r8, lo_freqtol, lo_huge, lo_hugeint, lo_pi, lo_twopi, lo_exitcode_param
+use konstanter, only: r8, lo_freqtol, lo_huge, lo_hugeint, lo_pi, lo_twopi, lo_exitcode_param, lo_tol
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -13,6 +13,9 @@ use type_phonon_dispersions, only: lo_phonon_dispersions
 use hdf5_wrappers, only: lo_hdf5_helper
 use type_blas_lapack_wrappers, only: lo_dgemv
 use quadratic_programming, only: lo_solve_quadratic_program
+
+use type_symmetryoperation, only: lo_operate_on_vector
+use lo_sorting, only: lo_qsort
 
 implicit none
 private
@@ -166,6 +169,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4
     !> Integer for the parallelization
     integer :: ctr
+    !> is the triplet/quartet reducible ?
+    logical :: isred
+    !> What is the multiplicity of the irreducible triplet/quartet
+    real(r8) :: mult
     !> timing
     real(r8) :: t0
 
@@ -263,7 +270,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permuation symmetry
 
-                prefactor = prefactor_3ph * qp%ap(q2)%integration_weight
+                call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
+                if (isred) cycle
+
+                prefactor = prefactor_3ph * qp%ap(q2)%integration_weight * mult
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 call pretransform_phi3(fct, qv2, qv3, ptf3)
@@ -315,12 +325,15 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
                  if (q4 .lt. q3) cycle  ! This is for permutation
 
+                call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+                if (isred) cycle
+
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 qv4 = qp%ap(q4)%r
                 call pretransform_phi4(fcf, qv2, qv3, qv4, ptf4)
 
-                prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight
+                prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
                 do b2=1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
@@ -724,4 +737,127 @@ function modified_lorentzian(x, mu, sigma) result (l)
     f2 = sigma * x
     l= f0 / (f1**2 + f2**2) * invpi
 end function
+
+
+subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
+    !> The qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> The indices of the qpoints - q1 is irreducible, q2 and q3 are full
+    integer, intent(in) :: q1, q2, q3
+    !> Is the triplet reducible ?
+    logical, intent(out) :: isred
+    !> If it's reducible, what is its multiplicity
+    real(r8), intent(out) :: mult
+
+    ! To hold the q-point in reduced coordinates
+    real(r8), dimension(3) :: qv2, qv3, qv2p, qv3p
+    !> To get the index of the new triplet on the fft_grid
+    integer, dimension(3) :: gi
+    !> The new triplet after the operation
+    integer, dimension(2) :: qpp
+    !> Integers for the loops
+    integer :: j, k
+
+    ! First get the q-points in reduce coordinates
+    qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+    qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
+
+    mult = 0.0_r8
+    isred = .false.
+    ! Let's try all operations that leaves q1 invariant
+    do j=1, qp%ip(q1)%n_invariant_operation
+        k = qp%ip(q1)%invariant_operation(j)
+        select type(qp); type is(lo_fft_mesh)
+            ! Rotate q2 and look if it's the on grid
+            qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+            if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+
+            ! Rotate q3 and look if it's the on grid
+            qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
+            if (qp%is_point_on_grid(qv3p) .eqv. .false.) cycle
+
+            ! If everything is on the grid, get the index of each point
+            gi = qp%index_from_coordinate(qv2p)
+            qpp(1) = qp%gridind2ind(gi(1), gi(2), gi(3))
+            gi = qp%index_from_coordinate(qv3p)
+            qpp(2) = qp%gridind2ind(gi(1), gi(2), gi(3))
+        end select
+        if (minval(qpp) .gt. q2) then
+            isred = .true.
+        ! Now we have to determine the weight
+        ! Two roads are possible
+        !      1. Get the ratio of number of red point that can give this reducible point
+        !      2. Look at the ratio between total number of operations and the ones
+        !         that leaves this irreducible triplet unchanged
+        ! The second road doesn't requires me to sum over all other qpoints, so I'll go with this one
+        else if (minval(qpp) .eq. q2 .and. maxval(qpp) .eq. q3) then
+            mult = mult + 1.0_r8
+        end if
+    end do
+    ! The 2.0_r8 is for time reversal symmetry
+    mult = qp%ip(q1)%n_invariant_operation / mult
+end subroutine
+
+
+subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+    !> The qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> The indices of the qpoints - q1 is irreducible, q2 and q3 are full
+    integer, intent(in) :: q1, q2, q3, q4
+    !> Is the triplet reducible ?
+    logical, intent(out) :: isred
+    !> If it's reducible, what is its multiplicity
+    real(r8), intent(out) :: mult
+
+    ! To hold the q-point in reduced coordinates
+    real(r8), dimension(3) :: qv2, qv3, qv4, qv2p, qv3p, qv4p
+    !> To get the index of the new triplet on the fft_grid
+    integer, dimension(3) :: gi
+    !> The new triplet after the operation
+    integer, dimension(3) :: qpp
+    !> Integers for the loops
+    integer :: j, k
+
+    ! First get the reciprocal lattice vectors, in reduce coordinates
+    qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+    qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
+    qv4 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q4)%r)
+
+    isred = .false.
+    mult = 0.0_r8
+    ! Let's try all operations that leaves q1 invariant
+    do j=1, qp%ip(q1)%n_invariant_operation
+        k = qp%ip(q1)%invariant_operation(j)
+        select type(qp); type is(lo_fft_mesh)
+            qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+            if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+            qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
+            if (qp%is_point_on_grid(qv3p) .eqv. .false.) cycle
+            qv4p = lo_operate_on_vector(uc%sym%op(k), qv4, reciprocal=.true., fractional=.true.)
+            if (qp%is_point_on_grid(qv4p) .eqv. .false.) cycle
+            gi = qp%index_from_coordinate(qv2p)
+            qpp(1) = qp%gridind2ind(gi(1), gi(2), gi(3))
+            gi = qp%index_from_coordinate(qv3p)
+            qpp(2) = qp%gridind2ind(gi(1), gi(2), gi(3))
+            gi = qp%index_from_coordinate(qv4p)
+            qpp(3) = qp%gridind2ind(gi(1), gi(2), gi(3))
+        end select
+        ! The sorting allows to include permutation invariance
+        call lo_qsort(qpp)
+        if (qpp(1) .gt. q2) then
+            isred = .true.
+        ! For the weights, it's the same idea that for the triplet
+        ! I compute the number of operations that let the quartet invariant
+        ! And take the ratio between the little group of q1 and this number
+        else if (qpp(1) .eq. q2 .and. qpp(2) .eq. q3 .and. qpp(3) .eq. q4) then
+            mult = mult + 1.0_r8
+        end if
+    end do
+    mult = qp%ip(q1)%n_invariant_operation / mult
+end subroutine
+
 end module
