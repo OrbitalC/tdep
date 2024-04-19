@@ -56,7 +56,7 @@ subroutine compute_linewidths(qp, dr, sr, opts, mw, mem)
                 b2 = sr%iso(il)%b2(j)
                 om2 = dr%aq(q2)%omega(b2)
 
-                n2 = sr%be(q2, b2)
+                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
                 sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
 
                 f0 = sr%iso(il)%psisq(j) * om1 * om2 * n1 * (n2 + 1.0_r8)
