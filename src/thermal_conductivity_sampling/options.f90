@@ -180,9 +180,7 @@ subroutine parse(opts)
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
     call cli%get(switch='--nsample3ph', val=opts%nsample3ph)
-    if (opts%nsample3ph .lt. 0) opts%nsample3ph = lo_hugeint
     call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
-    if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
     call cli%get(switch='--niter', val=opts%niter)
     call cli%get(switch='--bte_niter', val=opts%bteniter)
     call cli%get(switch='--sigma', val=opts%sigma)

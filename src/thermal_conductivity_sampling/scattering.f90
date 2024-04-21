@@ -29,8 +29,6 @@ type lo_psisq
     integer, dimension(:), allocatable :: q2, q3, q4, b2, b3, b4
     !> The number of scattering
     integer :: n
-    !> The maximum likelihood ratio for this qpoint/mode
-    real(r8) :: mle_pp, mle_pm, mle_mm
 end type
 
 ! Container for scattering rates
@@ -47,6 +45,8 @@ type lo_scattering_rates
     type(lo_psisq), dimension(:), allocatable :: fourphonon
     !> Let's precompute the Bose-Einstein distribution and adaptive smearing
     real(r8), dimension(:, :), allocatable :: be, sigma_q
+    !> The ratio for maximum likelihood estimation
+    real(r8) :: mle_4ph
 
     contains
         !> destroy the scattering amplitues
@@ -100,6 +100,7 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
         call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
     end select
 
+    ! Initialize the random number generator
     call rng%init(iseed=mw%r, rseed=walltime())
 
     bufiso = 0
@@ -170,7 +171,11 @@ subroutine compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
             call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, opts%temperature, mw, mem)
         end if
         if (opts%fourthorder) then
-            call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, opts%temperature, opts%nsample4ph, rng, mw, mem)
+            if (opts%nsample4ph .lt. 0) then
+                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, opts%temperature, rng, mw, mem)
+            else
+                call compute_fourphonon_sampling(il, sr, qp, dr, uc, fcf, dims, opts%temperature, opts%nsample4ph, rng, mw, mem)
+            end if
         end if
         if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
     end do
@@ -468,7 +473,209 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, tempera
 end subroutine
 
 
-subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperature, n4ph, rng, mw, mem)
+subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperature, rng, mw, mem)
+    ! The qpoint and mode indices considered here
+    integer, intent(in) :: il
+    !> The scattering amplitudes
+    type(lo_scattering_rates), intent(inout) :: sr
+    ! The qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    ! Harmonic dispersions
+    type(lo_phonon_dispersions), intent(inout) :: dr
+    !> structure
+    type(lo_crystalstructure), intent(in) :: uc
+    ! Fourth order force constants
+    type(lo_forceconstant_fourthorder), intent(in) :: fcf
+    ! The dimension of the grid
+    integer, dimension(3), intent(in) :: dims
+    ! The temperature
+    real(r8), intent(in) :: temperature
+    ! The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    ! Mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    ! Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
+
+    ! Three phonon prefactor
+    real(r8), parameter :: fourphonon_prefactor = lo_pi / 8.0_r8
+    ! Frequency scaled eigenvectors
+    complex(r8), dimension(:), allocatable :: egv1, egv2, egv3, egv4
+    ! Helper for Fourier transform of psi3
+    complex(r8), dimension(:), allocatable :: ptf, evp1, evp2, evp3
+    ! The full qpoint grid, to be shuffled
+    integer, dimension(:), allocatable :: qgridfull1, qgridfull2
+    ! The qpoints in cartesian coordinates
+    real(r8), dimension(3) :: qv2, qv3, qv4
+    !> The complex scattering amplitude
+    complex(r8) :: c0
+    !> The ratio for the maximum likelihood estimation of the scattering rates
+    real(r8) :: mle_ratio
+    ! Frequencies, bose-einstein occupation and scattering strength
+    real(r8) :: om1, om2, om3, om4, psisq, prefactor
+    ! The gaussian integration width
+    real(r8) :: sig1, sig2, sig3, sig4, sigma, plf
+    ! Integers for do loops
+    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj
+    ! Do we compute the scattering amplitude ?
+    logical :: is_scatter
+    !> Is the quartet irreducible ?
+    logical :: isred
+    !> If so, what is its multiplicity
+    real(r8) :: mult
+
+    ! We start by allocating everything
+    call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(evp2, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(evp3, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv1, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv2, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv3, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(egv4, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    ! Already set some buffer values for mode (q1, b1)
+    q1 = sr%q1(il)
+    b1 = sr%b1(il)
+    om1 = dr%iq(q1)%omega(b1)
+    egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
+    sig1 = sr%sigma_q(q1, b1)
+
+    i = 0
+   do q2=1, qp%n_full_point
+   do q3=q2, qp%n_full_point
+        q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+        if (q4 .lt. q3) cycle
+
+        call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+        if (isred) cycle
+        is_scatter = .false.
+
+        do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+
+            sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
+            do b3=1, dr%n_mode
+                om3 = dr%aq(q3)%omega(b3)
+                if (om3 .lt. lo_freqtol) cycle
+
+                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
+                do b4=1, dr%n_mode
+                    om4 = dr%aq(q4)%omega(b4)
+                    if (om4 .lt. lo_freqtol) cycle
+
+                    sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) i = i + 1
+                end do
+            end do
+        end do
+    end do
+    end do
+
+    sr%fourphonon(il)%n = i
+    allocate(sr%fourphonon(il)%psisq(i))
+    allocate(sr%fourphonon(il)%q2(i))
+    allocate(sr%fourphonon(il)%q3(i))
+    allocate(sr%fourphonon(il)%q4(i))
+    allocate(sr%fourphonon(il)%b2(i))
+    allocate(sr%fourphonon(il)%b3(i))
+    allocate(sr%fourphonon(il)%b4(i))
+
+    i = 0
+    do q2=1, qp%n_full_point
+    do q3=q2, qp%n_full_point
+        q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
+        if (q4 .lt. q3) cycle
+
+        call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+        if (isred) cycle
+
+        qv2 = qp%ap(q2)%r
+        qv3 = qp%ap(q3)%r
+        qv4 = qp%ap(q4)%r
+        call pretransform_phi4(fcf, qv2, qv3, qv4, ptf)
+
+        prefactor = fourphonon_prefactor * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
+        do b2=1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+
+            egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+            sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
+
+            evp1 = 0.0_r8
+            call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
+            do b3=1, dr%n_mode
+                om3 = dr%aq(q3)%omega(b3)
+                if (om3 .lt. lo_freqtol) cycle
+
+                egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
+
+                evp2 = 0.0_r8
+                call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
+                do b4=1, dr%n_mode
+                    om4 = dr%aq(q4)%omega(b4)
+                    if (om4 .lt. lo_freqtol) cycle
+
+                    sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
+                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
+
+                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
+                        i = i + 1
+
+                        egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+
+                        evp3 = 0.0_r8
+                        call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
+                        evp3 = conjg(evp3)
+                        c0 = dot_product(evp3, ptf)
+                        psisq = abs(c0*conjg(c0)) * prefactor
+
+                        sr%fourphonon(il)%psisq(i) = psisq
+                        sr%fourphonon(il)%q2(i) = q2
+                        sr%fourphonon(il)%q3(i) = q3
+                        sr%fourphonon(il)%q4(i) = q4
+                        sr%fourphonon(il)%b2(i) = b2
+                        sr%fourphonon(il)%b3(i) = b3
+                        sr%fourphonon(il)%b4(i) = b4
+                    end if
+                end do
+            end do
+        end do
+    end do
+    end do
+    ! And we can deallocate everything
+    call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(evp2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(evp3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(qgridfull1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+end subroutine
+
+
+subroutine compute_fourphonon_sampling(il, sr, qp, dr, uc, fcf, dims, temperature, n4ph, rng, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -513,15 +720,15 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
     ! The gaussian integration width
     real(r8) :: sig1, sig2, sig3, sig4, sigma, plf
     ! Integers for do loops
-    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, np
-    !> How many total scattering for each type of process
-    integer :: npp, npm, nmm
+    integer :: i, j, ip, np, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj
     ! Do we compute the scattering amplitude ?
     logical :: is_scatter
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
     real(r8) :: mult
+    !> np_prec
+    integer :: ntot
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -535,11 +742,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
     call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    qgridfull1 = [(q2, q2=1, qp%n_full_point)]
-    qgridfull2 = [(q3, q3=1, qp%n_full_point)]
-    call rng%shuffle_int_array(qgridfull1)
-    call rng%shuffle_int_array(qgridfull2)
-
     ! Already set some buffer values for mode (q1, b1)
     q1 = sr%q1(il)
     b1 = sr%b1(il)
@@ -547,76 +749,43 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
     sig1 = sr%sigma_q(q1, b1)
 
-    npp = 0
-    npm = 0
-    nmm = 0
-    i = 0
-   !do qi=1, qp%n_full_point
-   !do qj=1, qp%n_full_point
-   !    q2 = qgridfull1(qi)
-   !    q3 = qgridfull2(qj)
-   !    if (q3 .lt. q2) cycle
-   do q2=1, qp%n_full_point
-   do q3=q2, qp%n_full_point
+    qgridfull1 = [(q2, q2=1, qp%n_full_point)]
+    qgridfull2 = [(q3, q3=1, qp%n_full_point)]
+    call rng%shuffle_int_array(qgridfull1)
+    call rng%shuffle_int_array(qgridfull2)
+
+    ntot = 0
+    count_loop: do qi=1, qp%n_full_point
+    do qj=1, qp%n_full_point
+        q2 = qgridfull1(qi)
+        q3 = qgridfull2(qj)
+        if (q3 .lt. q2) cycle  ! Permutation symmetry
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
-        if (q4 .lt. q3) cycle
+        if (q4 .lt. q3) cycle  ! Permutation symmetry
 
         call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
-        if (isred) cycle
-        is_scatter = .false.
+        if (isred) cycle  ! Irreducible quartet
 
+        ntot = ntot + dr%n_mode**4
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
-
-            sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
-
-                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
                 do b4=1, dr%n_mode
                     om4 = dr%aq(q4)%omega(b4)
                     if (om4 .lt. lo_freqtol) cycle
-
-                    sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
-                    sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
-                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) i = i + 1
-
-                  ! if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                  !     abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
-                  !     abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma) then
-                  !     npp = npp + 1
-                  !     is_scatter = .true.
-                  ! end if
-                  ! if (abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                  !     abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
-                  !     abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma) then
-                  !     npm = npm + 1
-                  !     is_scatter = .true.
-                  ! end if
-                  ! if (abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
-                  !     nmm = nmm + 1
-                  !     is_scatter = .true.
-                  ! end if
-                  ! if (is_scatter) i = i + 1
+                        ntot = ntot + 1
                 end do
             end do
         end do
     end do
-    end do
+    end do count_loop
 
-   !np = min(i, n4ph)
-   !mle_ratio = real(i, r8) / real(np, r8)
-   !write(*, *) mle_ratio, np, n4ph, i, qp%n_full_point**2*dr%n_mode**3
-   !mle_ratio = 1.0_r8
-    np = i
+    np = min(n4ph, ntot)
+    mle_ratio = real(ntot, r8) / real(np, r8)
+
     sr%fourphonon(il)%n = np
     allocate(sr%fourphonon(il)%psisq(np))
     allocate(sr%fourphonon(il)%q2(np))
@@ -625,19 +794,14 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
     allocate(sr%fourphonon(il)%b2(np))
     allocate(sr%fourphonon(il)%b3(np))
     allocate(sr%fourphonon(il)%b4(np))
+    sr%fourphonon(il)%psisq = 0.0_r8
 
-    sr%fourphonon(il)%mle_pp = real(i, r8) / real(np, r8)
-    sr%fourphonon(il)%mle_pm = real(i, r8) / real(np, r8)
-    sr%fourphonon(il)%mle_mm = real(i, r8) / real(np, r8)
-
-    i = 0
-   !do qi=1, qp%n_full_point
-   !do qj=1, qp%n_full_point
-   !    q2 = qgridfull1(qi)
-   !    q3 = qgridfull2(qj)
-   !    if (q3 .lt. q2) cycle
-    do q2=1, qp%n_full_point
-    do q3=q2, qp%n_full_point
+    ip = 0
+    full_loop: do qi=1, qp%n_full_point
+    do qj=1, qp%n_full_point
+        q2 = qgridfull1(qi)
+        q3 = qgridfull2(qj)
+        if (q3 .lt. q2) cycle
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
         if (q4 .lt. q3) cycle
 
@@ -649,7 +813,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
         qv4 = qp%ap(q4)%r
         call pretransform_phi4(fcf, qv2, qv3, qv4, ptf)
 
-        prefactor = fourphonon_prefactor * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
+        prefactor = fourphonon_prefactor * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult * mle_ratio
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -672,41 +836,32 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, temperat
                     om4 = dr%aq(q4)%omega(b4)
                     if (om4 .lt. lo_freqtol) cycle
 
+                    ip = ip +1
+                    if (ip .gt. np) exit full_loop
+
                     sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
                     sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
 
-  !                 if (i .lt. np) then
-                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
-                        i = i + 1
+                    egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
 
-                        egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+                    evp3 = 0.0_r8
+                    call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
+                    evp3 = conjg(evp3)
+                    c0 = dot_product(evp3, ptf)
+                    psisq = abs(c0*conjg(c0)) * prefactor
 
-                        evp3 = 0.0_r8
-                        call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
-                        evp3 = conjg(evp3)
-                        c0 = dot_product(evp3, ptf)
-                        psisq = abs(c0*conjg(c0)) * prefactor !* mle_ratio
-
-                        sr%fourphonon(il)%psisq(i) = psisq
-                        sr%fourphonon(il)%q2(i) = q2
-                        sr%fourphonon(il)%q3(i) = q3
-                        sr%fourphonon(il)%q4(i) = q4
-                        sr%fourphonon(il)%b2(i) = b2
-                        sr%fourphonon(il)%b3(i) = b3
-                        sr%fourphonon(il)%b4(i) = b4
-                    end if
-  !                 end if
+                    sr%fourphonon(il)%psisq(ip) = psisq
+                    sr%fourphonon(il)%q2(ip) = q2
+                    sr%fourphonon(il)%q3(ip) = q3
+                    sr%fourphonon(il)%q4(ip) = q4
+                    sr%fourphonon(il)%b2(ip) = b2
+                    sr%fourphonon(il)%b3(ip) = b3
+                    sr%fourphonon(il)%b4(ip) = b4
                 end do
             end do
         end do
     end do
-    end do
+    end do full_loop
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -1127,7 +1282,7 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     class(lo_qpoint_mesh), intent(in) :: qp
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
-    !> The indices of the qpoints - q1 is irreducible, q2 and q3 are full
+    !> The indices of the qpoints - q1 is irreducible, q2, q3 and q4 are full
     integer, intent(in) :: q1, q2, q3, q4
     !> Is the triplet reducible ?
     logical, intent(out) :: isred
@@ -1154,12 +1309,19 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     do j=1, qp%ip(q1)%n_invariant_operation
         k = qp%ip(q1)%invariant_operation(j)
         select type(qp); type is(lo_fft_mesh)
+            ! Transform q2 and check if it's on the grid
             qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
             if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+
+            ! Transform q3 and check if it's on the grid
             qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
             if (qp%is_point_on_grid(qv3p) .eqv. .false.) cycle
+
+            ! Transform q4 and check if it's on the grid
             qv4p = lo_operate_on_vector(uc%sym%op(k), qv4, reciprocal=.true., fractional=.true.)
             if (qp%is_point_on_grid(qv4p) .eqv. .false.) cycle
+
+            ! If everything is on the grid, get the location of each point
             gi = qp%index_from_coordinate(qv2p)
             qpp(1) = qp%gridind2ind(gi(1), gi(2), gi(3))
             gi = qp%index_from_coordinate(qv3p)
