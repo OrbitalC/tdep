@@ -9,7 +9,7 @@ use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 ! local module
 use options, only: lo_opts
-use new_scattering, only: lo_scattering_rates
+use scattering, only: lo_scattering_rates
 
 implicit none
 

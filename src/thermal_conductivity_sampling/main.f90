@@ -17,7 +17,7 @@ use dump_data, only: lo_dump_gnuplot_2d_real
 !
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
-use new_scattering, only: compute_scattering, lo_scattering_rates
+use scattering, only: lo_scattering_rates
 use linewidths, only: compute_linewidths !, self_consistent_linewidths
 
 implicit none
@@ -134,6 +134,9 @@ initharmonic: block
         dr%iq(q1)%qs = 0.0_r8
         dr%iq(q1)%mfp = 0.0_r8
         dr%iq(q1)%scalar_mfp = 0.0_r8
+
+        allocate(dr%iq(q1)%kappa(3, 3, dr%n_mode))
+        dr%iq(q1)%kappa = 0.0_r8
     end do
     do q1 = 1, qp%n_full_point
         allocate (dr%aq(q1)%kappa(3, 3, dr%n_mode))
@@ -151,7 +154,8 @@ scatters: block
         write (*, *) 'Calculating scattering events'
     end if
     timer_scatt = walltime()
-    call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
+    !call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
+    call sr%generate(qp, dr, uc, fct, fcf, opts, mw, mem)
     timer_scatt = walltime() - timer_scatt
 
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'

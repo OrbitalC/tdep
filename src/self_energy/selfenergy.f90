@@ -268,7 +268,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         if (thirdorder) then
             do q2=1, qp%n_full_point
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
-                if (q3 .lt. q2) cycle ! This is for the permuation symmetry
+                if (q3 .lt. q2) cycle ! This is for the permutation symmetry
 
                 call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
                 if (isred) cycle

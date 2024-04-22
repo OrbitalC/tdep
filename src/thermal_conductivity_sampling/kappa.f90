@@ -12,7 +12,7 @@ use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transform
 use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
-use new_scattering, only: lo_scattering_rates
+use scattering, only: lo_scattering_rates
 
 implicit none
 
@@ -41,41 +41,65 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     integer :: i, j, k, l
     !integer :: iop,ifull
 
+    integer :: q1, b1
+    real(r8), dimension(3, 3) :: v2, buf
+
     omthres = dr%omega_min*0.5_r8
     prefactor = 1.0_r8/(uc%volume*lo_kb_hartree*temperature)
-    do i = 1, qp%n_full_point
-        dr%aq(i)%kappa = 0.0_r8
-        k = qp%ap(i)%operation_from_irreducible
-        do j = 1, dr%n_mode
-            ! Which operation takes this point from the wedge to here
-            l = qp%ap(i)%irreducible_index
-            ! Skip gamma for acoustic branches
-            if (dr%aq(i)%omega(j) .lt. omthres) cycle
-            ! Rotate things to this points. Negative is the time reversal thingy, but does not really matter here.
-            if (k .gt. 0) then
-                v0 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%Fn(:, j), reciprocal=.true.)
-                v1 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%vel(:, j), reciprocal=.true.)
-            else
-                v0 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%Fn(:, j), reciprocal=.true.)
-                v1 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%vel(:, j), reciprocal=.true.)
-            end if
-            ! Get kappa for this q-point
-            omega = dr%iq(l)%omega(j)
-            n = lo_planck(temperature, omega)
-            f0 = omega*(n + 1)*n
-            dr%aq(i)%kappa(:, :, j) = prefactor*f0*lo_outerproduct(v1, v0)
-        end do
-    end do
+!   do i = 1, qp%n_full_point
+!       dr%aq(i)%kappa = 0.0_r8
+!       k = qp%ap(i)%operation_from_irreducible
+!       do j = 1, dr%n_mode
+!           ! Which operation takes this point from the wedge to here
+!           l = qp%ap(i)%irreducible_index
+!           ! Skip gamma for acoustic branches
+!           if (dr%aq(i)%omega(j) .lt. omthres) cycle
+!           ! Rotate things to this points. Negative is the time reversal thingy, but does not really matter here.
+!           if (k .gt. 0) then
+!               v0 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%Fn(:, j), reciprocal=.true.)
+!               v1 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%vel(:, j), reciprocal=.true.)
+!           else
+!               v0 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%Fn(:, j), reciprocal=.true.)
+!               v1 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%vel(:, j), reciprocal=.true.)
+!           end if
+!           ! Get kappa for this q-point
+!           omega = dr%iq(l)%omega(j)
+!           n = lo_planck(temperature, omega)
+!           f0 = omega*(n + 1)*n
+!           dr%aq(i)%kappa(:, :, j) = prefactor*f0*lo_outerproduct(v1, v0)
+!       end do
+!   end do
 
-    ! Sum it ip!
     kappa = 0.0_r8
-    do i = 1, qp%n_full_point
-        do j = 1, dr%n_mode
-            kappa = kappa + dr%aq(i)%kappa(:, :, j) / qp%n_full_point
+    do q1=1, qp%n_irr_point
+        dr%iq(q1)%kappa = 0.0_r8
+        do b1=1, dr%n_mode
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+            v2 = 0.0_r8
+            do j=1, uc%sym%n
+                v0 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%Fn(:, b1), reciprocal=.true.)
+                v1 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%vel(:, b1), reciprocal=.true.)
+                v2 = v2 + lo_outerproduct(v0, v1)
+            end do
+            omega = dr%iq(q1)%omega(b1)
+            n = lo_planck(temperature, omega)
+            buf = prefactor * omega * n * (n + 1.0_r8) * v2 / uc%sym%n
+            dr%iq(q1)%kappa(:, :, b1) = buf
+            kappa = kappa + buf * qp%ip(q1)%integration_weight
         end do
     end do
     f0 = sum(abs(kappa))
-    kappa = lo_chop(kappa, f0*1E-6_r8)
+    kappa = lo_chop(kappa, f0*1e-6_r8)
+
+!   ! Sum it ip!
+!   kappa = 0.0_r8
+!   do i = 1, qp%n_full_point
+!       do j = 1, dr%n_mode
+!           kappa = kappa + dr%aq(i)%kappa(:, :, j) / qp%n_full_point
+!       end do
+!   end do
+!   f0 = sum(abs(kappa))
+!   kappa = lo_chop(kappa, f0*1E-6_r8)
 end subroutine
 
 subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag)
@@ -366,7 +390,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         ! update F to new values
         updateF: block
             real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
-            real(r8) :: iQs, f0
+            real(r8) :: iQs, f0, psisq
             real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, n2p, n3p, n4p, sigma, sig1, sig2, sig3, sig4
             integer :: il, j, b1, b2, b3, b4, q2, q3, q4
             integer :: q1
@@ -416,22 +440,20 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
                         sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
 
+                        psisq = sr%threephonon(il)%psisq(j)
+
                         Fp = Fbb(:, b2, q2)
                         Fpp = Fbb(:, b3, q3)
 
                         ! First the plus process
-                        ! The permutation gives a 2.0_r8 factor, cancels with the 0.5 from the process
-                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2 * n3p
-                        f0 = f0 * lo_gauss(om1, -om2 + om3, sigma)
+                        f0 = psisq * n1 * n2 * n3p * lo_gauss(om1, -om2 + om3, sigma)
                         v0 = v0 + f0 * iQs * (Fp + Fpp)
                         ! The 2<->3 permutation
-                        f0 = sr%threephonon(il)%psisq(j) * n1 * n3 * n2p
-                        f0 = f0 * lo_gauss(om1, -om3 + om2, sigma)
+                        f0 = psisq * n1 * n3 * n2p * lo_gauss(om1, -om3 + om2, sigma)
                         v0 = v0 + f0 * iQs * (Fp + Fpp)
 
                         ! The the minus process, factor 0.5 cancels out with the permutations
-                        f0 = sr%threephonon(il)%psisq(j) * n1 * n2p * n3p
-                        f0 = f0 * lo_gauss(om1, om2 + om3, sigma)
+                        f0 = psisq * n1 * n2p * n3p * lo_gauss(om1, om3 + om2, sigma)
                         v0 = v0 + f0 * iQs * (Fp + Fpp)
                     end do
                 end if
@@ -459,42 +481,38 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
                         sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
 
+                        psisq = sr%fourphonon(il)%psisq(j)
+
                         Fp = Fbb(:, b2, q2)
                         Fpp = Fbb(:, b3, q3)
                         Fppp = Fbb(:, b4, q4)
 
                         ! First the plus-plus process
                         ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3 * n4p
-                        f0 = f0 * lo_gauss(om1, -om2 - om3 + om4, sigma)
+                        f0 = psisq * n1 * n2 * n3 * n4p * lo_gauss(om1, -om2 - om3 + om4, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                         ! Permute 3<->4
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n4 * n3p
-                        f0 = f0 * lo_gauss(om1, -om2 - om4 + om3, sigma)
+                        f0 = psisq * n1 * n2 * n4 * n3p * lo_gauss(om1, -om2 - om4 + om3, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                         ! Permute 2<->4
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n3 * n4 * n2p
+                        f0 = psisq * n1 * n3 * n4 * n2p * lo_gauss(om1, -om3 - om4 + om2, sigma)
                         f0 = f0 * lo_gauss(om1, -om3 - om4 + om2, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
 
                         ! Then the plus-minus process. It's actually like the previous process
                         ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2 * n3p * n4p
-                        f0 = f0 * lo_gauss(om1, -om2 + om3 + om4, sigma)
+                        f0 = psisq * n1 * n2 * n3p * n4p * lo_gauss(om1, -om2 + om3 + om4, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                         ! Permute 2<->3
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n3 * n2p * n4p
-                        f0 = f0 * lo_gauss(om1, -om3 + om2 + om4, sigma)
+                        f0 = psisq * n1 * n3 * n2p * n4p * lo_gauss(om1, -om3 + om2 + om4, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                         ! Permute 2<->4
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n4 * n2p * n3p
-                        f0 = f0 * lo_gauss(om1, -om4 + om2 + om3, sigma)
+                        f0 = psisq * n1 * n4 * n2p * n3p * lo_gauss(om1, -om4 + om2 + om3, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
 
                         ! And finally, the minus-minus process, this one takes all permutation
                         ! So factor 6.0_r8, cancels out with 6.0_r8 of the process
-                        f0 = sr%fourphonon(il)%psisq(j) * n1 * n2p * n3p * n4p
-                        f0 = f0 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        f0 = psisq * n1 * n2p * n3p * n4p * lo_gauss(om1, om2 + om3 + om4, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                     end do
                 end if
