@@ -60,6 +60,25 @@ type lo_scattering_rates
         procedure :: size_in_mem_4ph
 end type
 
+
+type lo_montecarlo_grid
+    !> The size of the grid
+    integer :: npoints
+    !> The weight of each point on the monte-carlo grid
+    real(r8) :: weight
+    !> The dimensions of the grid
+    integer, dimension(3) :: mc_dims
+    !> The dimensions of the full grid
+    integer, dimension(3) :: full_dims
+    !> The ratio between the full and mc grids
+    real(r8), dimension(3) :: ratio
+
+contains
+    procedure :: initialize => initialize_montecarlo_grid
+    procedure :: mc_point_to_full
+    procedure :: generate_grid
+end type
+
 contains
 subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     !> The scattering rate
@@ -70,25 +89,27 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
-    ! The third order force constants
+    !> The third order force constants
     type(lo_forceconstant_thirdorder), intent(in) :: fct
-    ! The fourth order force constants
+    !> The fourth order force constants
     type(lo_forceconstant_fourthorder), intent(in) :: fcf
-    ! The options
+    !> The options
     type(lo_opts) :: opts
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    ! The q-point grid dimension
+    !> The q-point grid dimension
     integer, dimension(3) :: dims
     !> The random number generator
     type(lo_mersennetwister) :: rng
-    ! To initialize the random number generator and timing
+    !> To initialize the random number generator and timing
     real(r8) :: rseed, t0
-    ! Some integers
+    !> Some integers
     integer :: q1, b1, q1f, il, j, k, nlocal_point, ctr
+    !> The grids for monte-carlo integration
+    type(lo_montecarlo_grid) :: mcg3, mcg4
 
     ! grid dimensions
     select type(qp)
@@ -100,6 +121,14 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
     ! Initialize the random number generator
     call rng%init(iseed=mw%r, rseed=walltime())
+
+    ! Initialize the monte-carlo grid
+    if (opts%thirdorder) then
+        call mcg3%initialize(dims, opts%qg3ph)
+    end if
+   if (opts%fourthorder) then
+       call mcg4%initialize(dims, opts%qg4ph)
+   end if
 
     ! We can start some precomputation
     allocate(sr%be(qp%n_irr_point, dr%n_mode))
@@ -159,23 +188,14 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, mw, mem)
         end if
         if (opts%thirdorder) then
-            if (opts%nsample3ph .lt. 0) then
-                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem)
-            else
-                call compute_threephonon_sampling(il, sr, qp, dr, uc, fct, dims, opts%nsample3ph, rng, mw, mem)
-            end if
+            call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, mw, mem)
         end if
         if (opts%fourthorder) then
-            if (opts%nsample4ph .lt. 0) then
-                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, dims, mw, mem)
-            else
-                call compute_fourphonon_sampling(il, sr, qp, dr, uc, fcf, dims, opts%nsample4ph, rng, mw, mem)
-            end if
+            call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, mw, mem)
         end if
         if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
     end do
     if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
-
 
     diagnostic: block
         integer(i8) :: bufiso, buf3ph, buf4ph
@@ -405,4 +425,67 @@ function size_in_mem_4ph(sr) result(mem)
     end if
     mem = mem / 8
 end function
+
+subroutine initialize_montecarlo_grid(mcg, full_dims, mc_dims)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(out) :: mcg
+    !> The dimensions of the full grid
+    integer, dimension(3), intent(in) :: full_dims
+    !> The dimensions of the monte carlo grid
+    integer, dimension(3), intent(in) :: mc_dims
+
+    !> Some integers for the do loop
+    integer :: i
+
+    mcg%full_dims = full_dims
+    do i=1, 3
+        mcg%mc_dims(i) = min(mc_dims(i), mcg%full_dims(i))
+        mcg%ratio(i) = real(mcg%full_dims(i), r8) / real(mcg%mc_dims(i), r8)
+    end do
+    mcg%npoints = mcg%mc_dims(1) * mcg%mc_dims(2) * mcg%mc_dims(3)
+    mcg%weight = 1.0_r8 / real(mcg%npoints, r8)
+end subroutine
+
+function mc_point_to_full(mcg, imc, rng) result(ifull)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(in) :: mcg
+    !> The point on the monte-carlo grid
+    integer, intent(in) :: imc
+    ! The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    !> The point on the full grid
+    integer :: ifull
+    !> The triplets of point on the monte-carlo and full grids
+    integer, dimension(3) :: gi_mc, gi_full
+
+    gi_mc = singlet_to_triplet(imc, mcg%mc_dims(2), mcg%mc_dims(3))
+    ! This way of generating the number makes it work even if the ratio is not an integer
+    gi_full(1) = ceiling((real(gi_mc(1), r8) - 1.0_r8) * mcg%ratio(1) + rng%rnd_real() * mcg%ratio(1))
+    gi_full(2) = ceiling((real(gi_mc(2), r8) - 1.0_r8) * mcg%ratio(2) + rng%rnd_real() * mcg%ratio(2))
+    gi_full(3) = ceiling((real(gi_mc(3), r8) - 1.0_r8) * mcg%ratio(3) + rng%rnd_real() * mcg%ratio(3))
+    ifull = triplet_to_singlet(gi_full, mcg%full_dims(2), mcg%full_dims(3))
+end function
+
+subroutine generate_grid(mcg, qgrid, rng)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(in) :: mcg
+    ! The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    !> The grid to be generated
+    integer, dimension(:), intent(out) :: qgrid
+
+    integer :: qi, qprev, qtest
+
+    ! To improve convergence, we avoid repeating points in the integration grid
+    qgrid(1) = mcg%mc_point_to_full(1, rng)
+    qprev = qgrid(1)
+    qtest = qgrid(1)
+    do qi=2, mcg%npoints
+        do while(qtest .eq. qprev)
+            qtest = mcg%mc_point_to_full(qi, rng)
+        end do
+        qgrid(qi) = qtest
+        qprev = qtest
+    end do
+end subroutine
 end module

@@ -10,6 +10,8 @@ type lo_opts
     integer, dimension(3) :: qgrid   !< the main q-grid
     real(flyt) :: temperature        !< temperature
     real(flyt) :: sigma              !< scaling factor for adaptice gaussian
+    integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
+    integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
     integer :: nbasis                !< Number of basis function for the spectral functions
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
@@ -36,6 +38,7 @@ subroutine parse(opts)
     logical :: dumlog
     real(flyt) :: f0
     real(flyt), dimension(3) :: dumflytv
+    integer :: i
 
     ! basic info
     call cli%init(progname='self_energy', &
@@ -82,6 +85,14 @@ subroutine parse(opts)
                  help='Number of basis function to represent the self-energy on the frequency axis.', &
                  required=.false., act='store', def='100', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--nsample3ph', &
+                 help='The number of 3 phonon scattering to sample to estimate the lifetimes for each mode.', &
+                 required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--nsample4ph', &
+                 help='The number of 4 phonon scattering to sample to estimate the lifetimes for each mode.', &
+                 required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--notr', hidden=.true., help='', &
@@ -113,6 +124,10 @@ subroutine parse(opts)
 
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
+    call cli%get(switch='--nsample3ph', val=opts%nsample3ph)
+    if (opts%nsample3ph .lt. 0) opts%nsample3ph = lo_hugeint
+    call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
+    if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
     call cli%get(switch='--nbasis', val=opts%nbasis)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--nothirdorder', val=dumlog)

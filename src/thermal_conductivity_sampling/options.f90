@@ -8,6 +8,8 @@ public :: lo_opts
 
 type lo_opts
     integer, dimension(3) :: qgrid   !< the main q-grid
+    integer, dimension(3) :: qg3ph   !< The grid for the threephonon integration
+    integer, dimension(3) :: qg4ph   !< The grid for the fourphonon integration
     logical :: readqmesh             !< read q-grid from file
     real(flyt) :: temperature        !< temperature
     real(flyt) :: sigma              !< scaling factor for adaptice gaussian
@@ -52,6 +54,7 @@ subroutine parse(opts)
     logical :: dumlog
     real(flyt) :: f0
     real(flyt), dimension(3) :: dumflytv
+    integer :: i
 
     ! basic info
     call cli%init(progname='thermal_conductivity_sampling', &
@@ -138,6 +141,14 @@ subroutine parse(opts)
                  help='Number of iterations for the iterative Boltzmann equation.', &
                  required=.false., act='store', def='200', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--qpoint_grid3ph', switch_ab='-qg3ph', &
+                 help='Dimension of the grid for the threephonon integration.', &
+                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--qpoint_grid4ph', switch_ab='-qg4ph', &
+                 help='Dimension of the grid for the fourphonon integration.', &
+                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--tau_boundary', hidden=.true., &
@@ -179,6 +190,8 @@ subroutine parse(opts)
 
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
+    call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph)
+    call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph)
     call cli%get(switch='--nsample3ph', val=opts%nsample3ph)
     call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
     call cli%get(switch='--niter', val=opts%niter)
@@ -220,6 +233,17 @@ subroutine parse(opts)
 
     ! Get things to atomic units
     opts%mfp_max = opts%mfp_max*lo_m_to_Bohr
+
+    if (opts%thirdorder) then
+        do i=1, 3
+            if (opts%qg3ph(i) .lt. 0) opts%qg3ph(i) = opts%qgrid(i)
+        end do
+    end if
+    if (opts%fourthorder) then
+        do i=1, 3
+            if (opts%qg4ph(i) .lt. 0) opts%qg4ph(i) = opts%qgrid(i)
+        end do
+    end if
 
 end subroutine
 

@@ -13,6 +13,7 @@ use type_phonon_dispersions, only: lo_phonon_dispersions
 use hdf5_wrappers, only: lo_hdf5_helper
 use type_blas_lapack_wrappers, only: lo_dgemv
 use quadratic_programming, only: lo_solve_quadratic_program
+use lo_randomnumbers, only: lo_mersennetwister
 
 use type_symmetryoperation, only: lo_operate_on_vector
 use lo_sorting, only: lo_qsort
@@ -102,7 +103,7 @@ end subroutine
 
 
 !> Compute and fit the self-energy on a basis set of lorentzian
-subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, thirdorder, fourthorder, mw, mem)
+subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, thirdorder, fourthorder, n3ph, n4ph, mw, mem)
     !> The selfenergy
     class(lo_selfenergy), intent(inout) :: ls
     !> The q-point mesh
@@ -123,6 +124,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     logical, intent(in) :: thirdorder
     !> Do we compute fourth order ?
     logical, intent(in) :: fourthorder
+    !> How many points for the 3ph ?
+    integer, intent(in) :: n3ph
+    !> How many points for the 4ph ?
+    integer, intent(in) :: n4ph
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -135,10 +140,14 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> Prefactor for the fourphonon scattering
     real(r8), parameter :: prefactor_4ph = lo_pi / 96.0_r8
 
+    !> The random number generator
+    type(lo_mersennetwister) :: rng
     !> The matrices for the non-negative least-squares
     real(r8), dimension(:, :), allocatable :: amat, Q, A_inequal, A_equal
     !> The vectors for the non-negative least-squares
     real(r8), dimension(:), allocatable :: ymat, c, B_inequal, B_equal, sol
+    ! The full qpoint grid, to be shuffled
+    integer, dimension(:), allocatable :: qgridfull1, qgridfull2
     ! Eigenvectors for the isotope scattering
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! Fourier transform of the matrix elements for 3ph
@@ -162,11 +171,11 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> The complex scattering amplitude
     complex(r8) :: c0
     !> For the harmonic values
-    real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
+    real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p, w3, w4
     !> For the scattering
     real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4
     !> Integers for the do loops
-    integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4
+    integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, np3, np4, qi, qj
     !> Integer for the parallelization
     integer :: ctr
     !> is the triplet/quartet reducible ?
@@ -183,6 +192,25 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     class default
         call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
     end select
+
+    ! Initialize the random number generator
+    call rng%init(iseed=mw%r, rseed=walltime())
+
+    if (thirdorder .or. fourthorder) then
+        call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        qgridfull1 = [(q2, q2=1, qp%n_full_point)]
+        call rng%shuffle_int_array(qgridfull1)
+    end if
+    if (fourthorder) then
+        call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        qgridfull2 = [(q2, q2=1, qp%n_full_point)]
+        call rng%shuffle_int_array(qgridfull2)
+    end if
+
+    np3 = min(n3ph, qp%n_full_point)
+    np4 = min(n4ph, qp%n_full_point)
+    w3 = 1.0_r8 / real(np3, r8)
+    w4 = 1.0_r8 / real(np4**2, r8)
 
     ! Let's precompute some things
     allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
@@ -266,14 +294,17 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         end if
         ! Now, let's go for the threephonon
         if (thirdorder) then
-            do q2=1, qp%n_full_point
+            !do q2=1, qp%n_full_point
+            do qi=1, np3
+                q2 = qgridfull1(qi)
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permutation symmetry
 
                 call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
                 if (isred) cycle
 
-                prefactor = prefactor_3ph * qp%ap(q2)%integration_weight * mult
+                ! prefactor = prefactor_3ph * qp%ap(q2)%integration_weight * mult
+                prefactor = prefactor_3ph * w3 * mult
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 call pretransform_phi3(fct, qv2, qv3, ptf3)
@@ -320,8 +351,13 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         end if
         ! And finally, the fourphonon
         if (fourthorder) then
-            do q2=1, qp%n_full_point
-            do q3=q2, qp%n_full_point ! We start from q2 to take into account permutation
+           !do q2=1, qp%n_full_point
+           !do q3=q2, qp%n_full_point ! We start from q2 to take into account permutation
+            do qi=1, np4
+            do qj=1, np4
+                q2 = qgridfull1(qi)
+                q3 = qgridfull2(qj)
+                if (q3 .lt. q2) cycle
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
                  if (q4 .lt. q3) cycle  ! This is for permutation
 
@@ -333,7 +369,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 qv4 = qp%ap(q4)%r
                 call pretransform_phi4(fcf, qv2, qv3, qv4, ptf4)
 
-                prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
+                ! prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
+                prefactor = prefactor_4ph * w4 * mult
                 do b2=1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle

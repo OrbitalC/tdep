@@ -125,7 +125,7 @@ heavywork: block
     timer_se = walltime()
     call ls%initialize(qp, dr, opts%nbasis, opts%thirdorder, opts%fourthorder, mw, mem)
     call ls%compute(qp, dr, uc, fct, fcf, opts%temperature, opts%isotopescattering, &
-                    opts%thirdorder, opts%fourthorder, mw, mem)
+                    opts%thirdorder, opts%fourthorder, opts%nsample3ph, opts%nsample4ph, mw, mem)
     timer_se = walltime() - timer_se
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
 end block heavywork

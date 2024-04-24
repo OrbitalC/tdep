@@ -39,42 +39,19 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     real(r8), dimension(3) :: v0, v1
     real(r8) :: n, f0, omega, omthres, prefactor, velnorm
     integer :: i, j, k, l
-    !integer :: iop,ifull
 
     integer :: q1, b1
     real(r8), dimension(3, 3) :: v2, buf
 
     omthres = dr%omega_min*0.5_r8
     prefactor = 1.0_r8/(uc%volume*lo_kb_hartree*temperature)
-!   do i = 1, qp%n_full_point
-!       dr%aq(i)%kappa = 0.0_r8
-!       k = qp%ap(i)%operation_from_irreducible
-!       do j = 1, dr%n_mode
-!           ! Which operation takes this point from the wedge to here
-!           l = qp%ap(i)%irreducible_index
-!           ! Skip gamma for acoustic branches
-!           if (dr%aq(i)%omega(j) .lt. omthres) cycle
-!           ! Rotate things to this points. Negative is the time reversal thingy, but does not really matter here.
-!           if (k .gt. 0) then
-!               v0 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%Fn(:, j), reciprocal=.true.)
-!               v1 = lo_operate_on_vector(uc%sym%op(k), dr%iq(l)%vel(:, j), reciprocal=.true.)
-!           else
-!               v0 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%Fn(:, j), reciprocal=.true.)
-!               v1 = -lo_operate_on_vector(uc%sym%op(abs(k)), dr%iq(l)%vel(:, j), reciprocal=.true.)
-!           end if
-!           ! Get kappa for this q-point
-!           omega = dr%iq(l)%omega(j)
-!           n = lo_planck(temperature, omega)
-!           f0 = omega*(n + 1)*n
-!           dr%aq(i)%kappa(:, :, j) = prefactor*f0*lo_outerproduct(v1, v0)
-!       end do
-!   end do
 
     kappa = 0.0_r8
     do q1=1, qp%n_irr_point
         dr%iq(q1)%kappa = 0.0_r8
         do b1=1, dr%n_mode
             if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+            ! To ensure the symmetry, we average over the little group of each irreducible q-point
             v2 = 0.0_r8
             do j=1, uc%sym%n
                 v0 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%Fn(:, b1), reciprocal=.true.)
@@ -90,16 +67,6 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     end do
     f0 = sum(abs(kappa))
     kappa = lo_chop(kappa, f0*1e-6_r8)
-
-!   ! Sum it ip!
-!   kappa = 0.0_r8
-!   do i = 1, qp%n_full_point
-!       do j = 1, dr%n_mode
-!           kappa = kappa + dr%aq(i)%kappa(:, :, j) / qp%n_full_point
-!       end do
-!   end do
-!   f0 = sum(abs(kappa))
-!   kappa = lo_chop(kappa, f0*1E-6_r8)
 end subroutine
 
 subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag)
@@ -496,7 +463,6 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
                         ! Permute 2<->4
                         f0 = psisq * n1 * n3 * n4 * n2p * lo_gauss(om1, -om3 - om4 + om2, sigma)
-                        f0 = f0 * lo_gauss(om1, -om3 - om4 + om2, sigma)
                         v0 = v0 + (Fp + Fpp + Fppp) * f0 * iQs
 
                         ! Then the plus-minus process. It's actually like the previous process

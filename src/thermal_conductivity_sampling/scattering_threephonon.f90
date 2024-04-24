@@ -1,41 +1,45 @@
 
 
-subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem)
+subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
     type(lo_scattering_rates), intent(inout) :: sr
-    ! The qpoint mesh
+    !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     ! Harmonic dispersions
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
-    ! Fourth order force constants
+    !> Third order force constants
     type(lo_forceconstant_thirdorder), intent(in) :: fct
-    ! The dimension of the grid
-    integer, dimension(3), intent(in) :: dims
-    ! Mpi helper
+    !> The monte-carlo grid
+    type(lo_montecarlo_grid), intent(in) :: mcg
+    !> The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
-    ! Memory helper
+    !> Memory helper
     type(lo_mem_helper), intent(inout) :: mem
 
-    ! Three phonon prefactor
+    !> Three phonon prefactor
     real(r8), parameter :: threephonon_prefactor = lo_pi * 0.25_r8
-    ! Frequency scaled eigenvectors
+    !> Frequency scaled eigenvectors
     complex(r8), dimension(:), allocatable :: egv1, egv2, egv3
-    ! Helper for Fourier transform of psi3
+    !> Helper for Fourier transform of psi3
     complex(r8), dimension(:), allocatable :: ptf, evp1, evp2
-    ! The qpoints and the dimension of the qgrid
+    !> The full qpoint grid, to be shuffled
+    integer, dimension(:), allocatable :: qgridfull
+    !> The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
-    ! The gaussian integration width
+    !> The gaussian integration width
     real(r8) :: sig1, sig2, sig3, sigma
-    ! Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, psisq, prefactor
-    !
+    !> Frequencies, bose-einstein occupation and scattering strength
+    real(r8) :: om1, om2, om3, plf, psisq, prefactor, mle_ratio
+    !> The complex threephonon matrix element
     complex(r8) :: c0
-    ! Integers for do loops
-    integer :: i, iq1, q1, q2, q3, b1, b2, b3
+    !> Integers for do loops
+    integer :: i, qi, q1, q2, q3, b1, b2, b3
     !> Is the triplet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
@@ -56,9 +60,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
     sig1 = sr%sigma_q(q1, b1)
 
+    call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mcg%generate_grid(qgridfull, rng)
+
     i = 0
-    do q2=1, qp%n_full_point
-        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+    count_loop: do qi=1, mcg%npoints
+        q2 = qgridfull(qi)
+        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
 
         call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
@@ -67,10 +75,12 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
+
             sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
             do b3=1, dr%n_mode
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
+
                 sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
                 sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
@@ -78,7 +88,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
                     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) i = i + 1
             end do
         end do
-    end do
+    end do count_loop
 
     sr%threephonon(il)%n = i
     allocate(sr%threephonon(il)%psisq(i))
@@ -88,8 +98,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
     allocate(sr%threephonon(il)%b3(i))
 
     i = 0
-    do q2=1, qp%n_full_point
-        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
+    compute_loop: do qi=1, mcg%npoints
+        q2 = qgridfull(qi)
+        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
 
         call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
@@ -104,7 +115,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
 
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
             sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
-            prefactor = threephonon_prefactor * qp%ap(q2)%integration_weight * mult
+            prefactor = threephonon_prefactor * mcg%weight * mult
 
             evp1 = 0.0_r8
             call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
@@ -136,166 +147,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, dims, mw, mem
                 end if
             end do
         end do
-    end do
-    ! And we can deallocate everything
-    call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(evp2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(egv1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-end subroutine
-
-
-subroutine compute_threephonon_sampling(il, sr, qp, dr, uc, fct, dims, n3ph, rng, mw, mem)
-    ! The qpoint and mode indices considered here
-    integer, intent(in) :: il
-    !> The scattering amplitudes
-    type(lo_scattering_rates), intent(inout) :: sr
-    ! The qpoint mesh
-    class(lo_qpoint_mesh), intent(in) :: qp
-    ! Harmonic dispersions
-    type(lo_phonon_dispersions), intent(inout) :: dr
-    !> structure
-    type(lo_crystalstructure), intent(in) :: uc
-    ! Fourth order force constants
-    type(lo_forceconstant_thirdorder), intent(in) :: fct
-    ! The dimension of the grid
-    integer, dimension(3), intent(in) :: dims
-    !> Number of 3 phonon process to compute
-    integer, intent(in) :: n3ph
-    ! The random number generator
-    type(lo_mersennetwister), intent(inout) :: rng
-    ! Mpi helper
-    type(lo_mpi_helper), intent(inout) :: mw
-    ! Memory helper
-    type(lo_mem_helper), intent(inout) :: mem
-
-    ! Three phonon prefactor
-    real(r8), parameter :: threephonon_prefactor = lo_pi * 0.25_r8
-    ! Frequency scaled eigenvectors
-    complex(r8), dimension(:), allocatable :: egv1, egv2, egv3
-    ! Helper for Fourier transform of psi3
-    complex(r8), dimension(:), allocatable :: ptf, evp1, evp2
-    ! The full qpoint grid, to be shuffled
-    integer, dimension(:), allocatable :: qgridfull
-    ! The qpoints and the dimension of the qgrid
-    real(r8), dimension(3) :: qv2, qv3
-    ! The gaussian integration width
-    real(r8) :: sig1, sig2, sig3, sigma
-    ! Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, psisq, prefactor, mle_ratio
-    !
-    complex(r8) :: c0
-    ! Integers for do loops
-    integer :: i, iq1, qi, q1, q2, q3, b1, b2, b3, ntot, np
-    !> Is the triplet irreducible ?
-    logical :: isred
-    !> If so, what is its multiplicity
-    real(r8) :: mult
-
-    integer :: ntest, nqtest, nq
-
-    ! We start by allocating everything
-    call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(evp2, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(egv1, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(egv2, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(egv3, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(qgridfull, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
-    qgridfull = [(q2, q2=1, qp%n_full_point)]
-    call rng%shuffle_int_array(qgridfull)
-
-    ! Already set some values for mode (q1, b1)
-    q1 = sr%q1(il)
-    b1 = sr%b1(il)
-    om1 = dr%iq(q1)%omega(b1)
-    egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
-
-!   ntot = 0
-!   nq = 0
-!   count_loop: do qi=1, qp%n_full_point
-!       q2 = qgridfull(qi)
-!       q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
-!       if (q3 .lt. q2) cycle
-
-!       call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
-!       if (isred) cycle
-!       nq = nq + 1
-
-!       do b2=1, dr%n_mode
-!           om2 = dr%aq(q2)%omega(b2)
-!           if (om2 .lt. lo_freqtol) cycle
-!           do b3=1, dr%n_mode
-!               om3 = dr%aq(q3)%omega(b3)
-!               if (om3 .lt. lo_freqtol) cycle
-!               ntot = ntot + 1
-!           end do
-!       end do
-!   end do count_loop
-
-
-    ntot = qp%n_full_point
-    mult = 1.0_r8
-
-    write(*, *) nq, ntest, nqtest, ntot
-
-    np = min(n3ph, ntot)
-    mle_ratio = real(ntot, r8) / real(np, r8)
-
-    sr%threephonon(il)%n = np
-    allocate(sr%threephonon(il)%psisq(np))
-    allocate(sr%threephonon(il)%q2(np))
-    allocate(sr%threephonon(il)%q3(np))
-    allocate(sr%threephonon(il)%b2(np))
-    allocate(sr%threephonon(il)%b3(np))
-    sr%threephonon(il)%psisq = 0.0_r8
-
-    i = 1
-    full_loop: do qi=1, qp%n_full_point
-        q2 = qgridfull(qi)
-        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
-        if (q3 .lt. q2) cycle
-
-!       call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
-!       if (isred) cycle
-
-        qv2 = qp%ap(q2)%r
-        qv3 = qp%ap(q3)%r
-        call pretransform_phi3(fct, qv2, qv3, ptf)
-        do b2=1, dr%n_mode
-            om2 = dr%aq(q2)%omega(b2)
-            if (om2 .lt. lo_freqtol) cycle
-
-            egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
-            prefactor = threephonon_prefactor * qp%ap(q2)%integration_weight * mult * mle_ratio
-
-            evp1 = 0.0_r8
-            call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
-            do b3=1, dr%n_mode
-                om3 = dr%aq(q3)%omega(b3)
-                if (om3 .lt. lo_freqtol) cycle
-                egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
-
-                evp2 = 0.0_r8
-                call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
-                evp2 = conjg(evp2)
-                c0 = dot_product(evp2, ptf)
-                psisq = abs(c0*conjg(c0)) * prefactor
-
-                sr%threephonon(il)%psisq(i) = psisq
-                sr%threephonon(il)%q2(i) = q2
-                sr%threephonon(il)%q3(i) = q3
-                sr%threephonon(il)%b2(i) = b2
-                sr%threephonon(il)%b3(i) = b3
-
-                i = i +1
-                if (i .gt. np) exit full_loop
-            end do
-        end do
-    end do full_loop
+    end do compute_loop
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
