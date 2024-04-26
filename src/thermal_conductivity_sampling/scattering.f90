@@ -60,7 +60,6 @@ type lo_scattering_rates
         procedure :: size_in_mem_4ph
 end type
 
-
 type lo_montecarlo_grid
     !> The size of the grid
     integer :: npoints
@@ -426,6 +425,7 @@ function size_in_mem_4ph(sr) result(mem)
     mem = mem / 8
 end function
 
+
 subroutine initialize_montecarlo_grid(mcg, full_dims, mc_dims)
     !> The monte carlo grid
     class(lo_montecarlo_grid), intent(out) :: mcg
@@ -488,4 +488,5 @@ subroutine generate_grid(mcg, qgrid, rng)
         qprev = qtest
     end do
 end subroutine
+
 end module

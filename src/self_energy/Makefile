@@ -6,7 +6,8 @@ OBJECT_PATH=../../build/$(CODE)/
 OBJS = \
 $(OBJECT_PATH)main.o\
 $(OBJECT_PATH)options.o\
-$(OBJECT_PATH)selfenergy.o
+$(OBJECT_PATH)selfenergy.o\
+$(OBJECT_PATH)thermal_conductivity.o
 
 LPATH = -L../../lib $(blaslapackLPATH) $(incLPATHmpi) $(incLPATHhdf)
 IPATH = -I../../inc/libolle -I../../inc/libflap $(blaslapackIPATH) $(incIPATHmpi) $(incIPATHhdf)
@@ -24,10 +25,13 @@ $(PROG): $(OBJS)
 clean:
 	rm -f $(PROG) $(OBJS) $(OBJECT_PATH)*.mod
 
-$(OBJECT_PATH)main.o: \
+$(OBJECT_PATH)main.o:\
 $(OBJECT_PATH)options.o\
-$(OBJECT_PATH)selfenergy.o
+$(OBJECT_PATH)selfenergy.o\
+$(OBJECT_PATH)thermal_conductivity.o
 	$(F90) $(OPT) $(F90FLAGS) -c main.f90 $(LIBS) -o $@
+$(OBJECT_PATH)thermal_conductivity.o: $(OBJECT_PATH)selfenergy.o
+	$(F90) $(OPT) $(F90FLAGS) -c thermal_conductivity.f90 $(LIBS) -o $@
 $(OBJECT_PATH)selfenergy.o:
 	$(F90) $(OPT) $(F90FLAGS) -c selfenergy.f90 $(LIBS) -o $@
 $(OBJECT_PATH)options.o:

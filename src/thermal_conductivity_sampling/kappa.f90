@@ -3,7 +3,7 @@ module kappa
 use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
 use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss
-use mpi_wrappers, only: lo_mpi_helper, MPI_SUM, MPI_DOUBLE_PRECISION, MPI_IN_PLACE
+use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_qpointmesh, only: lo_qpoint_mesh

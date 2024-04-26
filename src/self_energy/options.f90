@@ -8,10 +8,10 @@ public :: lo_opts
 
 type lo_opts
     integer, dimension(3) :: qgrid   !< the main q-grid
+    integer, dimension(3) :: qg3ph   !< The grid for the threephonon integration
+    integer, dimension(3) :: qg4ph   !< The grid for the fourphonon integration
     real(flyt) :: temperature        !< temperature
     real(flyt) :: sigma              !< scaling factor for adaptice gaussian
-    integer :: nsample3ph            !< the number of 3ph scattering process to actually compute
-    integer :: nsample4ph            !< the number of 4ph scattering process to actually compute
     integer :: nbasis                !< Number of basis function for the spectral functions
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
@@ -85,13 +85,13 @@ subroutine parse(opts)
                  help='Number of basis function to represent the self-energy on the frequency axis.', &
                  required=.false., act='store', def='100', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--nsample3ph', &
-                 help='The number of 3 phonon scattering to sample to estimate the lifetimes for each mode.', &
-                 required=.false., act='store', def='-1', error=lo_status)
+    call cli%add(switch='--qpoint_grid3ph', switch_ab='-qg3ph', &
+                 help='Dimension of the grid for the threephonon integration.', &
+                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--nsample4ph', &
-                 help='The number of 4 phonon scattering to sample to estimate the lifetimes for each mode.', &
-                 required=.false., act='store', def='-1', error=lo_status)
+    call cli%add(switch='--qpoint_grid4ph', switch_ab='-qg4ph', &
+                 help='Dimension of the grid for the fourphonon integration.', &
+                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -124,10 +124,8 @@ subroutine parse(opts)
 
     call cli%get(switch='--temperature', val=opts%temperature)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
-    call cli%get(switch='--nsample3ph', val=opts%nsample3ph)
-    if (opts%nsample3ph .lt. 0) opts%nsample3ph = lo_hugeint
-    call cli%get(switch='--nsample4ph', val=opts%nsample4ph)
-    if (opts%nsample4ph .lt. 0) opts%nsample4ph = lo_hugeint
+    call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph)
+    call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph)
     call cli%get(switch='--nbasis', val=opts%nbasis)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--nothirdorder', val=dumlog)
@@ -146,6 +144,17 @@ subroutine parse(opts)
     end if
     call cli%get(switch='--noisotope', val=dumlog)
     opts%isotopescattering = .not. dumlog
+
+    if (opts%thirdorder) then
+        do i=1, 3
+            if (opts%qg3ph(i) .lt. 0) opts%qg3ph(i) = opts%qgrid(i)
+        end do
+    end if
+    if (opts%fourthorder) then
+        do i=1, 3
+            if (opts%qg4ph(i) .lt. 0) opts%qg4ph(i) = opts%qgrid(i)
+        end do
+    end if
 
 end subroutine
 

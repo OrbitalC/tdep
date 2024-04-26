@@ -17,6 +17,7 @@ use lo_randomnumbers, only: lo_mersennetwister
 !
 use options, only: lo_opts
 use selfenergy, only: lo_selfenergy
+use thermal_conductivity, only: compute_thermal_conductivity
 
 implicit none
 ! Standard from libolle
@@ -34,7 +35,7 @@ type(lo_mem_helper) :: mem
 !> The selfenergy
 type(lo_selfenergy) :: ls
 ! timers
-real(r8) :: timer_init, timer_se, tt0
+real(r8) :: timer_init, timer_se, timer_tc, tt0
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
@@ -125,10 +126,43 @@ heavywork: block
     timer_se = walltime()
     call ls%initialize(qp, dr, opts%nbasis, opts%thirdorder, opts%fourthorder, mw, mem)
     call ls%compute(qp, dr, uc, fct, fcf, opts%temperature, opts%isotopescattering, &
-                    opts%thirdorder, opts%fourthorder, opts%nsample3ph, opts%nsample4ph, mw, mem)
+                    opts%thirdorder, opts%fourthorder, opts%qg3ph, opts%qg4ph, mw, mem)
     timer_se = walltime() - timer_se
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
 end block heavywork
+
+kappa: block
+    real(r8), dimension(3, 3) :: kappa, kappa_offdiag, m0
+
+    if (mw%talk) then
+        write(*, *) ''
+        write(*, *) 'Calculating the thermal conductivity'
+    end if
+
+    timer_tc = walltime()
+
+    call compute_thermal_conductivity(qp, dr, ls, uc, fc, 1000, opts%temperature, kappa, kappa_offdiag, mw, mem)
+
+    if (mw%talk) then
+        write (*, *) ''
+        write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
+        m0 = kappa*lo_kappa_au_to_SI
+        write (*, "(1X,A25)") 'Single mode approximation'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = kappa_offdiag*lo_kappa_au_to_SI
+        write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = (kappa + kappa_offdiag)*lo_kappa_au_to_SI
+        write (*, "(1X,A26)") 'Total thermal conductivity'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+    end if
+
+    timer_tc = walltime() - timer_tc
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
+end block kappa
 
 finalize_and_write: block
     real(r8) :: t0
@@ -139,9 +173,9 @@ finalize_and_write: block
         tt0 = walltime() - tt0
         write(*, *) ''
         write(*, *) '... dumping auxiliary data to files'
-        call ls%write_to_hdf5('outfile.selfenergy.hdf5')
+        call ls%write_to_hdf5('outfile.selfenergy.hdf5', dr, qp)
 
-    ! Print timings
+        ! Print citations
         write (*, *) ''
         write (*, '(1X,A21)') 'Suggested citations :'
         write (*, '(1X,A41,A56)') 'Software : ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
@@ -150,12 +184,14 @@ finalize_and_write: block
         write (*, '(1X,A41,A49)') 'Algorithm : ', 'A. H. Romero et al., Phys Rev B 91, 214310 (2015)'
         write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
 
-        t0 = timer_init + timer_se
+        ! Print timings
+        t0 = timer_init + timer_se + timer_tc
         write (*, *) ' '
         write (*, *) 'Timings:'
-        write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '             initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    self-energy computation:', timer_se, ' s, ', real(timer_se*100/tt0), '%'
-        write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
+        write (*, "(A,F12.3,A,F7.3,A)") '       thermal conductivity:', timer_tc, ' s, ', real(timer_tc*100/tt0), '%'
+        write (*, "(A,F12.3,A)")        '                      total:', tt0, ' seconds'
     end if
 end block finalize_and_write
 

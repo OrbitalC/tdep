@@ -39,11 +39,33 @@ contains
     !> Compute imaginary self energy
     procedure :: compute => compute_selfenergy
     !> Compute the selfenergy for a specific frequency
-!   procedure :: predict
+    procedure :: predict_selfenergy
+    !> Evaluate the spectral function for a specific frequency
+    procedure :: predict_spectralfunction_onepoint
+    !> Compute the spectral function for several frequencies
+    procedure :: predict_spectralfunction
     !> destroy
     procedure :: destroy => destroy_selfenergy
     !> Write to hdf5
     procedure :: write_to_hdf5 => write_selfenergy_to_hdf5
+end type
+
+type lo_montecarlo_grid
+    !> The size of the grid
+    integer :: npoints
+    !> The weight of each point on the monte-carlo grid
+    real(r8) :: weight
+    !> The dimensions of the grid
+    integer, dimension(3) :: mc_dims
+    !> The dimensions of the full grid
+    integer, dimension(3) :: full_dims
+    !> The ratio between the full and mc grids
+    real(r8), dimension(3) :: ratio
+
+contains
+    procedure :: initialize => initialize_montecarlo_grid
+    procedure :: mc_point_to_full
+    procedure :: generate_grid
 end type
 
 contains
@@ -103,7 +125,7 @@ end subroutine
 
 
 !> Compute and fit the self-energy on a basis set of lorentzian
-subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, thirdorder, fourthorder, n3ph, n4ph, mw, mem)
+subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, thirdorder, fourthorder, qg3, qg4, mw, mem)
     !> The selfenergy
     class(lo_selfenergy), intent(inout) :: ls
     !> The q-point mesh
@@ -125,9 +147,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> Do we compute fourth order ?
     logical, intent(in) :: fourthorder
     !> How many points for the 3ph ?
-    integer, intent(in) :: n3ph
+    integer, dimension(3), intent(in) :: qg3
     !> How many points for the 4ph ?
-    integer, intent(in) :: n4ph
+    integer, dimension(3), intent(in) :: qg4
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -142,6 +164,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
     !> The random number generator
     type(lo_mersennetwister) :: rng
+    !> The grids for monte-carlo integration
+    type(lo_montecarlo_grid) :: mcg3, mcg4
     !> The matrices for the non-negative least-squares
     real(r8), dimension(:, :), allocatable :: amat, Q, A_inequal, A_equal
     !> The vectors for the non-negative least-squares
@@ -171,11 +195,11 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> The complex scattering amplitude
     complex(r8) :: c0
     !> For the harmonic values
-    real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p, w3, w4
+    real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
     !> For the scattering
     real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4
     !> Integers for the do loops
-    integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, np3, np4, qi, qj
+    integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, qi, qj
     !> Integer for the parallelization
     integer :: ctr
     !> is the triplet/quartet reducible ?
@@ -196,21 +220,20 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     ! Initialize the random number generator
     call rng%init(iseed=mw%r, rseed=walltime())
 
+    ! Initialize the monte-carlo grid
+    if (thirdorder) then
+        call mcg3%initialize(dims, qg3)
+    end if
+   if (fourthorder) then
+       call mcg4%initialize(dims, qg4)
+   end if
+
     if (thirdorder .or. fourthorder) then
         call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        qgridfull1 = [(q2, q2=1, qp%n_full_point)]
-        call rng%shuffle_int_array(qgridfull1)
     end if
     if (fourthorder) then
         call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        qgridfull2 = [(q2, q2=1, qp%n_full_point)]
-        call rng%shuffle_int_array(qgridfull2)
     end if
-
-    np3 = min(n3ph, qp%n_full_point)
-    np4 = min(n4ph, qp%n_full_point)
-    w3 = 1.0_r8 / real(np3, r8)
-    w4 = 1.0_r8 / real(np4**2, r8)
 
     ! Let's precompute some things
     allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
@@ -294,8 +317,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         end if
         ! Now, let's go for the threephonon
         if (thirdorder) then
-            !do q2=1, qp%n_full_point
-            do qi=1, np3
+            call mcg3%generate_grid(qgridfull1, rng)
+            do qi=1, mcg3%npoints
                 q2 = qgridfull1(qi)
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permutation symmetry
@@ -303,8 +326,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
                 if (isred) cycle
 
-                ! prefactor = prefactor_3ph * qp%ap(q2)%integration_weight * mult
-                prefactor = prefactor_3ph * w3 * mult
+                prefactor = prefactor_3ph * mcg3%weight * mult
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 call pretransform_phi3(fct, qv2, qv3, ptf3)
@@ -351,10 +373,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         end if
         ! And finally, the fourphonon
         if (fourthorder) then
-           !do q2=1, qp%n_full_point
-           !do q3=q2, qp%n_full_point ! We start from q2 to take into account permutation
-            do qi=1, np4
-            do qj=1, np4
+            call mcg4%generate_grid(qgridfull1, rng)
+            call mcg4%generate_grid(qgridfull2, rng)
+            do qi=1, mcg4%npoints
+            do qj=1, mcg4%npoints
                 q2 = qgridfull1(qi)
                 q3 = qgridfull2(qj)
                 if (q3 .lt. q2) cycle
@@ -369,8 +391,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 qv4 = qp%ap(q4)%r
                 call pretransform_phi4(fcf, qv2, qv3, qv4, ptf4)
 
-                ! prefactor = prefactor_4ph * qp%ap(q2)%integration_weight * qp%ap(q3)%integration_weight * mult
-                prefactor = prefactor_4ph * w4 * mult
+                prefactor = prefactor_4ph * mcg4%weight**2 * mult
                 do b2=1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
@@ -489,24 +510,37 @@ end subroutine
 
 
 !> Write the self energy type to hdf5
-subroutine write_selfenergy_to_hdf5(ls, filename)
+subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
     !> helper container
     class(lo_selfenergy), intent(in) :: ls
     !> filename
     character(len=*), intent(in) :: filename
+    !> The phonon dispersion
+    type(lo_phonon_dispersions), intent(in) :: dr
+    !> The qpoint mesh
+    type(lo_qpoint_mesh), intent(in) :: qp
 
+    !> The hdf5 type
     type(lo_hdf5_helper) :: h5
-    integer :: nirr, nmode
+    !> Buffer to store the harmonic frequencies
+    real(r8), dimension(:, :), allocatable :: freq
+    !> integer for the do loops
+    integer :: q1, b1
 
     call h5%init(__FILE__, __LINE__)
     call h5%open_file('write', trim(filename))
 
-    nirr = size(ls%im_weight, 3)
-    nmode = size(ls%im_weight, 2)
+    allocate(freq(dr%n_mode, qp%n_irr_point))
+    freq = 0.0_r8
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            freq(b1, q1) = dr%iq(q1)%omega(b1)
+        end do
+    end do
 
     ! Store metadata
-    call h5%store_attribute(nirr, h5%file_id, 'n_irr_point')
-    call h5%store_attribute(nmode, h5%file_id, 'n_mode')
+    call h5%store_attribute(qp%n_irr_point, h5%file_id, 'n_irr_point')
+    call h5%store_attribute(dr%n_mode, h5%file_id, 'n_mode')
     call h5%store_attribute(ls%nbasis, h5%file_id, 'nbasis')
     call h5%store_attribute(ls%width, h5%file_id, 'width')
     call h5%store_attribute(ls%omega_max, h5%file_id, 'omega_max')
@@ -514,6 +548,7 @@ subroutine write_selfenergy_to_hdf5(ls, filename)
     ! Store actual data
     call h5%store_data(ls%im_weight, h5%file_id, 'weight', enhet='unitless')
     call h5%store_data(ls%omega_n, h5%file_id, 'omega_n', enhet='atomic')
+    call h5%store_data(freq, h5%file_id, 'harmonic_frequencies', enhet='atomic')
 
     ! Clost the file
     call h5%close_file()
@@ -531,6 +566,112 @@ subroutine destroy_selfenergy(ls)
     ls%width = -lo_huge
     ls%omega_max = -lo_huge
 end subroutine
+
+subroutine predict_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
+    !> The self-energy
+    class(lo_selfenergy), intent(in) :: ls
+    !> For which qpoint
+    integer, intent(in) :: q1
+    !> For which mode
+    integer, intent(in) :: b1
+    !> The energy axis
+    real(r8), dimension(:), intent(in) :: eaxis
+    !> The imaginary part of the self energy
+    real(r8), dimension(:), intent(out) :: se_imag
+    !> The real part of the self energy
+    real(r8), dimension(:), intent(out) :: se_real
+
+    !> Some buffer
+    real(r8) :: f0
+    !> Some integers
+    integer :: nfreq, i, n
+
+    nfreq = size(eaxis, 1)
+    se_imag = 0.0_r8
+    se_real = 0.0_r8
+    do i=1, nfreq
+    do n=1, ls%nbasis
+        f0 = modified_lorentzian(eaxis(i), ls%omega_n(n), ls%width)
+        se_imag(i) = se_imag(i) + f0 * ls%im_weight(n, b1, q1)
+        f0 = realpart_modified_lorentzian(eaxis(i), ls%omega_n(n), ls%width)
+        se_real(i) = se_real(i) + f0 * ls%im_weight(n, b1, q1)
+    end do
+    end do
+end subroutine
+
+subroutine predict_spectralfunction(ls, q1, b1, om1, eaxis, sf)
+    !> The self-energy
+    class(lo_selfenergy), intent(in) :: ls
+    !> For which qpoint
+    integer, intent(in) :: q1
+    !> For which mode
+    integer, intent(in) :: b1
+    !> The harmonic frequency of this phonon
+    real(r8), intent(in) :: om1
+    !> The energy axis
+    real(r8), dimension(:), intent(in) :: eaxis
+    !> The imaginary part of the self energy
+    real(r8), dimension(:), intent(out) :: sf
+
+    !> Inverse of pi, we don't want to calculate it everytime
+    real(r8), parameter :: invpi=0.318309886183791_r8
+    !> The real and imaginary part of the spectral function
+    real(r8), dimension(:), allocatable :: se_imag, se_real
+    !> Some buffer
+    real(r8), dimension(:), allocatable :: f0, f1
+    !> Some integers
+    integer :: nfreq
+
+    nfreq = size(eaxis, 1)
+    allocate(se_imag(nfreq))
+    allocate(se_real(nfreq))
+    allocate(f0(nfreq))
+    allocate(f1(nfreq))
+
+    call ls%predict_selfenergy(q1, b1, eaxis, se_imag, se_real)
+    f0 = eaxis**2 - om1**2 - 2.0_r8 * om1 * se_real
+    f1 = 2.0_r8 * om1 * se_imag
+    sf = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
+
+    deallocate(se_imag)
+    deallocate(se_real)
+    deallocate(f0)
+    deallocate(f1)
+end subroutine
+
+function predict_spectralfunction_onepoint(ls, q1, b1, om1, a) result(res)
+    !> The self-energy
+    class(lo_selfenergy), intent(in) :: ls
+    !> For which qpoint
+    integer, intent(in) :: q1
+    !> For which mode
+    integer, intent(in) :: b1
+    !> The harmonic frequency of this phonon
+    real(r8), intent(in) :: om1
+    !> The frequency at which we want to evaluate the spectral function
+    real(r8), intent(in) :: a
+    !> The imaginary part of the self energy
+    real(r8)  :: res
+
+    !> Inverse of pi, we don't want to calculate it everytime
+    real(r8), parameter :: invpi=0.318309886183791_r8
+    !> Some buffer values
+    real(r8) :: se_imag, se_real, f0, f1
+    !> Integer for the do loop
+    integer :: n
+
+    se_imag = 0.0_r8
+    se_real = 0.0_r8
+    do n=1, ls%nbasis
+        f0 = modified_lorentzian(a, ls%omega_n(n), ls%width)
+        se_imag = se_imag + f0 * ls%im_weight(n, b1, q1)
+        f0 = realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
+        se_real = se_real + f0 * ls%im_weight(n, b1, q1)
+    end do
+    f0 = a**2 - om1**2 - 2.0_r8 * om1 * se_real
+    f1 = 2.0_r8 * om1 * se_imag
+    res = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
+end function
 
 
 !> returns the index on the grid that gives q3=-q1-q2
@@ -776,6 +917,27 @@ function modified_lorentzian(x, mu, sigma) result (l)
 end function
 
 
+function realpart_modified_lorentzian(x, mu, sigma) result(l)
+    !> point to evaluate
+    real(r8), intent(in) :: x
+    !> mean
+    real(r8), intent(in) :: mu
+    !> Full width half maximum
+    real(r8), intent(in) :: sigma
+    !> value
+    real(r8) :: l
+    !> Inverse of pi, we don't want to calculate it everytime
+    real(r8), parameter :: invpi=0.318309886183791_r8
+    !> Some intermediate value
+    real(r8) :: f0, f1, f2
+
+    f0 = mu * x**2 - mu**3
+    f1 = x**2 - mu**2
+    f2 = sigma * x
+    l= f0 / (f1**2 + f2**2) * invpi
+end function
+
+
 subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
@@ -897,4 +1059,66 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     mult = qp%ip(q1)%n_invariant_operation / mult
 end subroutine
 
+subroutine initialize_montecarlo_grid(mcg, full_dims, mc_dims)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(out) :: mcg
+    !> The dimensions of the full grid
+    integer, dimension(3), intent(in) :: full_dims
+    !> The dimensions of the monte carlo grid
+    integer, dimension(3), intent(in) :: mc_dims
+
+    !> Some integers for the do loop
+    integer :: i
+
+    mcg%full_dims = full_dims
+    do i=1, 3
+        mcg%mc_dims(i) = min(mc_dims(i), mcg%full_dims(i))
+        mcg%ratio(i) = real(mcg%full_dims(i), r8) / real(mcg%mc_dims(i), r8)
+    end do
+    mcg%npoints = mcg%mc_dims(1) * mcg%mc_dims(2) * mcg%mc_dims(3)
+    mcg%weight = 1.0_r8 / real(mcg%npoints, r8)
+end subroutine
+
+function mc_point_to_full(mcg, imc, rng) result(ifull)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(in) :: mcg
+    !> The point on the monte-carlo grid
+    integer, intent(in) :: imc
+    ! The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    !> The point on the full grid
+    integer :: ifull
+    !> The triplets of point on the monte-carlo and full grids
+    integer, dimension(3) :: gi_mc, gi_full
+
+    gi_mc = singlet_to_triplet(imc, mcg%mc_dims(2), mcg%mc_dims(3))
+    ! This way of generating the number makes it work even if the ratio is not an integer
+    gi_full(1) = ceiling((real(gi_mc(1), r8) - 1.0_r8) * mcg%ratio(1) + rng%rnd_real() * mcg%ratio(1))
+    gi_full(2) = ceiling((real(gi_mc(2), r8) - 1.0_r8) * mcg%ratio(2) + rng%rnd_real() * mcg%ratio(2))
+    gi_full(3) = ceiling((real(gi_mc(3), r8) - 1.0_r8) * mcg%ratio(3) + rng%rnd_real() * mcg%ratio(3))
+    ifull = triplet_to_singlet(gi_full, mcg%full_dims(2), mcg%full_dims(3))
+end function
+
+subroutine generate_grid(mcg, qgrid, rng)
+    !> The monte carlo grid
+    class(lo_montecarlo_grid), intent(in) :: mcg
+    ! The random number generator
+    type(lo_mersennetwister), intent(inout) :: rng
+    !> The grid to be generated
+    integer, dimension(:), intent(out) :: qgrid
+
+    integer :: qi, qprev, qtest
+
+    ! To improve convergence, we avoid repeating points in the integration grid
+    qgrid(1) = mcg%mc_point_to_full(1, rng)
+    qprev = qgrid(1)
+    qtest = qgrid(1)
+    do qi=2, mcg%npoints
+        do while(qtest .eq. qprev)
+            qtest = mcg%mc_point_to_full(qi, rng)
+        end do
+        qgrid(qi) = qtest
+        qprev = qtest
+    end do
+end subroutine
 end module
