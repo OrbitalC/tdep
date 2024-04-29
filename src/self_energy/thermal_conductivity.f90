@@ -405,9 +405,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         f0 = f0 + 0.5_r8 * (node(n+1) - node(n)) * (values(n) + values(n+1))
     end do
 
-    ! Just to look at the number of function evaluation
-    write(*, *) q1, b1, b2, nnode
-
     ! And final deallocation
     deallocate(node)
     deallocate(newval)
