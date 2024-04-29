@@ -265,6 +265,7 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     ! Let's try all operations that leaves q1 invariant
     do j=1, qp%ip(q1)%n_invariant_operation
         k = qp%ip(q1)%invariant_operation(j)
+        qpp = -lo_hugeint
         select type(qp); type is(lo_fft_mesh)
             ! Rotate q2 and look if it's the on grid
             qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)

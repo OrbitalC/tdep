@@ -82,9 +82,10 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
                 if (om2 .lt. lo_freqtol) cycle
 
                 ! This seems to be a good compromise between accuracy/speed
-                tol = 1e-10_r8
+                tol = 1e-13_r8
 
                 f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol)
+
                 if (b1 .eq. b2) then
                     kappa = kappa + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                     ! While we are at it, we can store the linewidths of the mode
@@ -334,7 +335,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         newnode = 0.0_r8
         ! We start by checking the nodes to see if we need to add new node and values
         do n=1, nnode-1
-            ! if (isok(n)) cycle  ! DO NOT WORK LIKE THIS
+            if (isok(n)) cycle  ! DO NOT WORK LIKE THIS
             c = node(n) + 0.5_r8 * (node(n+1) - node(n))
             fc = integrand(c, q1, b1, b2, ls, temperature, om1, om2)
             newnode(n) = c
@@ -361,10 +362,12 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
             ctr = ctr + 1
             tmpnode(ctr) = node(n)
             tmpval(ctr) = values(n)
+            tmpisok(ctr) = isok(n)
             if (.not. isok(n)) then
                 ctr = ctr + 1
                 tmpnode(ctr) = newnode(n)
                 tmpval(ctr) = newval(n)
+                tmpisok(ctr) = .false.
             end if
         end do
         ! And also the last node
@@ -399,11 +402,18 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         deallocate(tmpisok)
     end do iterloop
 
+
+    do n=1, nnode
+        values(n) = integrand(node(n), q1, b1, b2, ls, temperature, om1, om2)
+    end do
+
     ! Now we have all the nodes to perform the integration
     f0 = 0.0_r8
     do n=1, nnode-1
         f0 = f0 + 0.5_r8 * (node(n+1) - node(n)) * (values(n) + values(n+1))
     end do
+
+   !write(*, *) q1, b1, b2, nnode
 
     ! And final deallocation
     deallocate(node)
