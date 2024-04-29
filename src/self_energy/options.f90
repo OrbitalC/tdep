@@ -12,6 +12,7 @@ type lo_opts
     integer, dimension(3) :: qg4ph   !< The grid for the fourphonon integration
     real(flyt) :: temperature        !< temperature
     real(flyt) :: sigma              !< scaling factor for adaptice gaussian
+    integer :: nf = -lo_hugeint
     integer :: nbasis                !< Number of basis function for the spectral functions
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
@@ -93,6 +94,10 @@ subroutine parse(opts)
                  help='Dimension of the grid for the fourphonon integration.', &
                  nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--n_energies', switch_ab='-ne', &
+                 help='Number of energies for the density of states.', &
+                 required=.false., act='store', def='1200', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--notr', hidden=.true., help='', &
@@ -131,6 +136,7 @@ subroutine parse(opts)
     call cli%get(switch='--nothirdorder', val=dumlog)
     opts%thirdorder = .not. dumlog
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
+    call cli%get(switch='--n_energies', val=opts%nf)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog

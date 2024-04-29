@@ -7,7 +7,8 @@ OBJS = \
 $(OBJECT_PATH)main.o\
 $(OBJECT_PATH)options.o\
 $(OBJECT_PATH)selfenergy.o\
-$(OBJECT_PATH)thermal_conductivity.o
+$(OBJECT_PATH)thermal_conductivity.o\
+$(OBJECT_PATH)density_of_state.o
 
 LPATH = -L../../lib $(blaslapackLPATH) $(incLPATHmpi) $(incLPATHhdf)
 IPATH = -I../../inc/libolle -I../../inc/libflap $(blaslapackIPATH) $(incIPATHmpi) $(incIPATHhdf)
@@ -28,8 +29,11 @@ clean:
 $(OBJECT_PATH)main.o:\
 $(OBJECT_PATH)options.o\
 $(OBJECT_PATH)selfenergy.o\
-$(OBJECT_PATH)thermal_conductivity.o
+$(OBJECT_PATH)thermal_conductivity.o\
+$(OBJECT_PATH)density_of_state.o
 	$(F90) $(OPT) $(F90FLAGS) -c main.f90 $(LIBS) -o $@
+$(OBJECT_PATH)density_of_state.o: $(OBJECT_PATH)selfenergy.o
+	$(F90) $(OPT) $(F90FLAGS) -c density_of_state.f90 $(LIBS) -o $@
 $(OBJECT_PATH)thermal_conductivity.o: $(OBJECT_PATH)selfenergy.o
 	$(F90) $(OPT) $(F90FLAGS) -c thermal_conductivity.f90 $(LIBS) -o $@
 $(OBJECT_PATH)selfenergy.o:

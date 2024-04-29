@@ -3,7 +3,7 @@ module thermal_conductivity
 use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
 use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss, lo_harmonic_oscillator_cv, &
-                          lo_trapezoid_integration, lo_linspace
+                          lo_trapezoid_integration, lo_linspace, walltime, lo_progressbar_init, lo_progressbar
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -27,7 +27,7 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     !> The q-point mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> phonon dispersions
-    type(lo_phonon_dispersions), intent(in) :: dr
+    type(lo_phonon_dispersions), intent(inout) :: dr
     !> The selfenergy
     class(lo_selfenergy), intent(in) :: ls
     !> The crystal structure
@@ -50,11 +50,19 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     !> The generalized group velocities squared
     real(r8), dimension(:, :, :, :), allocatable :: groupvelsq
     !> Some buffers
-    real(r8) :: f0, f1, om1, om2, be, tol
+    real(r8) :: f0, f1, om1, om2, be, tol, pref
     !> Integers for the do loops
     integer :: i, q1, b1, b2
+    !> Let's keep track of time
+    real(r8) :: t0
 
     call mem%allocate(groupvelsq, [3, 3, dr%n_mode, dr%n_mode],  persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    pref = lo_pi / (lo_kb_hartree * temperature**2)
+
+    ! For the nice progressbar
+    t0 = walltime()
+    if (mw%talk) call lo_progressbar_init()
 
     kappa = 0.0_r8
     kappa_offdiag = 0.0_r8
@@ -73,25 +81,31 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
                 om2 = dr%iq(q1)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
 
-               tol = 1e-10_r8
+                ! This seems to be a good compromise between accuracy/speed
+                tol = 1e-10_r8
 
                 f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol)
                 if (b1 .eq. b2) then
                     kappa = kappa + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
+                    ! While we are at it, we can store the linewidths of the mode
+                    f1 = 2.0_r8 * pref * f0 /  lo_harmonic_oscillator_cv(temperature, om1)
+                    dr%iq(q1)%linewidth(b1) = f1
                 else
                     kappa_offdiag = kappa_offdiag + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                 end if
             end do
         end do
+        if (mw%talk) call lo_progressbar(' ... computing thermal conductivity', q1, &
+                                         qp%n_irr_point, walltime() - t0)
     end do
     call mw%allreduce('sum', kappa)
     call mw%allreduce('sum', kappa_offdiag)
 
-    ! The pi comes from the fact that we are using the spectral function insteadd
-    kappa = kappa * lo_pi / (uc%volume * lo_kb_hartree * temperature**2)
+    kappa = kappa * pref / uc%volume
     f0 = sum(abs(kappa))
     kappa = lo_chop(kappa, f0*1e-6_r8)
-    kappa_offdiag = kappa_offdiag * lo_pi / (uc%volume * lo_kb_hartree * temperature**2)
+
+    kappa_offdiag = kappa_offdiag * pref / uc%volume
     f0 = sum(abs(kappa_offdiag))
     kappa_offdiag = lo_chop(kappa_offdiag, f0*1e-6_r8)
 
@@ -337,9 +351,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
             end if
         end do
 
-        ! If every node are converged, we can exit
-        if (nnotok .eq. 0) exit iterloop
-
         ! Now we need to update the nodes
         newnnode = nnode + nnotok
         allocate(tmpnode(newnnode))
@@ -379,6 +390,9 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         isok = tmpisok
         nnode = newnnode
 
+        ! If every node are converged, we can exit
+        if (nnotok .eq. 0) exit iterloop
+
         ! And finally, we deallocate the temporary nodes
         deallocate(tmpnode)
         deallocate(tmpval)
@@ -390,6 +404,9 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     do n=1, nnode-1
         f0 = f0 + 0.5_r8 * (node(n+1) - node(n)) * (values(n) + values(n+1))
     end do
+
+    ! Just to look at the number of function evaluation
+    write(*, *) q1, b1, b2, nnode
 
     ! And final deallocation
     deallocate(node)
@@ -421,11 +438,11 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         ! The planck constants, to give the heat-capacity like term
         be = lo_planck(temperature, a)
         ! The two spectral function
-        sf1 = ls%predict_spectralfunction_onepoint(q1, b1, om1, a)
+        sf1 = ls%evaluate_spectralfunction_onepoint(q1, b1, om1, a)
         if (b1 .eq. b2) then
             sf2 = sf1
         else
-            sf2 = ls%predict_spectralfunction_onepoint(q1, b2, om2, a)
+            sf2 = ls%evaluate_spectralfunction_onepoint(q1, b2, om2, a)
         end if
         res = a**2 * sf1 * sf2 * be * (be + 1.0_r8)
     end function

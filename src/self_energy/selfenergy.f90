@@ -39,11 +39,11 @@ contains
     !> Compute imaginary self energy
     procedure :: compute => compute_selfenergy
     !> Compute the selfenergy for a specific frequency
-    procedure :: predict_selfenergy
+    procedure :: evaluate_selfenergy
     !> Evaluate the spectral function for a specific frequency
-    procedure :: predict_spectralfunction_onepoint
+    procedure :: evaluate_spectralfunction_onepoint
     !> Compute the spectral function for several frequencies
-    procedure :: predict_spectralfunction
+    procedure :: evaluate_spectralfunction
     !> destroy
     procedure :: destroy => destroy_selfenergy
     !> Write to hdf5
@@ -224,9 +224,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     if (thirdorder) then
         call mcg3%initialize(dims, qg3)
     end if
-   if (fourthorder) then
-       call mcg4%initialize(dims, qg4)
-   end if
+    if (fourthorder) then
+        call mcg4%initialize(dims, qg4)
+    end if
 
     if (thirdorder .or. fourthorder) then
         call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -235,7 +235,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     end if
 
-    ! Let's precompute some things
+    ! Let's precompute some things to avoid repeated computation of sqrt and exp
     allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
     allocate(sigma_q(qp%n_irr_point, dr%n_mode))
     do q1=1, qp%n_irr_point
@@ -298,6 +298,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         ! Define some thing for the mode we are working on
         egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
         egviso(:, 1) = dr%iq(q1)%egv(:, b1)
+
+        ! Initialize the matrix for the non-negative least-square fit
         ymat = 0.0_r8
         ! First, we take care of the isotope
         if (isotope) then
@@ -323,35 +325,46 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permutation symmetry
 
+                ! Here we check if the quartet can be reduced by symmetry
                 call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
                 if (isred) cycle
 
-                prefactor = prefactor_3ph * mcg3%weight * mult
+                ! We start with simple Fourier transform of the IFC for this triplet, without mode projection
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 call pretransform_phi3(fct, qv2, qv3, ptf3)
+
+                prefactor = prefactor_3ph * mcg3%weight * mult
                 do b2=1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
+                    ! We already get some harmonic values for this mode
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
                     sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
+                    ! Projection of the IFC on this mode
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
                     do b3=1, dr%n_mode
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
+                        ! We already get some harmonic values for this mode
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
                         sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
+
+                        ! The smearing for the gaussian integration
                         sigma = sqrt(sig2**2 + sig3**2)
 
+                        ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
                         call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                         evp2 = conjg(evp2)
+
+                        ! And finally, we can compute the matrix element
                         c0 = dot_product(evp2, ptf3)
                         psisq = abs(c0*conjg(c0)) * prefactor
 
@@ -373,19 +386,22 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         end if
         ! And finally, the fourphonon
         if (fourthorder) then
+            ! First, we generate the reduce monte-carlo grid
             call mcg4%generate_grid(qgridfull1, rng)
             call mcg4%generate_grid(qgridfull2, rng)
             do qi=1, mcg4%npoints
             do qj=1, mcg4%npoints
                 q2 = qgridfull1(qi)
                 q3 = qgridfull2(qj)
-                if (q3 .lt. q2) cycle
+                if (q3 .lt. q2) cycle  ! This is for permutation
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
                  if (q4 .lt. q3) cycle  ! This is for permutation
 
+                 ! Here we check if the quartet can be reduced by symmetry
                 call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
                 if (isred) cycle
 
+                ! We do a simple Fourier transform of the IFC for this quartet, without mode projection
                 qv2 = qp%ap(q2)%r
                 qv3 = qp%ap(q3)%r
                 qv4 = qp%ap(q4)%r
@@ -396,11 +412,13 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
+                    ! We already get some harmonic values for this mode
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
                     n2p = n2 + 1.0_r8
                     sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
+                    ! Projection of the IFC on this mode
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, &
                                evp1, dr%n_mode)
@@ -408,10 +426,13 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
+                        ! We already get some harmonic values for this mode
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
                         n3p = n3 + 1.0_r8
                         sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
+
+                        ! Projection of ths IFC on this mode
                         evp2 = 0.0_r8
                         call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, &
                                    evp2, dr%n_mode)
@@ -419,19 +440,26 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             om4 = dr%aq(q4)%omega(b4)
                             if (om4 .lt. lo_freqtol) cycle
 
+                            ! We already get some harmonic values for this mode
                             egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
                             n4 = bose_einstein(qp%ap(q4)%irreducible_index, b4)
                             n4p = n4 + 1.0_r8
                             sig4 = sigma_q(qp%ap(q4)%irreducible_index, b4)
+
+                            ! The smearing for the gaussian integration
                             sigma = sqrt(sig2**2 + sig3**2 + sig4**2)
 
+                            ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8
                             call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, &
                                        evp2, 1, evp3, dr%n_mode)
                             evp3 = conjg(evp3)
+
+                            ! And finally, we can compute the matrix element
                             c0 = dot_product(evp3, ptf4)
                             psisq = abs(c0*conjg(c0)) * prefactor
 
+                            ! Some prefactors for the scattering
                             plf1 = n2p * n3p * n4p - n2 * n3 * n4
                             plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
                             plf3 = 3.0_r8 * n3 * n2p * n4p - n3p * n2 * n4
@@ -523,7 +551,7 @@ subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
     !> The hdf5 type
     type(lo_hdf5_helper) :: h5
     !> Buffer to store the harmonic frequencies
-    real(r8), dimension(:, :), allocatable :: freq
+    real(r8), dimension(:, :), allocatable :: freq, lw
     !> integer for the do loops
     integer :: q1, b1
 
@@ -531,10 +559,14 @@ subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
     call h5%open_file('write', trim(filename))
 
     allocate(freq(dr%n_mode, qp%n_irr_point))
+    allocate(lw(dr%n_mode, qp%n_irr_point))
     freq = 0.0_r8
+    lw = 0.0_r8
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
             freq(b1, q1) = dr%iq(q1)%omega(b1)
+            lw(b1, q1) = 1.0_r8 / dr%iq(q1)%linewidth(b1)
         end do
     end do
 
@@ -549,6 +581,7 @@ subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
     call h5%store_data(ls%im_weight, h5%file_id, 'weight', enhet='unitless')
     call h5%store_data(ls%omega_n, h5%file_id, 'omega_n', enhet='atomic')
     call h5%store_data(freq, h5%file_id, 'harmonic_frequencies', enhet='atomic')
+    call h5%store_data(lw, h5%file_id, 'linewidths', enhet='atomic')
 
     ! Clost the file
     call h5%close_file()
@@ -567,7 +600,7 @@ subroutine destroy_selfenergy(ls)
     ls%omega_max = -lo_huge
 end subroutine
 
-subroutine predict_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
+subroutine evaluate_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
     !> The self-energy
     class(lo_selfenergy), intent(in) :: ls
     !> For which qpoint
@@ -599,7 +632,7 @@ subroutine predict_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
     end do
 end subroutine
 
-subroutine predict_spectralfunction(ls, q1, b1, om1, eaxis, sf)
+subroutine evaluate_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     !> The self-energy
     class(lo_selfenergy), intent(in) :: ls
     !> For which qpoint
@@ -628,7 +661,7 @@ subroutine predict_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     allocate(f0(nfreq))
     allocate(f1(nfreq))
 
-    call ls%predict_selfenergy(q1, b1, eaxis, se_imag, se_real)
+    call ls%evaluate_selfenergy(q1, b1, eaxis, se_imag, se_real)
     f0 = eaxis**2 - om1**2 - 2.0_r8 * om1 * se_real
     f1 = 2.0_r8 * om1 * se_imag
     sf = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
@@ -639,7 +672,7 @@ subroutine predict_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     deallocate(f1)
 end subroutine
 
-function predict_spectralfunction_onepoint(ls, q1, b1, om1, a) result(res)
+function evaluate_spectralfunction_onepoint(ls, q1, b1, om1, a) result(res)
     !> The self-energy
     class(lo_selfenergy), intent(in) :: ls
     !> For which qpoint

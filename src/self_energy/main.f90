@@ -18,6 +18,7 @@ use lo_randomnumbers, only: lo_mersennetwister
 use options, only: lo_opts
 use selfenergy, only: lo_selfenergy
 use thermal_conductivity, only: compute_thermal_conductivity
+use density_of_state, only: compute_density_of_state
 
 implicit none
 ! Standard from libolle
@@ -35,12 +36,12 @@ type(lo_mem_helper) :: mem
 !> The selfenergy
 type(lo_selfenergy) :: ls
 ! timers
-real(r8) :: timer_init, timer_se, timer_tc, tt0
+real(r8) :: timer_init, timer_se, timer_tc, timer_dos, tt0
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
 initharmonic: block
-    integer :: i, j, q1, b1
+    integer :: i, j, q1
     ! Start MPI and timers
     tt0 = walltime()
     timer_init = tt0
@@ -114,11 +115,17 @@ initharmonic: block
         stop
     end if
 
+    ! Initialize the linewidth
+    do q1=1, qp%n_irr_point
+        allocate(dr%iq(q1)%linewidth(dr%n_mode))
+    end do
+
     ! now I have all harmonic things, stop the init timer
     timer_init = walltime() - timer_init
 end block initharmonic
 
-heavywork: block
+! Self-energy
+selfenergy: block
     if (mw%talk) then
         write (*, *) ''
         write (*, *) 'Calculating self-energy'
@@ -129,21 +136,19 @@ heavywork: block
                     opts%thirdorder, opts%fourthorder, opts%qg3ph, opts%qg4ph, mw, mem)
     timer_se = walltime() - timer_se
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
-end block heavywork
+end block selfenergy
 
+! Thermal conductivity
 kappa: block
     real(r8), dimension(3, 3) :: kappa, kappa_offdiag, m0
 
-    if (mw%talk) then
-        write(*, *) ''
-        write(*, *) 'Calculating the thermal conductivity'
-    end if
-
+    if (mw%talk) write(*, *) ''
     timer_tc = walltime()
 
     call compute_thermal_conductivity(qp, dr, ls, uc, fc, 1000, opts%temperature, kappa, kappa_offdiag, mw, mem)
 
     if (mw%talk) then
+        write (*, *) ''
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
         m0 = kappa*lo_kappa_au_to_SI
@@ -161,19 +166,32 @@ kappa: block
     end if
 
     timer_tc = walltime() - timer_tc
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_tc, ' s'
 end block kappa
+
+! Density of states
+dos: block
+    timer_dos = walltime()
+    if (mw%talk) write(*, *) ''
+
+    call compute_density_of_state(qp, dr, uc, ls, opts%nf, pd, mw, mem)
+    timer_dos = walltime() - timer_dos
+    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_dos, ' s'
+end block dos
 
 finalize_and_write: block
     real(r8) :: t0
     ! Write thermal conductivity to file
 
-    ! sum up the total time
+    ! This part is only on main rank
     if (mw%talk) then
         tt0 = walltime() - tt0
         write(*, *) ''
         write(*, *) '... dumping auxiliary data to files'
+        ! Dump the self energy
         call ls%write_to_hdf5('outfile.selfenergy.hdf5', dr, qp)
+        ! Dump phonon dos to file
+        call pd%write_to_hdf5(uc, 'mev', 'outfile.phonon_selfenergy_dos.hdf5', mem)
 
         ! Print citations
         write (*, *) ''
@@ -191,11 +209,13 @@ finalize_and_write: block
         write (*, "(A,F12.3,A,F7.3,A)") '             initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    self-energy computation:', timer_se, ' s, ', real(timer_se*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '       thermal conductivity:', timer_tc, ' s, ', real(timer_tc*100/tt0), '%'
+        write (*, "(A,F12.3,A,F7.3,A)") '          density of states:', timer_dos, ' s, ', real(timer_dos*100/tt0), '%'
         write (*, "(A,F12.3,A)")        '                      total:', tt0, ' seconds'
     end if
 end block finalize_and_write
 
 ! And we are done!
+call pd%destroy()
 call ls%destroy()
 call mpi_barrier(mw%comm, mw%error)
 call mpi_finalize(lo_status)

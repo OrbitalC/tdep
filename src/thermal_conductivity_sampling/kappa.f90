@@ -37,7 +37,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     real(r8), dimension(3, 3), intent(out) :: kappa
 
     real(r8), dimension(3) :: v0, v1
-    real(r8) :: n, f0, omega, omthres, prefactor, velnorm
+    real(r8) :: n1, f0, omega, omthres, prefactor, velnorm
     integer :: i, j, k, l
 
     integer :: q1, b1
@@ -59,8 +59,8 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
                 v2 = v2 + lo_outerproduct(v0, v1)
             end do
             omega = dr%iq(q1)%omega(b1)
-            n = lo_planck(temperature, omega)
-            buf = prefactor * omega * n * (n + 1.0_r8) * v2 / uc%sym%n
+            n1 = lo_planck(temperature, omega)
+            buf = prefactor * omega * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
             dr%iq(q1)%kappa(:, :, b1) = buf
             kappa = kappa + buf * qp%ip(q1)%integration_weight
         end do
@@ -235,6 +235,7 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
             call mem%deallocate(kronegv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         end block groupvel
 
+        ! Now we can compute the off diagonal contribution
         do jmode = 1, dr%n_mode
             ! Skip gamma for acoustic branches
             if (dr%iq(iq)%omega(jmode) .lt. lo_freqtol) cycle
