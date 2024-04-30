@@ -49,6 +49,8 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
 
     !> The generalized group velocities squared
     real(r8), dimension(:, :, :, :), allocatable :: groupvelsq
+    !> A buffer to store the linewidths
+    real(r8), dimension(:, :), allocatable :: lw
     !> Some buffers
     real(r8) :: f0, f1, om1, om2, be, tol, pref
     !> Integers for the do loops
@@ -57,6 +59,8 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     real(r8) :: t0
 
     call mem%allocate(groupvelsq, [3, 3, dr%n_mode, dr%n_mode],  persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    lw = 0.0_r8
 
     pref = lo_pi / (lo_kb_hartree * temperature**2)
 
@@ -90,7 +94,7 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
                     kappa = kappa + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                     ! While we are at it, we can store the linewidths of the mode
                     f1 = 2.0_r8 * pref * f0 /  lo_harmonic_oscillator_cv(temperature, om1)
-                    dr%iq(q1)%linewidth(b1) = f1
+                    lw(q1, b1) = f1
                 else
                     kappa_offdiag = kappa_offdiag + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                 end if
@@ -101,6 +105,14 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     end do
     call mw%allreduce('sum', kappa)
     call mw%allreduce('sum', kappa_offdiag)
+    call mw%allreduce('sum', lw)
+
+    ! Distribute the linewidht
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            dr%iq(q1)%linewidth(b1) = lw(q1, b1)
+        end do
+    end do
 
     kappa = kappa * pref / uc%volume
     f0 = sum(abs(kappa))
@@ -111,6 +123,7 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     kappa_offdiag = lo_chop(kappa_offdiag, f0*1e-6_r8)
 
     call mem%deallocate(groupvelsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 
