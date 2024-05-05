@@ -16,9 +16,9 @@ use type_phonon_dos, only: lo_phonon_dos
 use dump_data, only: lo_dump_gnuplot_2d_real
 !
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte
+use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, compute_qs
 use scattering, only: lo_scattering_rates
-use linewidths, only: compute_linewidths !, self_consistent_linewidths
+use linewidths, only: compute_linewidths
 
 implicit none
 ! Standard from libolle
@@ -154,7 +154,6 @@ scatters: block
         write (*, *) 'Calculating scattering events'
     end if
     timer_scatt = walltime()
-    !call compute_scattering(qp, dr, uc, fct, fcf, opts, mw, mem, sr)
     call sr%generate(qp, dr, uc, fct, fcf, opts, mw, mem)
     timer_scatt = walltime() - timer_scatt
 
@@ -165,9 +164,6 @@ scatters: block
     end if
     timer_lw = walltime()
     call compute_linewidths(qp, dr, sr, opts, mw, mem)
-!   if (opts%niter .gt. 0) then
-!       call self_consistent_linewidths(dr, qp, sr, opts, mw, mem)
-!   end if
 
     timer_lw = walltime() - timer_lw
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
@@ -196,6 +192,7 @@ kappa: block
     ! Scattering rates
     t0 = walltime()
 
+    call compute_qs(dr, qp, opts%temperature)
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
     if (opts%bteniter .gt. 0) then

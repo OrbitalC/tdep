@@ -23,7 +23,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, mw, 
     type(lo_mem_helper), intent(inout) :: mem
 
     !> Four phonon prefactor
-    real(r8), parameter :: fourphonon_prefactor = lo_pi / 8.0_r8
+    ! real(r8), parameter :: fourphonon_prefactor = lo_pi / 8.0_r8
     !> Frequency scaled eigenvectors
     complex(r8), dimension(:), allocatable :: egv1, egv2, egv3, egv4
     !> Helper for Fourier transform of psi3

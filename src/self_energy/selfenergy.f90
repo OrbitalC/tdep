@@ -10,7 +10,7 @@ use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_fft_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
-use hdf5_wrappers, only: lo_hdf5_helper
+use hdf5_wrappers, only: lo_hdf5_helper, HID_T
 use type_blas_lapack_wrappers, only: lo_dgemv
 use quadratic_programming, only: lo_solve_quadratic_program
 use lo_randomnumbers, only: lo_mersennetwister
@@ -23,6 +23,8 @@ private
 public :: lo_selfenergy
 
 type lo_selfenergy
+    !> The harmonic frequencies of each mode, usefull to have it here
+    real(r8), dimension(:, :), allocatable :: harm_freq
     !> The weight for each self energy
     real(r8), dimension(:, :, :), allocatable :: im_weight
     !> The frequency of the basis set
@@ -44,6 +46,10 @@ contains
     procedure :: evaluate_spectralfunction_onepoint
     !> Compute the spectral function for several frequencies
     procedure :: evaluate_spectralfunction
+    !> Compute the imaginary part of the self energy for one point
+    procedure :: evaluate_imag_selfenergy_onepoint
+    !> Compute the real part of the self energy for one point
+    procedure :: evaluate_real_selfenergy_onepoint
     !> destroy
     procedure :: destroy => destroy_selfenergy
     !> Write to hdf5
@@ -94,7 +100,17 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, mw
     !> some buffers
     real(r8) :: f0, delta
     !> And some integers for the do loops
-    integer :: n
+    integer :: n, q1, b1
+
+    ! Let's grab the harmonic frequencies
+    allocate(ls%harm_freq(dr%n_mode, qp%n_irr_point))
+    ls%harm_freq = 0.0_r8
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            if(dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+            ls%harm_freq(b1, q1) = dr%iq(q1)%omega(b1)
+        end do
+    end do
 
     ! First, let's allocate everything
     ls%nbasis = nbasis
@@ -538,41 +554,18 @@ end subroutine
 
 
 !> Write the self energy type to hdf5
-subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
+subroutine write_selfenergy_to_hdf5(ls, input_id)
     !> helper container
     class(lo_selfenergy), intent(in) :: ls
-    !> filename
-    character(len=*), intent(in) :: filename
-    !> The phonon dispersion
-    type(lo_phonon_dispersions), intent(in) :: dr
-    !> The qpoint mesh
-    type(lo_qpoint_mesh), intent(in) :: qp
+    !> The id for Hdf5
+    integer(HID_T), intent(in) :: input_id
 
     !> The hdf5 type
     type(lo_hdf5_helper) :: h5
-    !> Buffer to store the harmonic frequencies
-    real(r8), dimension(:, :), allocatable :: freq, lw
-    !> integer for the do loops
-    integer :: q1, b1
 
-    call h5%init(__FILE__, __LINE__)
-    call h5%open_file('write', trim(filename))
-
-    allocate(freq(dr%n_mode, qp%n_irr_point))
-    allocate(lw(dr%n_mode, qp%n_irr_point))
-    freq = 0.0_r8
-    lw = 0.0_r8
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-            freq(b1, q1) = dr%iq(q1)%omega(b1)
-            lw(b1, q1) = 1.0_r8 / dr%iq(q1)%linewidth(b1)
-        end do
-    end do
+    h5%file_id = input_id
 
     ! Store metadata
-    call h5%store_attribute(qp%n_irr_point, h5%file_id, 'n_irr_point')
-    call h5%store_attribute(dr%n_mode, h5%file_id, 'n_mode')
     call h5%store_attribute(ls%nbasis, h5%file_id, 'nbasis')
     call h5%store_attribute(ls%width, h5%file_id, 'width')
     call h5%store_attribute(ls%omega_max, h5%file_id, 'omega_max')
@@ -580,12 +573,7 @@ subroutine write_selfenergy_to_hdf5(ls, filename, dr, qp)
     ! Store actual data
     call h5%store_data(ls%im_weight, h5%file_id, 'weight', enhet='unitless')
     call h5%store_data(ls%omega_n, h5%file_id, 'omega_n', enhet='atomic')
-    call h5%store_data(freq, h5%file_id, 'harmonic_frequencies', enhet='atomic')
-    call h5%store_data(lw, h5%file_id, 'linewidths', enhet='atomic')
-
-    ! Clost the file
-    call h5%close_file()
-    call h5%destroy(__FILE__, __LINE__)
+    call h5%store_data(ls%harm_freq, h5%file_id, 'harmonic_frequencies', enhet='atomic')
 end subroutine
 
 !> Clean destruction of the self energy type
@@ -595,6 +583,7 @@ subroutine destroy_selfenergy(ls)
 
     if (allocated(ls%omega_n)) deallocate(ls%omega_n)
     if (allocated(ls%im_weight)) deallocate(ls%im_weight)
+    if (allocated(ls%harm_freq)) deallocate(ls%harm_freq)
     ls%nbasis = -lo_hugeint
     ls%width = -lo_huge
     ls%omega_max = -lo_huge
@@ -632,15 +621,53 @@ subroutine evaluate_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
     end do
 end subroutine
 
-subroutine evaluate_spectralfunction(ls, q1, b1, om1, eaxis, sf)
+function evaluate_imag_selfenergy_onepoint(ls, q1, b1, a) result(res)
     !> The self-energy
     class(lo_selfenergy), intent(in) :: ls
     !> For which qpoint
     integer, intent(in) :: q1
     !> For which mode
     integer, intent(in) :: b1
-    !> The harmonic frequency of this phonon
-    real(r8), intent(in) :: om1
+    !> The frequency at which we want to evaluate the spectral function
+    real(r8), intent(in) :: a
+    !> The imaginary part of the self energy
+    real(r8)  :: res
+
+    integer :: n
+
+    res = 0.0_r8
+    do n=1, ls%nbasis
+        res = res + ls%im_weight(n, b1, q1) * modified_lorentzian(a, ls%omega_n(n), ls%width)
+    end do
+end function
+
+function evaluate_real_selfenergy_onepoint(ls, q1, b1, a) result(res)
+    !> The self-energy
+    class(lo_selfenergy), intent(in) :: ls
+    !> For which qpoint
+    integer, intent(in) :: q1
+    !> For which mode
+    integer, intent(in) :: b1
+    !> The frequency at which we want to evaluate the spectral function
+    real(r8), intent(in) :: a
+    !> The imaginary part of the self energy
+    real(r8)  :: res
+
+    integer :: n
+
+    res = 0.0_r8
+    do n=1, ls%nbasis
+        res = res + ls%im_weight(n, b1, q1) * realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
+    end do
+end function
+
+subroutine evaluate_spectralfunction(ls, q1, b1, eaxis, sf)
+    !> The self-energy
+    class(lo_selfenergy), intent(in) :: ls
+    !> For which qpoint
+    integer, intent(in) :: q1
+    !> For which mode
+    integer, intent(in) :: b1
     !> The energy axis
     real(r8), dimension(:), intent(in) :: eaxis
     !> The imaginary part of the self energy
@@ -652,6 +679,8 @@ subroutine evaluate_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     real(r8), dimension(:), allocatable :: se_imag, se_real
     !> Some buffer
     real(r8), dimension(:), allocatable :: f0, f1
+    !> The harmonic frequency
+    real(r8) :: om1
     !> Some integers
     integer :: nfreq
 
@@ -660,6 +689,8 @@ subroutine evaluate_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     allocate(se_real(nfreq))
     allocate(f0(nfreq))
     allocate(f1(nfreq))
+
+    om1 = ls%harm_freq(b1, q1)
 
     call ls%evaluate_selfenergy(q1, b1, eaxis, se_imag, se_real)
     f0 = eaxis**2 - om1**2 - 2.0_r8 * om1 * se_real
@@ -672,15 +703,13 @@ subroutine evaluate_spectralfunction(ls, q1, b1, om1, eaxis, sf)
     deallocate(f1)
 end subroutine
 
-function evaluate_spectralfunction_onepoint(ls, q1, b1, om1, a) result(res)
+function evaluate_spectralfunction_onepoint(ls, q1, b1, a) result(res)
     !> The self-energy
     class(lo_selfenergy), intent(in) :: ls
     !> For which qpoint
     integer, intent(in) :: q1
     !> For which mode
     integer, intent(in) :: b1
-    !> The harmonic frequency of this phonon
-    real(r8), intent(in) :: om1
     !> The frequency at which we want to evaluate the spectral function
     real(r8), intent(in) :: a
     !> The imaginary part of the self energy
@@ -689,9 +718,11 @@ function evaluate_spectralfunction_onepoint(ls, q1, b1, om1, a) result(res)
     !> Inverse of pi, we don't want to calculate it everytime
     real(r8), parameter :: invpi=0.318309886183791_r8
     !> Some buffer values
-    real(r8) :: se_imag, se_real, f0, f1
+    real(r8) :: se_imag, se_real, f0, f1, om1
     !> Integer for the do loop
     integer :: n
+
+    om1 = ls%harm_freq(b1, q1)
 
     se_imag = 0.0_r8
     se_real = 0.0_r8

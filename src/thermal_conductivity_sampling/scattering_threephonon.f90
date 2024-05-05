@@ -22,8 +22,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
     !> Memory helper
     type(lo_mem_helper), intent(inout) :: mem
 
-    !> Three phonon prefactor
-    real(r8), parameter :: threephonon_prefactor = lo_pi * 0.25_r8
     !> Frequency scaled eigenvectors
     complex(r8), dimension(:), allocatable :: egv1, egv2, egv3
     !> Helper for Fourier transform of psi3

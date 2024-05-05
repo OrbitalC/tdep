@@ -12,6 +12,7 @@ use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix
 use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
+use hdf5_wrappers, only: lo_hdf5_helper, HID_T
 !
 use selfenergy, only: lo_selfenergy
 
@@ -19,11 +20,38 @@ implicit none
 
 private
 public :: compute_thermal_conductivity
+public :: lo_thermalconductivity_helper
+
+!> Little container for all the different approximations to kappa
+type lo_thermalconductivity_helper
+    !> The Green-Kubo kappa diagonal
+    real(r8), dimension(3, 3) :: kappa_gk
+    !> The Green-Kubo kappa off-diagonal
+    real(r8), dimension(3, 3) :: kappa_gk_od
+    !> The RTA kappa diagonal
+    real(r8), dimension(3, 3) :: kappa_rta
+    !> The RTA kappa off-diagonal
+    real(r8), dimension(3, 3) :: kappa_rta_od
+    !> The RTA with shift kappa diagonal
+    real(r8), dimension(3, 3) :: kappa_srta
+    !> The RTA with shift kappa off-diagonal
+    real(r8), dimension(3, 3) :: kappa_srta_od
+    !> The linewidths in the Green-Kubo approximation
+    real(r8), dimension(:, :), allocatable :: lw_gk
+    !> The linewidths within perturbation theory
+    real(r8), dimension(:, :), allocatable :: lw_pert
+    contains
+        procedure :: compute_thermal_conductivity
+        procedure :: write_to_hdf5 => write_tc_to_hdf5
+        procedure :: destroy => destroy_tc
+end type
 
 contains
 
 !> Compute kappa including memory effects
-subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature, kappa, kappa_offdiag, mw, mem)
+subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, temperature, mw, mem)
+    !> The thermal conductivity helper
+    class(lo_thermalconductivity_helper), intent(out) :: tc
     !> The q-point mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> phonon dispersions
@@ -38,10 +66,6 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     integer, intent(in) :: nenergy
     !> The temperature
     real(r8), intent(in) :: temperature
-    !> The thermal conductivity tensor
-    real(r8), dimension(3, 3), intent(out) :: kappa
-    !> The thermal conductivity tensor from the coherent contribution
-    real(r8), dimension(3, 3), intent(out) :: kappa_offdiag
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -49,18 +73,16 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
 
     !> The generalized group velocities squared
     real(r8), dimension(:, :, :, :), allocatable :: groupvelsq
-    !> A buffer to store the linewidths
-    real(r8), dimension(:, :), allocatable :: lw
     !> Some buffers
-    real(r8) :: f0, f1, om1, om2, be, tol, pref
+    real(r8) :: f0, f1, f2, f3, f4, f5, f6, om1, om2, be, tol, pref, n1, n2, d1, d2, som1, som2, sn1, sn2
     !> Integers for the do loops
     integer :: i, q1, b1, b2
     !> Let's keep track of time
     real(r8) :: t0
 
     call mem%allocate(groupvelsq, [3, 3, dr%n_mode, dr%n_mode],  persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    lw = 0.0_r8
+    allocate(tc%lw_gk(dr%n_mode, qp%n_irr_point))
+    allocate(tc%lw_pert(dr%n_mode, qp%n_irr_point))
 
     pref = lo_pi / (lo_kb_hartree * temperature**2)
 
@@ -68,8 +90,16 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
     t0 = walltime()
     if (mw%talk) call lo_progressbar_init()
 
-    kappa = 0.0_r8
-    kappa_offdiag = 0.0_r8
+    ! Initialize all the values to 0.0
+    tc%lw_gk = 0.0_r8
+    tc%lw_pert = 0.0_r8
+    tc%kappa_rta = 0.0_r8
+    tc%kappa_rta_od = 0.0_r8
+    tc%kappa_srta = 0.0_r8
+    tc%kappa_srta_od = 0.0_r8
+    tc%kappa_gk = 0.0_r8
+    tc%kappa_gk_od = 0.0_r8
+
     do q1=1, qp%n_irr_point
         if (mod(q1, mw%n) .ne. mw%r) cycle
 
@@ -81,6 +111,13 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
             om1 = dr%iq(q1)%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
 
+            ! We compute the perturbative lifetime for the first mode
+            f1 = ls%evaluate_imag_selfenergy_onepoint(q1, b1, om1)
+            d1 = ls%evaluate_real_selfenergy_onepoint(q1, b1, om1)
+            n1 = lo_planck(temperature, om1)
+            som1 = om1 + d1
+            sn1 = lo_planck(temperature, som1)
+
             do b2=1, dr%n_mode
                 om2 = dr%iq(q1)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
@@ -88,42 +125,77 @@ subroutine compute_thermal_conductivity(qp, dr, ls, uc, fc, nenergy, temperature
                 ! This seems to be a good compromise between accuracy/speed
                 tol = 1e-13_r8
 
-                f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol)
+                ! We compute the perturbative lifetime for the second mode
+                f2 = ls%evaluate_imag_selfenergy_onepoint(q1, b2, om2)
+                d2 = ls%evaluate_real_selfenergy_onepoint(q1, b2, om2)
+                n2 = lo_planck(temperature, om2)
+                som2 = om2 + d2
+                sn2 = lo_planck(temperature, som2)
 
+                ! We apply the formula with the Markovian approximation
+                f3 = n1 * (n2 + 1.0_r8) + n2 * (n1 + 1.0_r8)
+                f3 = f3 * (om1 + om2)**2 / 8.0_r8
+                f4 = (f1 + f2) / ((om2 - om1)**2 + (f1 + f2)**2)
+
+                ! We apply the formula with the Markovian approximation, but including the shift
+                f5 = sn1 * (sn2 + 1.0_r8) + sn2 * (sn1 + 1.0_r8)
+                f5 = f5 * (som1 + som2)**2 / 8.0_r8
+                f6 = (f1 + f2) / ((som2 - som1)**2 + (f1 + f2)**2)
+
+                ! We compute the "lifetimes"
+                f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol)
                 if (b1 .eq. b2) then
-                    kappa = kappa + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
+                    tc%kappa_gk = tc%kappa_gk + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
+                    tc%kappa_rta = tc%kappa_rta + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
+                    tc%kappa_srta = tc%kappa_srta + groupvelsq(:, :, b1, b2) * f5 * f6 * qp%ip(q1)%integration_weight
+
                     ! While we are at it, we can store the linewidths of the mode
-                    f1 = 2.0_r8 * pref * f0 /  lo_harmonic_oscillator_cv(temperature, om1)
-                    lw(q1, b1) = f1
+                    ! With full memory effects
+                    tc%lw_gk(b1, q1) = 0.5_r8 / pref / f0 *  lo_harmonic_oscillator_cv(temperature, om1)
+                    ! Within perturbation theory
+                    tc%lw_pert(b1, q1) = f1
                 else
-                    kappa_offdiag = kappa_offdiag + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
+                    tc%kappa_gk_od = tc%kappa_gk_od + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
+                    tc%kappa_rta_od = tc%kappa_rta_od + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
+                    tc%kappa_srta_od = tc%kappa_srta_od + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
                 end if
             end do
         end do
         if (mw%talk) call lo_progressbar(' ... computing thermal conductivity', q1, &
                                          qp%n_irr_point, walltime() - t0)
     end do
-    call mw%allreduce('sum', kappa)
-    call mw%allreduce('sum', kappa_offdiag)
-    call mw%allreduce('sum', lw)
+    call mw%allreduce('sum', tc%kappa_gk)
+    call mw%allreduce('sum', tc%kappa_gk_od)
+    call mw%allreduce('sum', tc%kappa_rta)
+    call mw%allreduce('sum', tc%kappa_rta_od)
+    call mw%allreduce('sum', tc%kappa_srta)
+    call mw%allreduce('sum', tc%kappa_srta_od)
+    call mw%allreduce('sum', tc%lw_gk)
+    call mw%allreduce('sum', tc%lw_pert)
 
-    ! Distribute the linewidht
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            dr%iq(q1)%linewidth(b1) = lw(q1, b1)
-        end do
-    end do
+    ! If we want the linewdith to actually be linewidth we have to take the inverse
+    tc%kappa_gk = tc%kappa_gk * pref / uc%volume
+    f0 = sum(abs(tc%kappa_gk))
+    tc%kappa_gk = lo_chop(tc%kappa_gk, f0*1e-6_r8)
+    tc%kappa_gk_od = tc%kappa_gk_od * pref / uc%volume
+    f0 = sum(abs(tc%kappa_gk_od))
+    tc%kappa_gk_od = lo_chop(tc%kappa_gk_od, f0*1e-6_r8)
 
-    kappa = kappa * pref / uc%volume
-    f0 = sum(abs(kappa))
-    kappa = lo_chop(kappa, f0*1e-6_r8)
+    tc%kappa_rta = tc%kappa_rta * pref / uc%volume / lo_pi
+    f0 = sum(abs(tc%kappa_rta))
+    tc%kappa_rta = lo_chop(tc%kappa_rta, f0*1e-6_r8)
+    tc%kappa_rta_od = tc%kappa_rta_od * pref / uc%volume / lo_pi
+    f0 = sum(abs(tc%kappa_rta_od))
+    tc%kappa_rta_od = lo_chop(tc%kappa_rta_od, f0*1e-6_r8)
 
-    kappa_offdiag = kappa_offdiag * pref / uc%volume
-    f0 = sum(abs(kappa_offdiag))
-    kappa_offdiag = lo_chop(kappa_offdiag, f0*1e-6_r8)
+    tc%kappa_srta = tc%kappa_srta * pref / uc%volume / lo_pi
+    f0 = sum(abs(tc%kappa_srta))
+    tc%kappa_srta = lo_chop(tc%kappa_srta, f0*1e-6_r8)
+    tc%kappa_srta_od = tc%kappa_srta_od * pref / uc%volume / lo_pi
+    f0 = sum(abs(tc%kappa_srta_od))
+    tc%kappa_srta_od = lo_chop(tc%kappa_srta_od, f0*1e-6_r8)
 
     call mem%deallocate(groupvelsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 
@@ -415,7 +487,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         deallocate(tmpisok)
     end do iterloop
 
-
     do n=1, nnode
         values(n) = integrand(node(n), q1, b1, b2, ls, temperature, om1, om2)
     end do
@@ -458,13 +529,58 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         ! The planck constants, to give the heat-capacity like term
         be = lo_planck(temperature, a)
         ! The two spectral function
-        sf1 = ls%evaluate_spectralfunction_onepoint(q1, b1, om1, a)
+        sf1 = ls%evaluate_spectralfunction_onepoint(q1, b1, a)
         if (b1 .eq. b2) then
             sf2 = sf1
         else
-            sf2 = ls%evaluate_spectralfunction_onepoint(q1, b2, om2, a)
+            sf2 = ls%evaluate_spectralfunction_onepoint(q1, b2, a)
         end if
         res = a**2 * sf1 * sf2 * be * (be + 1.0_r8)
     end function
 end function
+
+!> Write thermal conductivity info to a already open hdf5 file
+subroutine write_tc_to_hdf5(tc, input_id)
+    !> The thermal conductivity
+    class(lo_thermalconductivity_helper), intent(in) :: tc
+    !> The id for Hdf5
+    integer(HID_T), intent(in):: input_id
+
+    type(lo_hdf5_helper) :: h5
+    !> Buffer to contains the kappa tensors
+    real(r8), dimension(3, 3) :: m0
+    !> The units for kappa
+    character(len=5) :: units
+
+    units = "W/m/K"
+
+    h5%file_id = input_id
+
+    m0 = tc%kappa_gk * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_greenkubo_diagonal', enhet=units)
+    m0 = tc%kappa_gk_od * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_greenkubo_coherent', enhet=units)
+    m0 = (tc%kappa_gk + tc%kappa_gk_od) * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_greenkubo', enhet=units)
+
+    m0 = tc%kappa_rta * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_rta_diagonal', enhet=units)
+    m0 = tc%kappa_rta_od * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_rta_coherent', enhet=units)
+    m0 = (tc%kappa_rta + tc%kappa_rta_od) * lo_kappa_au_to_SI
+    call h5%store_data(m0, h5%file_id, 'kappa_rta', enhet=units)
+
+    call h5%store_data(tc%lw_pert, h5%file_id, 'linewidths_perturbative', enhet='Hartree')
+    call h5%store_data(tc%lw_gk, h5%file_id, 'linewidths_greenkubo', enhet='Hartree')
+
+    ! We let the privilege to close the file to elsewhere
+end subroutine
+
+subroutine destroy_tc(tc)
+    !> The thermal conductivity
+    class(lo_thermalconductivity_helper), intent(inout) :: tc
+
+    if (allocated(tc%lw_gk)) deallocate(tc%lw_gk)
+    if (allocated(tc%lw_pert)) deallocate(tc%lw_pert)
+end subroutine
 end module

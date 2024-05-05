@@ -21,6 +21,12 @@ implicit none
 private
 public :: lo_scattering_rates
 
+real(r8), parameter :: isotope_prefactor = lo_pi / 4.0_r8
+! real(r8), parameter :: isotope_prefactor = lo_pi / 2.0_r8
+real(r8), parameter :: threephonon_prefactor = lo_pi / 16.0_r8
+! real(r8), parameter :: threephonon_prefactor = lo_pi / 4.0_r8
+real(r8), parameter :: fourphonon_prefactor = lo_pi / 8.0_r8
+
 type lo_psisq
     !> The actual psisq
     real(r8), dimension(:), allocatable :: psisq

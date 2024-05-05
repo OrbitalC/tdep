@@ -14,10 +14,11 @@ use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_phonon_dos, only: lo_phonon_dos
 use dump_data, only: lo_dump_gnuplot_2d_real
 use lo_randomnumbers, only: lo_mersennetwister
+use hdf5_wrappers, only: lo_hdf5_helper
 !
 use options, only: lo_opts
 use selfenergy, only: lo_selfenergy
-use thermal_conductivity, only: compute_thermal_conductivity
+use thermal_conductivity, only: compute_thermal_conductivity, lo_thermalconductivity_helper
 use density_of_state, only: compute_density_of_state
 
 implicit none
@@ -35,6 +36,8 @@ type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
 !> The selfenergy
 type(lo_selfenergy) :: ls
+!> The thermal conductivity helper
+type(lo_thermalconductivity_helper) :: tc
 ! timers
 real(r8) :: timer_init, timer_se, timer_tc, timer_dos, tt0
 
@@ -115,11 +118,6 @@ initharmonic: block
         stop
     end if
 
-    ! Initialize the linewidth
-    do q1=1, qp%n_irr_point
-        allocate(dr%iq(q1)%linewidth(dr%n_mode))
-    end do
-
     ! now I have all harmonic things, stop the init timer
     timer_init = walltime() - timer_init
 end block initharmonic
@@ -140,26 +138,55 @@ end block selfenergy
 
 ! Thermal conductivity
 kappa: block
-    real(r8), dimension(3, 3) :: kappa, kappa_offdiag, m0
+    real(r8), dimension(3, 3) :: kappa, kappa_offdiag, kappa_rta, kappa_rta_offdiag, m0
 
     if (mw%talk) write(*, *) ''
     timer_tc = walltime()
 
-    call compute_thermal_conductivity(qp, dr, ls, uc, fc, 1000, opts%temperature, kappa, kappa_offdiag, mw, mem)
+    call tc%compute_thermal_conductivity(qp, dr, ls, uc, fc, 1000, opts%temperature, mw, mem)
 
     if (mw%talk) then
         write (*, *) ''
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
-        m0 = kappa*lo_kappa_au_to_SI
+        write (*, *) 'Relaxation time approximation'
+        m0 = tc%kappa_rta*lo_kappa_au_to_SI
         write (*, "(1X,A25)") 'Single mode approximation'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        m0 = kappa_offdiag*lo_kappa_au_to_SI
+        m0 = tc%kappa_rta_od*lo_kappa_au_to_SI
         write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        m0 = (kappa + kappa_offdiag)*lo_kappa_au_to_SI
+        m0 = (tc%kappa_rta + tc%kappa_rta_od)*lo_kappa_au_to_SI
+        write (*, "(1X,A26)") 'Total thermal conductivity'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (*, *) ''
+        write (*, *) 'Relaxation time approximation including frequency shifst'
+        m0 = tc%kappa_srta*lo_kappa_au_to_SI
+        write (*, "(1X,A25)") 'Single mode approximation'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = tc%kappa_srta_od*lo_kappa_au_to_SI
+        write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = (tc%kappa_srta + tc%kappa_srta_od)*lo_kappa_au_to_SI
+        write (*, "(1X,A26)") 'Total thermal conductivity'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write(*, *) ''
+        write (*, *) 'Green-Kubo with memory effects'
+        m0 = tc%kappa_gk*lo_kappa_au_to_SI
+        write (*, "(1X,A25)") 'Single mode approximation'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = tc%kappa_gk_od*lo_kappa_au_to_SI
+        write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
+        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        m0 = (tc%kappa_gk + tc%kappa_gk_od)*lo_kappa_au_to_SI
         write (*, "(1X,A26)") 'Total thermal conductivity'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
@@ -180,7 +207,9 @@ dos: block
 end block dos
 
 finalize_and_write: block
+    type(lo_hdf5_helper) :: h5
     real(r8) :: t0
+    character(len=23) :: filename
     ! Write thermal conductivity to file
 
     ! This part is only on main rank
@@ -188,8 +217,18 @@ finalize_and_write: block
         tt0 = walltime() - tt0
         write(*, *) ''
         write(*, *) '... dumping auxiliary data to files'
+
         ! Dump the self energy
-        call ls%write_to_hdf5('outfile.selfenergy.hdf5', dr, qp)
+        filename = 'outfile.selfenergy.hdf5'
+        call h5%init(__FILE__, __LINE__)
+        call h5%open_file('write', trim(filename))
+
+        call ls%write_to_hdf5(h5%file_id)
+        call tc%write_to_hdf5(h5%file_id)
+
+        call h5%close_file()
+        call h5%destroy(__FILE__, __LINE__)
+
         ! Dump phonon dos to file
         call pd%write_to_hdf5(uc, 'mev', 'outfile.phonon_selfenergy_dos.hdf5', mem)
 
@@ -217,6 +256,7 @@ end block finalize_and_write
 ! And we are done!
 call pd%destroy()
 call ls%destroy()
+call tc%destroy()
 call mpi_barrier(mw%comm, mw%error)
 call mpi_finalize(lo_status)
 

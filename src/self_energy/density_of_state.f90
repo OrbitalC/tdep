@@ -85,7 +85,7 @@ subroutine compute_density_of_state(qp, dr, uc, ls, nf, pd, mw, mem)
                 ctr = ctr + 1
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
 
-                call ls%evaluate_spectralfunction(q1, b1, om1, pd%omega, sf)
+                call ls%evaluate_spectralfunction(q1, b1, pd%omega, sf)
 
                 sigma = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)
                 ! Smear the spectral function

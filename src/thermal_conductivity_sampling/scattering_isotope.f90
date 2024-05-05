@@ -19,7 +19,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
     type(lo_mem_helper), intent(inout) :: mem
 
     ! Isotope prefactor
-    real(r8), parameter :: isotope_prefactor = lo_pi * 0.5_r8
+    ! real(r8), parameter :: isotope_prefactor = lo_pi * 0.5_r8
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
