@@ -163,7 +163,7 @@ kappa: block
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
         write (*, *) ''
-        write (*, *) 'Relaxation time approximation including frequency shifst'
+        write (*, *) 'Relaxation time approximation including frequency shift'
         m0 = tc%kappa_srta*lo_kappa_au_to_SI
         write (*, "(1X,A25)") 'Single mode approximation'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
