@@ -201,7 +201,7 @@ dos: block
     timer_dos = walltime()
     if (mw%talk) write(*, *) ''
 
-    call compute_density_of_state(qp, dr, uc, ls, opts%nf, pd, mw, mem)
+    call compute_density_of_state(qp, dr, uc, ls, opts%dospoints, pd, mw, mem)
     timer_dos = walltime() - timer_dos
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_dos, ' s'
 end block dos

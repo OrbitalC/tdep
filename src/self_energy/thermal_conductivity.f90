@@ -100,6 +100,9 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     tc%kappa_gk = 0.0_r8
     tc%kappa_gk_od = 0.0_r8
 
+    ! This seems to be a good compromise between accuracy/speed
+    tol = 1e-10_r8
+
     do q1=1, qp%n_irr_point
         if (mod(q1, mw%n) .ne. mw%r) cycle
 
@@ -121,9 +124,6 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
             do b2=1, dr%n_mode
                 om2 = dr%iq(q1)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
-
-                ! This seems to be a good compromise between accuracy/speed
-                tol = 1e-13_r8
 
                 ! We compute the perturbative lifetime for the second mode
                 f2 = ls%evaluate_imag_selfenergy_onepoint(q1, b2, om2)
@@ -486,6 +486,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         deallocate(tmpisok)
     end do iterloop
 
+    ! We compute again the values of the integrand at the nodes
     do n=1, nnode
         values(n) = integrand(node(n), q1, b1, b2, ls, temperature)
     end do
@@ -498,8 +499,10 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
 
     ! And final deallocation
     deallocate(node)
-    deallocate(newval)
     deallocate(isok)
+    deallocate(values)
+    deallocate(newnode)
+    deallocate(newval)
 
     contains
 
