@@ -151,7 +151,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
                     ! While we are at it, we can store the linewidths of the mode
                     ! With full memory effects
-                    tc%lw_gk(b1, q1) = 0.5_r8 / pref / f0 *  lo_harmonic_oscillator_cv(temperature, om1)
+                    tc%lw_gk(b1, q1) = 0.5_r8 / pref / f0 * lo_harmonic_oscillator_cv(temperature, om1)
                     ! Within perturbation theory
                     tc%lw_pert(b1, q1) = f1
                 else
@@ -161,8 +161,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
                 end if
             end do
         end do
-        if (mw%talk) call lo_progressbar(' ... computing thermal conductivity', q1, &
-                                         qp%n_irr_point, walltime() - t0)
+        if (mw%talk) call lo_progressbar(' ... computing thermal conductivity', q1, qp%n_irr_point, walltime() - t0)
     end do
     call mw%allreduce('sum', tc%kappa_gk)
     call mw%allreduce('sum', tc%kappa_gk_od)
@@ -403,7 +402,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     ! We initialize the nodes
     call lo_linspace(0.0_r8, ls%omega_max, node)
     do n=1, nnode
-        values(n) = integrand(node(n), q1, b1, b2, ls, temperature, om1, om2)
+        values(n) = integrand(node(n), q1, b1, b2, ls, temperature)
     end do
     ! Initialize values
     isok = .false.
@@ -420,9 +419,9 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         newnode = 0.0_r8
         ! We start by checking the nodes to see if we need to add new node and values
         do n=1, nnode-1
-            if (isok(n)) cycle  ! DO NOT WORK LIKE THIS
+            if (isok(n)) cycle
             c = node(n) + 0.5_r8 * (node(n+1) - node(n))
-            fc = integrand(c, q1, b1, b2, ls, temperature, om1, om2)
+            fc = integrand(c, q1, b1, b2, ls, temperature)
             newnode(n) = c
             newval(n) = fc
             ! Estimation of the integral
@@ -488,7 +487,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     end do iterloop
 
     do n=1, nnode
-        values(n) = integrand(node(n), q1, b1, b2, ls, temperature, om1, om2)
+        values(n) = integrand(node(n), q1, b1, b2, ls, temperature)
     end do
 
     ! Now we have all the nodes to perform the integration
@@ -496,8 +495,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     do n=1, nnode-1
         f0 = f0 + 0.5_r8 * (node(n+1) - node(n)) * (values(n) + values(n+1))
     end do
-
-   !write(*, *) q1, b1, b2, nnode
 
     ! And final deallocation
     deallocate(node)
@@ -507,7 +504,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     contains
 
     ! The function to evaluate the integrand
-    function integrand(a, q1, b1, b2, ls, temperature, om1, om2) result(res)
+    function integrand(a, q1, b1, b2, ls, temperature) result(res)
         !> The value at which we evaluate
         real(r8), intent(in) :: a
         !> The q-point and mode
@@ -516,8 +513,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         type(lo_selfenergy), intent(in) :: ls
         !> The temperature at which we evaluate the spectral function
         real(r8), intent(in) :: temperature
-        !> The harmonic frequency of the phonons
-        real(r8), intent(in) :: om1, om2
 
         !> The integrand at this point
         real(r8) :: res
