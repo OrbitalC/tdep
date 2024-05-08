@@ -1,6 +1,6 @@
 
 
-subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
+subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, mem)
     !> The local point
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -13,6 +13,8 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
     type(lo_crystalstructure), intent(in) :: uc
     !> The temperature
     real(r8), intent(in) :: temperature
+    !> The linewidth for this mode
+    real(r8), intent(inout) :: g0
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -67,6 +69,8 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, mw, mem)
                 sr%iso(il)%q2(i) = q2
                 sr%iso(il)%b2(i) = b2
                 sr%iso(il)%psisq(i) = psisq
+
+                g0 = g0 + psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
             end if
         end do
     end do

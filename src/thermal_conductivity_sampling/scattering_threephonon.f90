@@ -1,6 +1,6 @@
 
 
-subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw, mem)
+subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -17,6 +17,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
     type(lo_montecarlo_grid), intent(in) :: mcg
     !> The random number generator
     type(lo_mersennetwister), intent(inout) :: rng
+    !> The linewidth for this mode
+    real(r8), intent(inout) :: g0
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -34,6 +36,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
     real(r8) :: sig1, sig2, sig3, sigma
     !> Frequencies, bose-einstein occupation and scattering strength
     real(r8) :: om1, om2, om3, plf, psisq, prefactor, mle_ratio
+    !> The bose-einstein distribution for the modes
+    real(r8) :: n2, n3, n2p, n3p
     !> The complex threephonon matrix element
     complex(r8) :: c0
     !> Integers for do loops
@@ -80,7 +84,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
                 if (om3 .lt. lo_freqtol) cycle
 
                 sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
-                sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+               !sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+                sigma = sqrt(sig2**2 + sig3**2)
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
                     abs(om1 - om2 + om3) .lt. 4.0_r8 * sigma .or. &
                     abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) i = i + 1
@@ -123,7 +128,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
                 sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
-                sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+               !sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+                sigma = sqrt(sig2**2 + sig3**2)
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
@@ -142,6 +148,17 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, mw,
                     sr%threephonon(il)%q3(i) = q3
                     sr%threephonon(il)%b2(i) = b2
                     sr%threephonon(il)%b3(i) = b3
+
+                    n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+                    n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
+                    n2p = n2 + 1.0_r8
+                    n3p = n3 + 1.0_r8
+
+                    g0 = g0 + 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
+                    g0 = g0 - 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
+
+                    g0 = g0 + 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
+                    g0 = g0 - 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
                 end if
             end do
         end do

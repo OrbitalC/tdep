@@ -101,7 +101,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     tc%kappa_gk_od = 0.0_r8
 
     ! This seems to be a good compromise between accuracy/speed
-    tol = 1e-10_r8
+    tol = 1e-13_r8
 
     do q1=1, qp%n_irr_point
         if (mod(q1, mw%n) .ne. mw%r) cycle

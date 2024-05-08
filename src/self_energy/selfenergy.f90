@@ -129,7 +129,16 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, mw
 
     ! Ok, now we can get our basis functions
     delta = ls%omega_max / real(ls%nbasis, r8)
-    f0 = 0.0_r8
+    ! This ensure that we have at least something close to the lowest frequency
+    if (dr%omega_min .lt. delta) then
+        if (mw%talk) then
+            write(*, *) 'WARNING: The lowest frequency is lower than the distance between peaks in the basis'
+            write(*, *) 'Maybe try to increase the number of basis function'
+        end if
+        f0 = dr%omega_min * 0.5 - delta
+    else
+        f0 = 0.0_r8
+    end if
     do n=1, ls%nbasis
         f0 = f0 + delta
         ls%omega_n(n) = f0
@@ -497,8 +506,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                                 ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n),-om3 + om2 + om4, sigma)
                                 ymat(n) = ymat(n) - 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n), om3 - om2 - om4, sigma)
                                 ! And finally 2<->4
-                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n),-om4 + om3 + om2, sigma)
-                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n), om4 - om3 - om2, sigma)
+                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf4 * lo_gauss(ls%omega_n(n),-om4 + om3 + om2, sigma)
+                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf4 * lo_gauss(ls%omega_n(n), om4 - om3 - om2, sigma)
                             end do
                         end do
                     end do

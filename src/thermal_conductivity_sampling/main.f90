@@ -163,7 +163,7 @@ scatters: block
         write (*, *) 'Calculating linewidths'
     end if
     timer_lw = walltime()
-    call compute_linewidths(qp, dr, sr, opts, mw, mem)
+!   call compute_linewidths(qp, dr, sr, opts, mw, mem)
 
     timer_lw = walltime() - timer_lw
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
@@ -194,7 +194,7 @@ kappa: block
 
     call compute_qs(dr, qp, opts%temperature)
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
-    call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
+!   call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
     if (opts%bteniter .gt. 0) then
         if (mw%talk) then
             write(*, *) ''

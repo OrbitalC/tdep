@@ -22,10 +22,8 @@ private
 public :: lo_scattering_rates
 
 real(r8), parameter :: isotope_prefactor = lo_pi / 4.0_r8
-! real(r8), parameter :: isotope_prefactor = lo_pi / 2.0_r8
 real(r8), parameter :: threephonon_prefactor = lo_pi / 16.0_r8
-! real(r8), parameter :: threephonon_prefactor = lo_pi / 4.0_r8
-real(r8), parameter :: fourphonon_prefactor = lo_pi / 8.0_r8
+real(r8), parameter :: fourphonon_prefactor = lo_pi / 96.0_r8
 
 type lo_psisq
     !> The actual psisq
@@ -186,21 +184,61 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end do
     end do
 
-    t0 = walltime()
-    if (mw%talk) call lo_progressbar_init()
-    do il=1, sr%nlocal_point
-        if (opts%isotopescattering) then
-            call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, mw, mem)
-        end if
-        if (opts%thirdorder) then
-            call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, mw, mem)
-        end if
-        if (opts%fourthorder) then
-            call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, mw, mem)
-        end if
-        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
-    end do
-    if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
+    scatt: block
+        !> Buffer to contains the linewidth
+        real(r8), dimension(:, :), allocatable :: buf_lw
+        !> Buffer for the linewidth of the local point
+        real(r8) :: buf, f0
+        integer :: j, q1, b1, b2
+
+        call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        buf_lw = 0.0_r8
+
+        t0 = walltime()
+        if (mw%talk) call lo_progressbar_init()
+        do il=1, sr%nlocal_point
+            buf = 0.0_r8
+            if (opts%isotopescattering) then
+                call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, buf, mw, mem)
+            end if
+            if (opts%thirdorder) then
+                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, buf, mw, mem)
+            end if
+            if (opts%fourthorder) then
+                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, buf, mw, mem)
+            end if
+            ! Now we can update the linewidth for this mode
+            buf_lw(sr%q1(il), sr%b1(il)) = buf
+
+            if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
+        end do
+        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
+
+        ! Reduce the linewidth
+        call mw%allreduce('sum', buf_lw)
+
+        ! Distribute it after fixing the degeneracies
+        do q1=1, qp%n_irr_point
+            do b1=1, dr%n_mode
+                if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+                ! First we fix the degeneracy
+                f0 = 0.0_r8
+                do j=1, dr%iq(q1)%degeneracy(b1)
+                    b2 = dr%iq(q1)%degenmode(j, b1)
+                    f0 = f0 + buf_lw(q1, b2)
+                end do
+                f0 = f0 / real(dr%iq(q1)%degeneracy(b1), r8)
+                do j=1, dr%iq(q1)%degeneracy(b1)
+                    b2 = dr%iq(q1)%degenmode(j, b1)
+                    buf_lw(q1, b2) = f0
+                end do
+                ! Now we can se the linewidth
+                dr%iq(q1)%linewidth(b1) = buf_lw(q1, b1)
+            end do
+        end do
+        call mem%deallocate(buf_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    end block scatt
 
     diagnostic: block
         integer(i8) :: bufiso, buf3ph, buf4ph
