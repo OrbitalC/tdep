@@ -16,7 +16,8 @@ use type_phonon_dos, only: lo_phonon_dos
 use dump_data, only: lo_dump_gnuplot_2d_real
 !
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, compute_qs
+use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, compute_qs, &
+                 symmetrize_kappa
 use scattering, only: lo_scattering_rates
 use linewidths, only: compute_linewidths
 
@@ -194,7 +195,7 @@ kappa: block
 
     call compute_qs(dr, qp, opts%temperature)
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
-!   call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
+    call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
     if (opts%bteniter .gt. 0) then
         if (mw%talk) then
             write(*, *) ''
@@ -206,6 +207,9 @@ kappa: block
                            opts%isotopescattering, opts%thirdorder, opts%fourthorder, mw, mem)
     end if
     call get_kappa(dr, qp, uc, opts%temperature, kappa)
+    if (mw%talk) write(*, *) ''
+    if (mw%talk) write(*, *) '... symmetrizing the thermal conductivity tensors'
+    call symmetrize_kappa(kappa, kappa_offdiag, kappa_sma, uc, mem)
     if (mw%talk) then
         write (*, *) ''
         write (*, *) 'THERMAL CONDUCTIVITY'

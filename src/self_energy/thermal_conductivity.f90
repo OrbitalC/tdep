@@ -3,13 +3,16 @@ module thermal_conductivity
 use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
 use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss, lo_harmonic_oscillator_cv, &
-                          lo_trapezoid_integration, lo_linspace, walltime, lo_progressbar_init, lo_progressbar
+                          lo_trapezoid_integration, lo_linspace, walltime, lo_progressbar_init, lo_progressbar, &
+                          lo_real_nullspace_coefficient_matrix, lo_transpositionmatrix, lo_real_pseudoinverse, &
+                          lo_flattentensor, lo_unflatten_2tensor
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
-use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix
+use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix, &
+                                  lo_expandoperation_pair
 use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use hdf5_wrappers, only: lo_hdf5_helper, HID_T
@@ -32,10 +35,6 @@ type lo_thermalconductivity_helper
     real(r8), dimension(3, 3) :: kappa_rta
     !> The RTA kappa off-diagonal
     real(r8), dimension(3, 3) :: kappa_rta_od
-    !> The RTA with shift kappa diagonal
-    real(r8), dimension(3, 3) :: kappa_srta
-    !> The RTA with shift kappa off-diagonal
-    real(r8), dimension(3, 3) :: kappa_srta_od
     !> The linewidths in the Green-Kubo approximation
     real(r8), dimension(:, :), allocatable :: lw_gk
     !> The linewidths within perturbation theory
@@ -73,14 +72,17 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
     !> The generalized group velocities squared
     real(r8), dimension(:, :, :, :), allocatable :: groupvelsq
+    !> The normalization factor for the spectral functions
+    real(r8), dimension(:), allocatable :: norm_sf
     !> Some buffers
-    real(r8) :: f0, f1, f2, f3, f4, f5, f6, om1, om2, be, tol, pref, n1, n2, d1, d2, som1, som2, sn1, sn2
+    real(r8) :: f0, f1, f2, f3, f4, om1, om2, be, tol, pref, n1, n2
     !> Integers for the do loops
     integer :: i, q1, b1, b2
     !> Let's keep track of time
     real(r8) :: t0
 
     call mem%allocate(groupvelsq, [3, 3, dr%n_mode, dr%n_mode],  persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(norm_sf, dr%n_mode,  persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     allocate(tc%lw_gk(dr%n_mode, qp%n_irr_point))
     allocate(tc%lw_pert(dr%n_mode, qp%n_irr_point))
 
@@ -95,8 +97,6 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     tc%lw_pert = 0.0_r8
     tc%kappa_rta = 0.0_r8
     tc%kappa_rta_od = 0.0_r8
-    tc%kappa_srta = 0.0_r8
-    tc%kappa_srta_od = 0.0_r8
     tc%kappa_gk = 0.0_r8
     tc%kappa_gk_od = 0.0_r8
 
@@ -105,6 +105,13 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
     do q1=1, qp%n_irr_point
         if (mod(q1, mw%n) .ne. mw%r) cycle
+
+        ! First we get the normalization for the spectral functions
+        do b1=1, dr%n_mode
+            om1 = dr%iq(q1)%omega(b1)
+            if (om1 .lt. lo_freqtol) cycle
+            norm_sf(b1) = integrate_spectralfunction(q1, b1, b1, om1, om1, temperature, ls, tol, .false.)
+        end do
 
         !> Then we get the generalized eigenvectors
         call get_generalized_eigenvectors(q1, qp, dr, uc, fc, mem, groupvelsq)
@@ -116,10 +123,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
             ! We compute the perturbative lifetime for the first mode
             f1 = ls%evaluate_imag_selfenergy_onepoint(q1, b1, om1)
-            d1 = ls%evaluate_real_selfenergy_onepoint(q1, b1, om1)
             n1 = lo_planck(temperature, om1)
-            som1 = om1 + d1
-            sn1 = lo_planck(temperature, som1)
 
             do b2=1, dr%n_mode
                 om2 = dr%iq(q1)%omega(b2)
@@ -127,27 +131,18 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
                 ! We compute the perturbative lifetime for the second mode
                 f2 = ls%evaluate_imag_selfenergy_onepoint(q1, b2, om2)
-                d2 = ls%evaluate_real_selfenergy_onepoint(q1, b2, om2)
                 n2 = lo_planck(temperature, om2)
-                som2 = om2 + d2
-                sn2 = lo_planck(temperature, som2)
 
                 ! We apply the formula with the Markovian approximation
                 f3 = n1 * (n2 + 1.0_r8) + n2 * (n1 + 1.0_r8)
                 f3 = f3 * (om1 + om2)**2 / 8.0_r8
                 f4 = (f1 + f2) / ((om2 - om1)**2 + (f1 + f2)**2)
 
-                ! We apply the formula with the Markovian approximation, but including the shift
-                f5 = sn1 * (sn2 + 1.0_r8) + sn2 * (sn1 + 1.0_r8)
-                f5 = f5 * (som1 + som2)**2 / 8.0_r8
-                f6 = (f1 + f2) / ((som2 - som1)**2 + (f1 + f2)**2)
-
                 ! We compute the "lifetimes"
-                f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol)
+                f0 = integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol, .true.) / (norm_sf(b1) * norm_sf(b2))
                 if (b1 .eq. b2) then
                     tc%kappa_gk = tc%kappa_gk + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                     tc%kappa_rta = tc%kappa_rta + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
-                    tc%kappa_srta = tc%kappa_srta + groupvelsq(:, :, b1, b2) * f5 * f6 * qp%ip(q1)%integration_weight
 
                     ! While we are at it, we can store the linewidths of the mode
                     ! With full memory effects
@@ -157,7 +152,6 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
                 else
                     tc%kappa_gk_od = tc%kappa_gk_od + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                     tc%kappa_rta_od = tc%kappa_rta_od + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
-                    tc%kappa_srta_od = tc%kappa_srta_od + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
                 end if
             end do
         end do
@@ -167,34 +161,60 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     call mw%allreduce('sum', tc%kappa_gk_od)
     call mw%allreduce('sum', tc%kappa_rta)
     call mw%allreduce('sum', tc%kappa_rta_od)
-    call mw%allreduce('sum', tc%kappa_srta)
-    call mw%allreduce('sum', tc%kappa_srta_od)
     call mw%allreduce('sum', tc%lw_gk)
     call mw%allreduce('sum', tc%lw_pert)
 
     ! If we want the linewdith to actually be linewidth we have to take the inverse
     tc%kappa_gk = tc%kappa_gk * pref / uc%volume
-    f0 = sum(abs(tc%kappa_gk))
-    tc%kappa_gk = lo_chop(tc%kappa_gk, f0*1e-6_r8)
     tc%kappa_gk_od = tc%kappa_gk_od * pref / uc%volume
-    f0 = sum(abs(tc%kappa_gk_od))
-    tc%kappa_gk_od = lo_chop(tc%kappa_gk_od, f0*1e-6_r8)
 
     tc%kappa_rta = tc%kappa_rta * pref / uc%volume / lo_pi
-    f0 = sum(abs(tc%kappa_rta))
-    tc%kappa_rta = lo_chop(tc%kappa_rta, f0*1e-6_r8)
     tc%kappa_rta_od = tc%kappa_rta_od * pref / uc%volume / lo_pi
-    f0 = sum(abs(tc%kappa_rta_od))
-    tc%kappa_rta_od = lo_chop(tc%kappa_rta_od, f0*1e-6_r8)
-
-    tc%kappa_srta = tc%kappa_srta * pref / uc%volume / lo_pi
-    f0 = sum(abs(tc%kappa_srta))
-    tc%kappa_srta = lo_chop(tc%kappa_srta, f0*1e-6_r8)
-    tc%kappa_srta_od = tc%kappa_srta_od * pref / uc%volume / lo_pi
-    f0 = sum(abs(tc%kappa_srta_od))
-    tc%kappa_srta_od = lo_chop(tc%kappa_srta_od, f0*1e-6_r8)
 
     call mem%deallocate(groupvelsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    symmetrize: block
+        real(r8), dimension(9, 9) :: symmetrizer
+        real(r8), dimension(:, :), allocatable :: coeff, icoeff
+        real(r8), dimension(:), allocatable :: x
+        real(r8), dimension(:, :, :), allocatable :: ops
+        real(r8), dimension(9) :: flat
+        integer :: i, iop, nx
+
+        call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        ops = 0.0_r8
+        do iop=1, uc%sym%n
+            ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
+        end do
+        call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
+        call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
+        allocate (icoeff(nx, 9))
+        ! And get the pseudoinverse.
+        call lo_real_pseudoinverse(coeff, icoeff)
+        ! And the irreducible representation of the total
+        allocate (x(nx))
+        flat = lo_flattentensor(tc%kappa_gk)
+        x = matmul(icoeff, flat)
+        call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+        symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
+
+        flat = lo_flattentensor(tc%kappa_gk)
+        flat = matmul(symmetrizer, flat)
+        tc%kappa_gk = lo_unflatten_2tensor(flat)
+
+        flat = lo_flattentensor(tc%kappa_gk_od)
+        flat = matmul(symmetrizer, flat)
+        tc%kappa_gk_od = lo_unflatten_2tensor(flat)
+
+        flat = lo_flattentensor(tc%kappa_rta)
+        flat = matmul(symmetrizer, flat)
+        tc%kappa_rta = lo_unflatten_2tensor(flat)
+
+        flat = lo_flattentensor(tc%kappa_rta_od)
+        flat = matmul(symmetrizer, flat)
+        tc%kappa_rta_od = lo_unflatten_2tensor(flat)
+    end block symmetrize
 end subroutine
 
 
@@ -359,7 +379,7 @@ end subroutine
 
 
 ! Function to do the integration of the product of spectral function, using an adaptive scheme
-function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) result(f0)
+function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol, is_squared) result(f0)
     !> The qpoint at which we perform the integration
     integer, intent(in) :: q1
     !> The modes for which we perform the integration
@@ -372,6 +392,8 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     type(lo_selfenergy), intent(in) :: ls
     !> The tolerance for the integration
     real(r8), intent(in) :: tol
+    !>
+    logical, intent(in) :: is_squared
     !> The result of the integration
     real(r8) :: f0
 
@@ -390,7 +412,6 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     !> Integer for the do loops and indices
     integer :: i, n, ctr, nnode, newnnode
 
-
     ! Let's start with a hundred nodes, this should avoid pathological cases
     nnode = 100
     allocate(node(nnode))
@@ -402,7 +423,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     ! We initialize the nodes
     call lo_linspace(0.0_r8, ls%omega_max, node)
     do n=1, nnode
-        values(n) = integrand(node(n), q1, b1, b2, ls, temperature)
+        values(n) = integrand(node(n), q1, b1, b2, ls, temperature, is_squared)
     end do
     ! Initialize values
     isok = .false.
@@ -421,7 +442,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         do n=1, nnode-1
             if (isok(n)) cycle
             c = node(n) + 0.5_r8 * (node(n+1) - node(n))
-            fc = integrand(c, q1, b1, b2, ls, temperature)
+            fc = integrand(c, q1, b1, b2, ls, temperature, is_squared)
             newnode(n) = c
             newval(n) = fc
             ! Estimation of the integral
@@ -488,7 +509,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
 
     ! We compute again the values of the integrand at the nodes
     do n=1, nnode
-        values(n) = integrand(node(n), q1, b1, b2, ls, temperature)
+        values(n) = integrand(node(n), q1, b1, b2, ls, temperature, is_squared)
     end do
 
     ! Now we have all the nodes to perform the integration
@@ -507,7 +528,7 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
     contains
 
     ! The function to evaluate the integrand
-    function integrand(a, q1, b1, b2, ls, temperature) result(res)
+    function integrand(a, q1, b1, b2, ls, temperature, is_squared) result(res)
         !> The value at which we evaluate
         real(r8), intent(in) :: a
         !> The q-point and mode
@@ -516,6 +537,8 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         type(lo_selfenergy), intent(in) :: ls
         !> The temperature at which we evaluate the spectral function
         real(r8), intent(in) :: temperature
+        !> Do we integrate the sf^2 * x^2 * n * (n + 1) ?
+        logical, intent(in) :: is_squared
 
         !> The integrand at this point
         real(r8) :: res
@@ -524,16 +547,20 @@ function integrate_spectralfunction(q1, b1, b2, om1, om2, temperature, ls, tol) 
         !> The spectral functions
         real(r8) :: sf1, sf2
 
-        ! The planck constants, to give the heat-capacity like term
-        be = lo_planck(temperature, a)
-        ! The two spectral function
-        sf1 = ls%evaluate_spectralfunction_onepoint(q1, b1, a)
-        if (b1 .eq. b2) then
-            sf2 = sf1
+        if (is_squared) then
+            ! The planck constants, to give the heat-capacity like term
+            be = lo_planck(temperature, a)
+            ! The two spectral function
+            sf1 = ls%evaluate_spectralfunction_onepoint(q1, b1, a)
+            if (b1 .eq. b2) then
+                sf2 = sf1
+            else
+                sf2 = ls%evaluate_spectralfunction_onepoint(q1, b2, a)
+            end if
+            res = a**2 * sf1 * sf2 * be * (be + 1.0_r8)
         else
-            sf2 = ls%evaluate_spectralfunction_onepoint(q1, b2, a)
+            res = ls%evaluate_spectralfunction_onepoint(q1, b1, a)
         end if
-        res = a**2 * sf1 * sf2 * be * (be + 1.0_r8)
     end function
 end function
 

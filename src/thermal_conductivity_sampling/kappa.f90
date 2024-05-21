@@ -2,13 +2,16 @@
 module kappa
 use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
-use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss
+use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss, &
+                          lo_real_nullspace_coefficient_matrix, lo_transpositionmatrix, lo_real_pseudoinverse, &
+                          lo_flattentensor, lo_unflatten_2tensor
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
-use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix
+use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix, &
+                                  lo_expandoperation_pair
 use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
@@ -21,6 +24,7 @@ public :: get_kappa
 public :: get_kappa_offdiag
 public :: iterative_bte
 public :: compute_qs
+public :: symmetrize_kappa
 contains
 
 
@@ -318,6 +322,51 @@ contains
     end function
 end subroutine
 
+subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc, mem)
+    !> The different kappa
+    real(r8), dimension(3, 3), intent(inout) :: kappa, kappa_sma, kappa_offdiag
+    !> The unit cell
+    type(lo_crystalstructure), intent(in) :: uc
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
+
+    real(r8), dimension(9, 9) :: symmetrizer
+    real(r8), dimension(:, :), allocatable :: coeff, icoeff
+    real(r8), dimension(:), allocatable :: x
+    real(r8), dimension(:, :, :), allocatable :: ops
+    real(r8), dimension(9) :: flat
+    integer :: i, iop, nx
+
+    call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    ops = 0.0_r8
+    do iop=1, uc%sym%n
+        ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
+    end do
+    call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
+    call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
+    allocate (icoeff(nx, 9))
+    ! And get the pseudoinverse.
+    call lo_real_pseudoinverse(coeff, icoeff)
+    ! And the irreducible representation of the total
+    allocate (x(nx))
+    flat = lo_flattentensor(kappa)
+    x = matmul(icoeff, flat)
+    call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
+
+    flat = lo_flattentensor(kappa)
+    flat = matmul(symmetrizer, flat)
+    kappa = lo_unflatten_2tensor(flat)
+
+    flat = lo_flattentensor(kappa_sma)
+    flat = matmul(symmetrizer, flat)
+    kappa_sma = lo_unflatten_2tensor(flat)
+
+    flat = lo_flattentensor(kappa_offdiag)
+    flat = matmul(symmetrizer, flat)
+    kappa_offdiag = lo_unflatten_2tensor(flat)
+end subroutine
 
 subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                          isotope, threephonon, fourphonon, mw, mem)

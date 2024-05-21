@@ -138,7 +138,7 @@ end block selfenergy
 
 ! Thermal conductivity
 kappa: block
-    real(r8), dimension(3, 3) :: kappa, kappa_offdiag, kappa_rta, kappa_rta_offdiag, m0
+    real(r8), dimension(3, 3) :: m0
 
     if (mw%talk) write(*, *) ''
     timer_tc = walltime()
@@ -149,7 +149,7 @@ kappa: block
         write (*, *) ''
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
-        write (*, *) 'Relaxation time approximation'
+        write (*, *) 'Markovian approximation'
         m0 = tc%kappa_rta*lo_kappa_au_to_SI
         write (*, "(1X,A25)") 'Single mode approximation'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
@@ -159,20 +159,6 @@ kappa: block
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
         m0 = (tc%kappa_rta + tc%kappa_rta_od)*lo_kappa_au_to_SI
-        write (*, "(1X,A26)") 'Total thermal conductivity'
-        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        write (*, *) ''
-        write (*, *) 'Relaxation time approximation including frequency shift'
-        m0 = tc%kappa_srta*lo_kappa_au_to_SI
-        write (*, "(1X,A25)") 'Single mode approximation'
-        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        m0 = tc%kappa_srta_od*lo_kappa_au_to_SI
-        write (*, "(1X,A36)") 'Off diagonal (coherent) contribution'
-        write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
-        write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        m0 = (tc%kappa_srta + tc%kappa_srta_od)*lo_kappa_au_to_SI
         write (*, "(1X,A26)") 'Total thermal conductivity'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
