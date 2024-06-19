@@ -213,7 +213,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> For the harmonic values
     real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
     !> For the scattering
-    real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4
+    real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4, pref_sigma
     !> Integers for the do loops
     integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, qi, qj
     !> Integer for the parallelization
@@ -261,6 +261,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                                                 dr%default_smearing(b1), 1.0_r8)
         end do
     end do
+
+    ! We can already precompute the prefactor for the adaptive broadening factor
+    pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
 
     ! Let's prepare the non-negative least-squares
     allocate(A_inequal(ls%nbasis, ls%nbasis))
@@ -373,7 +376,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
 
                         ! The smearing for the gaussian integration
-                        sigma = sqrt(sig2**2 + sig3**2)
+                        ! sigma = sqrt(sig2**2 + sig3**2)
+                        sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
+                        sigma = min(1.0_r8, sigma)
 
                         ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
@@ -463,7 +468,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             sig4 = sigma_q(qp%ap(q4)%irreducible_index, b4)
 
                             ! The smearing for the gaussian integration
-                            sigma = sqrt(sig2**2 + sig3**2 + sig4**2)
+                            ! sigma = sqrt(sig2**2 + sig3**2 + sig4**2)
+                            sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
+                            sigma = min(1.0_r8, sigma)
 
                             ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8

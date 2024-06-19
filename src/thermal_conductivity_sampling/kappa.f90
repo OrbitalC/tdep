@@ -47,12 +47,12 @@ subroutine compute_qs(dr, qp, temperature)
 
             n1 = lo_planck(temperature, om1)
             lw = dr%iq(q1)%linewidth(b1)
-            dr%iq(q1)%qs(b1) = 2.0_r8 * n1 * (n1 + 1.0_r8) * lw
+            dr%iq(q1)%qs(b1) = 2.0_r8 * lw
             velnorm = norm2(dr%iq(q1)%vel(:, b1))
             if (velnorm .gt. lo_phonongroupveltol) then
                 dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) * 0.5_r8 / lw
                 dr%iq(q1)%scalar_mfp(b1) = velnorm * 0.5_r8 / lw
-                dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1) * om1 / temperature
+                dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
                 dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
             end if
         end do
@@ -80,7 +80,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     integer :: q1, b1
     real(r8), dimension(3, 3) :: v2, buf
 
-    prefactor = 1.0_r8/(uc%volume*lo_kb_hartree*temperature)
+    prefactor = 1.0_r8/(uc%volume*lo_kb_hartree*temperature**2)
 
     kappa = 0.0_r8
     do q1=1, qp%n_irr_point
@@ -96,7 +96,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
             end do
             omega = dr%iq(q1)%omega(b1)
             n1 = lo_planck(temperature, omega)
-            buf = prefactor * omega * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
+            buf = prefactor * omega**2 * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
             dr%iq(q1)%kappa(:, :, b1) = buf
             kappa = kappa + buf * qp%ip(q1)%integration_weight
         end do
@@ -437,7 +437,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         end block foldout
 
         ! The most time consuming part of the iterative method is in this function
-        call apply_scattering_matrix_on_f(sr, dr, qp, isotope, threephonon, fourphonon, mw, mem, Fbb, Fnb)
+        call apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
         distributeF: block
             real(r8), dimension(3) :: v0
             integer :: q1, b1, b2, j
@@ -506,16 +506,13 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
 end subroutine
 
 
-subroutine apply_scattering_matrix_on_f(sr, dr, qp, isotope, threephonon, fourphonon, &
-                                        mw, mem, Fbb, Fnb)
+subroutine apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
     !> integration weights
     type(lo_scattering_rates), intent(inout) :: sr
     !> dispersions
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> q-mesh
     class(lo_qpoint_mesh), intent(in) :: qp
-    !> What do we compute ?
-    logical, intent(in) :: isotope, threephonon, fourphonon
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -525,146 +522,22 @@ subroutine apply_scattering_matrix_on_f(sr, dr, qp, isotope, threephonon, fourph
     !> The Fn on which we applied the scattering matrix
     real(r8), dimension(:, :, :), intent(out) :: Fnb
 
-    real(r8), dimension(3) :: Fp, Fpp, Fppp, v0
-    real(r8) :: f0, psisq
-    real(r8) :: om1, om2, om3, om4, n1, n2, n3, n4, n2p, n3p, n4p, sigma, sig1, sig2, sig3, sig4
-    integer :: il, j, b1, b2, b3, b4, q2, q3, q4
-    integer :: q1
+    real(r8), dimension(3) :: v0
+    integer :: il, b1, b2, q1, q2
 
     Fnb = 0.0_r8
     do il=1, sr%nlocal_point
         q1 = sr%q1(il)
         b1 = sr%b1(il)
-
-        om1 = dr%iq(q1)%omega(b1)
-        sig1 = sr%sigma_q(q1, b1)
-        n1 = sr%be(q1, b1)
-        ! prefetch some stuff
         v0 = 0.0_r8
-        if (isotope) then
-            do j=1, sr%iso(il)%n
-                q2 = sr%iso(il)%q2(j)
-                b2 = sr%iso(il)%b2(j)
-                om2 = dr%aq(q2)%omega(b2)
+        do q2=1, qp%n_full_point
+            do b2 = 1,dr%n_mode
+                if (dr%aq(q2)%omega(b2) .lt. lo_freqtol) cycle
 
-                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-
-                psisq = sr%iso(il)%psisq(j)
-                ! TMP
-                !psisq = sr%iso(il)%psisq(j) * 2.0_r8
-                ! TMP
-
-                !f0 = psisq * om1 * om2 * n1 * (n2 + 1.0_r8)
-                f0 = psisq * om1 * om2
-                f0 = f0 * lo_gauss(om1, om2, sigma)
-
-                Fp = Fbb(:, b2, q2)
-                v0 = v0 + f0 * Fp
+                v0 = v0 + sr%Xi(il, q2, b2) * Fbb(:, b2, q2)
             end do
-        end if
-        if (threephonon) then
-            do j=1, sr%threephonon(il)%n
-                q2 = sr%threephonon(il)%q2(j)
-                q3 = sr%threephonon(il)%q3(j)
-                b2 = sr%threephonon(il)%b2(j)
-                b3 = sr%threephonon(il)%b3(j)
-
-                om2 = dr%aq(q2)%omega(b2)
-                om3 = dr%aq(q3)%omega(b3)
-                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
-                n2p = n2 + 1.0_r8
-                n3p = n3 + 1.0_r8
-
-                sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
-                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
-                ! sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
-                sigma = sqrt(sig2**2 + sig3**2)
-
-                psisq = sr%threephonon(il)%psisq(j)
-                ! TMP
-                ! psisq = sr%threephonon(il)%psisq(j) * 4.0_r8
-                ! TMP
-
-                Fp = Fbb(:, b2, q2)
-                Fpp = Fbb(:, b3, q3)
-
-                ! First the plus process
-                !f0 = psisq * n1 * n2 * n3p * lo_gauss(om1, -om2 + om3, sigma)
-                f0 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
-                v0 = v0 + f0 * (Fp + Fpp)
-                ! The 2<->3 permutation
-                !f0 = psisq * n1 * n3 * n2p * lo_gauss(om1, -om3 + om2, sigma)
-                f0 = psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
-                v0 = v0 + f0 * (Fp + Fpp)
-                f0 = psisq * (n3 - n2) * lo_gauss(om1, om2 - om3, sigma)
-                v0 = v0 + f0 * (Fpp + Fp)
-
-                ! The the minus process, factor 0.5 cancels out with the permutations
-               !f0 = psisq * n1 * n2p * n3p * lo_gauss(om1, om3 + om2, sigma)
-               !v0 = v0 + f0 * (Fp + Fpp)
-            end do
-        end if
-        if (fourphonon) then
-            do j=1, sr%fourphonon(il)%n
-                q2 = sr%fourphonon(il)%q2(j)
-                q3 = sr%fourphonon(il)%q3(j)
-                q4 = sr%fourphonon(il)%q4(j)
-                b2 = sr%fourphonon(il)%b2(j)
-                b3 = sr%fourphonon(il)%b3(j)
-                b4 = sr%fourphonon(il)%b4(j)
-
-                om2 = dr%aq(q2)%omega(b2)
-                om3 = dr%aq(q3)%omega(b3)
-                om4 = dr%aq(q4)%omega(b4)
-                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
-                n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
-                n2p = n2 + 1.0_r8
-                n3p = n3 + 1.0_r8
-                n4p = n4 + 1.0_r8
-
-                sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
-                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
-                sig4 = sr%sigma_q(qp%ap(q4)%irreducible_index, b4)
-                sigma = sqrt(sig1**2 + sig2**2 + sig3**2 + sig4**2)
-
-                psisq = sr%fourphonon(il)%psisq(j)
-
-                Fp = Fbb(:, b2, q2)
-                Fpp = Fbb(:, b3, q3)
-                Fppp = Fbb(:, b4, q4)
-
-                ! First the plus-plus process
-                ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
-                f0 = psisq * n1 * n2 * n3 * n4p * lo_gauss(om1, -om2 - om3 + om4, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-                ! Permute 3<->4
-                f0 = psisq * n1 * n2 * n4 * n3p * lo_gauss(om1, -om2 - om4 + om3, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-                ! Permute 2<->4
-                f0 = psisq * n1 * n3 * n4 * n2p * lo_gauss(om1, -om3 - om4 + om2, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-
-                ! Then the plus-minus process. It's actually like the previous process
-                ! The permutations gives a prefactor 2.0, cancels with 0.5 of the process
-                f0 = psisq * n1 * n2 * n3p * n4p * lo_gauss(om1, -om2 + om3 + om4, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-                ! Permute 2<->3
-                f0 = psisq * n1 * n3 * n2p * n4p * lo_gauss(om1, -om3 + om2 + om4, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-                ! Permute 2<->4
-                f0 = psisq * n1 * n4 * n2p * n3p * lo_gauss(om1, -om4 + om2 + om3, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-
-                ! And finally, the minus-minus process, this one takes all permutation
-                ! So factor 6.0_r8, cancels out with 6.0_r8 of the process
-                f0 = psisq * n1 * n2p * n3p * n4p * lo_gauss(om1, om2 + om3 + om4, sigma)
-                v0 = v0 + (Fp + Fpp + Fppp) * f0
-            end do
-        end if
-        Fnb(:, b1, q1) = -v0 / dr%iq(q1)%qs(b1)
+        end do
+        Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0 / dr%iq(q1)%qs(b1)
     end do
     call mw%allreduce('sum', Fnb)
 end subroutine

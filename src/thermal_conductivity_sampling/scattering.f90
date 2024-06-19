@@ -1,6 +1,7 @@
 #include "precompilerdefinitions"
 module scattering
-use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi, lo_tol
+use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi, lo_tol, &
+                      lo_phonongroupveltol
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -25,29 +26,16 @@ real(r8), parameter :: isotope_prefactor = lo_pi / 4.0_r8
 real(r8), parameter :: threephonon_prefactor = lo_pi / 16.0_r8
 real(r8), parameter :: fourphonon_prefactor = lo_pi / 96.0_r8
 
-type lo_psisq
-    !> The actual psisq
-    real(r8), dimension(:), allocatable :: psisq
-    !> The indices for the scattering
-    integer, dimension(:), allocatable :: q2, q3, q4, b2, b3, b4
-    !> The number of scattering
-    integer :: n
-end type
-
 ! Container for scattering rates
 type lo_scattering_rates
     !> The number of qpoint/mode on this rank
     integer :: nlocal_point
     !> The list of qpoint and modes for this rank
     integer, dimension(:), allocatable :: q1, b1
-    !> The iso phonon scattering
-    type(lo_psisq), dimension(:), allocatable :: iso
-    !> The three phonon scattering
-    type(lo_psisq), dimension(:), allocatable :: threephonon
-    !> The four phonon scattering
-    type(lo_psisq), dimension(:), allocatable :: fourphonon
     !> Let's precompute the Bose-Einstein distribution and adaptive smearing
     real(r8), dimension(:, :), allocatable :: be, sigma_q
+    !> The scattering matrix
+    real(r8), dimension(:, :, :), allocatable :: Xi
 
     contains
         !> Generate the scattering amplitudes
@@ -56,12 +44,6 @@ type lo_scattering_rates
         procedure :: destroy => sr_destroy
         !> Measure size in memory, in bytes
         procedure :: size_in_mem => sr_size_in_mem
-        !> Measure size in memory for isotopes, in bytes
-        procedure :: size_in_mem_iso
-        !> Measure size in memory for threephonon, in bytes
-        procedure :: size_in_mem_3ph
-        !> Measure size in memory for fourphonon, in bytes
-        procedure :: size_in_mem_4ph
 end type
 
 type lo_montecarlo_grid
@@ -163,11 +145,12 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     sr%nlocal_point = nlocal_point
     allocate(sr%q1(nlocal_point))
     allocate(sr%b1(nlocal_point))
-    if (opts%isotopescattering) allocate(sr%iso(nlocal_point))
-    if (opts%thirdorder) allocate(sr%threephonon(nlocal_point))
-    if (opts%fourthorder) allocate(sr%fourphonon(nlocal_point))
+    allocate(sr%Xi(nlocal_point, qp%n_full_point, dr%n_mode))
 
-    ! Let's attribute the q1/b1 indices to the rank
+    ! Let's set it to zero
+    sr%Xi = 0.0_r8
+
+    ! Let's attribute the q1/b1 indices to the ranks
     il = 0
     ctr = 0
     do q1=1, qp%n_irr_point
@@ -184,11 +167,30 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end do
     end do
 
+    memory_estimate: block
+        real(r8), dimension(mw%n) :: mb
+        integer :: nrow, ncol
+
+        nrow = qp%n_irr_point * dr%n_mode
+        ncol = qp%n_full_point * dr%n_mode
+
+        mb(mw%r+1) = real(sr%size_in_mem(), r8) / 1024_r8**2
+        call mw%allreduce('sum', mb)
+        if (mw%talk) then
+            write(*, *) ''
+            write(*, *) 'Lower bound estimate of the memory usage :'
+            write(*, "(1X,A31,':',1X,I10,A2,I10)") 'size of the scattering matrix', nrow, 'x', ncol
+            write(*, "(1X,A31,':',4(1X,A20))") 'Memory usage (MiB)', 'total', 'avg per rank', 'max', 'min'
+            write(*, "(1X,A31,1X,4(1X,F20.6))") '', sum(mb), sum(mb) / mw%n, maxval(mb), minval(mb)
+            write(*, *) ''
+        end if
+    end block memory_estimate
+
     scatt: block
         !> Buffer to contains the linewidth
         real(r8), dimension(:, :), allocatable :: buf_lw
         !> Buffer for the linewidth of the local point
-        real(r8) :: buf, f0
+        real(r8) :: buf, f0, velnorm
         integer :: j, q1, b1, b2
 
         call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -206,6 +208,13 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             end if
             if (opts%fourthorder) then
                 call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, buf, mw, mem)
+            end if
+            ! We end with the boundary scattering
+            if (opts%mfp_max .gt. 0.0_r8) then
+                velnorm = norm2(dr%iq(sr%q1(il))%vel(:, sr%b1(il)))
+                if (velnorm .gt. lo_phonongroupveltol) then
+                    buf = buf + velnorm / opts%mfp_max
+                end if
             end if
             ! Now we can update the linewidth for this mode
             buf_lw(sr%q1(il), sr%b1(il)) = buf
@@ -232,78 +241,12 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
                     b2 = dr%iq(q1)%degenmode(j, b1)
                     buf_lw(q1, b2) = f0
                 end do
-                ! Now we can se the linewidth
+                ! Now we can set the linewidth
                 dr%iq(q1)%linewidth(b1) = buf_lw(q1, b1)
             end do
         end do
         call mem%deallocate(buf_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
     end block scatt
-
-    diagnostic: block
-        integer(i8) :: bufiso, buf3ph, buf4ph
-        real(r8) :: ratioiso, ratio3ph, ratio4ph
-        real(r8), dimension(mw%n) :: mb, mbi, mb3, mb4
-
-        bufiso = 0
-        buf3ph = 0
-        buf4ph = 0
-        do il=1, sr%nlocal_point
-            if (opts%isotopescattering) bufiso = bufiso + sr%iso(il)%n
-            if (opts%thirdorder) buf3ph = buf3ph + sr%threephonon(il)%n
-            if (opts%fourthorder) buf4ph = buf4ph + sr%fourphonon(il)%n
-        end do
-        if (opts%isotopescattering) call mw%allreduce('sum', bufiso)
-        if (opts%thirdorder) call mw%allreduce('sum', buf3ph)
-        if (opts%fourthorder) call mw%allreduce('sum', buf4ph)
-
-        ! We do it in steps otherwise the numbers are too big and it prints garbage
-        ratioiso = real(bufiso, r8) / real(qp%n_irr_point, r8)
-        ratioiso = ratioiso / real(qp%n_full_point, r8)
-        ratioiso = ratioiso / real(dr%n_mode**2, r8)
-        ratioiso = ratioiso * 100.0_r8
-
-        ratio3ph = real(buf3ph, r8) / real(qp%n_irr_point, r8)
-        ratio3ph = ratio3ph / real(qp%n_full_point)
-        ratio3ph = ratio3ph / real(dr%n_mode**3)
-        ratio3ph = ratio3ph * 100.0_r8
-
-        ratio4ph = real(buf4ph, r8) / real(qp%n_irr_point, r8)
-        ratio4ph = ratio4ph / real(qp%n_full_point, r8)
-        ratio4ph = ratio4ph / real(qp%n_full_point, r8)
-        ratio4ph = ratio4ph / real(dr%n_mode**4)
-        ratio4ph = ratio4ph * 100.0_r8
-
-        ! Compute the size of everything
-        mb = 0.0_r8
-        mbi = 0.0_r8
-        mb3 = 0.0_r8
-        mb4 = 0.0_r8
-        mb(mw%r+1) = real(sr%size_in_mem(), r8) / 1024_r8**2
-        mbi(mw%r+1) = real(sr%size_in_mem_iso(), r8) / 1024_r8**2
-        mb3(mw%r+1) = real(sr%size_in_mem_3ph(), r8) / 1024_r8**2
-        mb4(mw%r+1) = real(sr%size_in_mem_4ph(), r8) / 1024_r8**2
-        call mw%allreduce('sum', mb)
-        call mw%allreduce('sum', mbi)
-        call mw%allreduce('sum', mb3)
-        call mw%allreduce('sum', mb4)
-
-        if (mw%talk) then
-            write(*, *) ''
-            write(*, *) '     number of isotope scattering matrix elements', bufiso
-            write(*, *) '                                            % iso', ratioiso
-            write(*, *) ' number of threephonon scattering matrix elements', buf3ph
-            write(*, *) '                                            % 3ph', ratio3ph
-            write(*, *) '  number of fourphonon scattering matrix elements', buf4ph
-            write(*, *) '                                            % 4ph', ratio4ph
-            write(*, *) ''
-            write(*, "(1X,A30,':',4(1X,A20))") 'Memory usage (MiB)', 'total', 'avg per rank', 'max', 'min'
-            write(*, "(1X,A30,':',4(1X,F20.6))") 'isotopes', sum(mbi), sum(mbi) / mw%n, maxval(mbi), minval(mbi)
-            write(*, "(1X,A30,':',4(1X,F20.6))") '3ph', sum(mb3), sum(mb3) / mw%n, maxval(mb3), minval(mb3)
-            write(*, "(1X,A30,':',4(1X,F20.6))") '4ph', sum(mb4), sum(mb4) / mw%n, maxval(mb4), minval(mb4)
-            write(*, "(1X,A30,':',4(1X,F20.6))") 'total', sum(mb), sum(mb) / mw%n, maxval(mb), minval(mb)
-        end if
-    end block diagnostic
 end subroutine
 
 
@@ -352,32 +295,7 @@ subroutine sr_destroy(sr)
 
     integer :: il
 
-    do il=1, sr%nlocal_point
-        if (allocated(sr%iso)) then
-            deallocate(sr%iso(il)%psisq)
-            deallocate(sr%iso(il)%q2)
-            deallocate(sr%iso(il)%b2)
-        end if
-        if (allocated(sr%threephonon)) then
-            deallocate(sr%threephonon(il)%psisq)
-            deallocate(sr%threephonon(il)%q2)
-            deallocate(sr%threephonon(il)%q3)
-            deallocate(sr%threephonon(il)%b2)
-            deallocate(sr%threephonon(il)%b3)
-        end if
-        if (allocated(sr%fourphonon)) then
-            deallocate(sr%fourphonon(il)%psisq)
-            deallocate(sr%fourphonon(il)%q2)
-            deallocate(sr%fourphonon(il)%q3)
-            deallocate(sr%fourphonon(il)%q4)
-            deallocate(sr%fourphonon(il)%b2)
-            deallocate(sr%fourphonon(il)%b3)
-            deallocate(sr%fourphonon(il)%b4)
-        end if
-    end do
-    if (allocated(sr%iso)) deallocate(sr%iso)
-    if (allocated(sr%threephonon)) deallocate(sr%threephonon)
-    if (allocated(sr%fourphonon)) deallocate(sr%fourphonon)
+    if (allocated(sr%Xi)) deallocate(sr%Xi)
     if (allocated(sr%q1)) deallocate(sr%q1)
     if (allocated(sr%b1)) deallocate(sr%b1)
     if (allocated(sr%be)) deallocate(sr%be)
@@ -394,81 +312,14 @@ function sr_size_in_mem(sr) result(mem)
 
     integer :: il
 
-    mem = 0
-    mem = mem + storage_size(sr)
+    mem = storage_size(sr)
     if (allocated(sr%q1)) mem = mem + storage_size(sr%q1) * size(sr%q1)
     if (allocated(sr%b1)) mem = mem + storage_size(sr%b1) * size(sr%b1)
     if (allocated(sr%be)) mem = mem + storage_size(sr%be) * size(sr%be)
     if (allocated(sr%sigma_q)) mem = mem + storage_size(sr%sigma_q) * size(sr%sigma_q)
-    mem = mem / 8
-    if (allocated(sr%iso)) mem = mem + sr%size_in_mem_iso()
-    if (allocated(sr%threephonon)) mem = mem + sr%size_in_mem_3ph()
-    if (allocated(sr%fourphonon)) mem = mem + sr%size_in_mem_4ph()
-end function
-
-function size_in_mem_iso(sr) result(mem)
-    !> The scattering amplitudes
-    class(lo_scattering_rates), intent(inout) :: sr
-    !> size in memory, bytes
-    integer(i8) :: mem
-
-    integer :: il
-
-    mem = 0
-    if (allocated(sr%iso)) then
-        do il=1, sr%nlocal_point
-            mem = mem + storage_size(sr%iso(il)%psisq) * size(sr%iso(il)%psisq)
-            mem = mem + storage_size(sr%iso(il)%q2) * size(sr%iso(il)%q2)
-            mem = mem + storage_size(sr%iso(il)%b2) * size(sr%iso(il)%b2)
-        end do
-    end if
+    if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi) * size(sr%Xi)
     mem = mem / 8
 end function
-
-function size_in_mem_3ph(sr) result(mem)
-    !> The scattering amplitudes
-    class(lo_scattering_rates), intent(inout) :: sr
-    !> size in memory, bytes
-    integer(i8) :: mem
-
-    integer :: il
-
-    mem = 0
-    if (allocated(sr%threephonon)) then
-        do il=1, sr%nlocal_point
-            mem = mem + storage_size(sr%threephonon(il)%psisq) * size(sr%threephonon(il)%psisq)
-            mem = mem + storage_size(sr%threephonon(il)%q2) * size(sr%threephonon(il)%q2)
-            mem = mem + storage_size(sr%threephonon(il)%q3) * size(sr%threephonon(il)%q3)
-            mem = mem + storage_size(sr%threephonon(il)%b2) * size(sr%threephonon(il)%b2)
-            mem = mem + storage_size(sr%threephonon(il)%b3) * size(sr%threephonon(il)%b3)
-        end do
-    end if
-    mem = mem / 8
-end function
-
-function size_in_mem_4ph(sr) result(mem)
-    !> The scattering amplitudes
-    class(lo_scattering_rates), intent(inout) :: sr
-    !> size in memory, bytes
-    integer(i8) :: mem
-
-    integer :: il
-
-    mem = 0
-    if (allocated(sr%fourphonon)) then
-        do il=1, sr%nlocal_point
-            mem = mem + storage_size(sr%fourphonon(il)%psisq) * size(sr%fourphonon(il)%psisq)
-            mem = mem + storage_size(sr%fourphonon(il)%q2) * size(sr%fourphonon(il)%q2)
-            mem = mem + storage_size(sr%fourphonon(il)%q3) * size(sr%fourphonon(il)%q3)
-            mem = mem + storage_size(sr%fourphonon(il)%q4) * size(sr%fourphonon(il)%q4)
-            mem = mem + storage_size(sr%fourphonon(il)%b2) * size(sr%fourphonon(il)%b2)
-            mem = mem + storage_size(sr%fourphonon(il)%b3) * size(sr%fourphonon(il)%b3)
-            mem = mem + storage_size(sr%fourphonon(il)%b4) * size(sr%fourphonon(il)%b4)
-        end do
-    end if
-    mem = mem / 8
-end function
-
 
 subroutine initialize_montecarlo_grid(mcg, full_dims, mc_dims)
     !> The monte carlo grid

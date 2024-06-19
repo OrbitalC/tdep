@@ -20,39 +20,18 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    ! Isotope prefactor
-    ! real(r8), parameter :: isotope_prefactor = lo_pi * 0.5_r8
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
-    real(r8) :: om1, om2, sig1, sig2, sigma, psisq, prefactor
+    real(r8) :: om1, om2, sig1, sig2, sigma, psisq, prefactor, f0
     ! Integers for do loops
     integer :: q1, b1, q2, b2, i, niso
 
     q1 = sr%q1(il)
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
-
-    niso = 0
-    do q2=1, qp%n_full_point
-        do b2=1, dr%n_mode
-            om2 = dr%aq(q2)%omega(b2)
-            if (om2 .lt. lo_freqtol) cycle
-
-            sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) niso = niso + 1
-        end do
-    end do
-
-    sr%iso(il)%n = niso
-    allocate(sr%iso(il)%psisq(niso))
-    allocate(sr%iso(il)%q2(niso))
-    allocate(sr%iso(il)%b2(niso))
-
-    om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
-    i = 0
     do q2=1, qp%n_full_point
         prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
         do b2=1, dr%n_mode
@@ -66,11 +45,9 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
                 psisq = isotope_scattering_strength(uc, egviso) * prefactor
 
-                sr%iso(il)%q2(i) = q2
-                sr%iso(il)%b2(i) = b2
-                sr%iso(il)%psisq(i) = psisq
-
-                g0 = g0 + psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
+                f0 = psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
+                g0 = g0 + f0
+                sr%Xi(il, q2, b2) = sr%Xi(il, q2, b2) + f0 * om2 / om1
             end if
         end do
     end do

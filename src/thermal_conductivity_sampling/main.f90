@@ -19,7 +19,6 @@ use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, compute_qs, &
                  symmetrize_kappa
 use scattering, only: lo_scattering_rates
-use linewidths, only: compute_linewidths
 
 implicit none
 ! Standard from libolle
@@ -38,7 +37,7 @@ type(lo_scattering_rates) :: sr
 ! Small stuff
 real(r8), dimension(:, :), allocatable :: thermal_cond
 ! timers
-real(r8) :: timer_init, timer_scatt, timer_kappa, timer_lw, tt0
+real(r8) :: timer_init, timer_scatt, timer_kappa, tt0
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
@@ -159,15 +158,6 @@ scatters: block
     timer_scatt = walltime() - timer_scatt
 
     if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
-    if (mw%talk) then
-        write (*, *) ''
-        write (*, *) 'Calculating linewidths'
-    end if
-    timer_lw = walltime()
-!   call compute_linewidths(qp, dr, sr, opts, mw, mem)
-
-    timer_lw = walltime() - timer_lw
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_lw, ' s'
 end block scatters
 
 kappa: block
@@ -272,12 +262,11 @@ finalize_and_write: block
         write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
         write (*, '(1X,A41,A46)') 'Sampling method for scattering : ', 'Z. Guo et al., npj Comput Matter 10, 31 (2024)'
 
-        t0 = timer_init + timer_lw + timer_scatt + timer_kappa
+        t0 = timer_init + timer_scatt + timer_kappa
         write (*, *) ' '
         write (*, *) 'Timings:'
         write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '    scattering computation:', timer_scatt, ' s, ', real(timer_scatt*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '                linewidths:', timer_lw, ' s, ', real(timer_lw*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '                     kappa:', timer_kappa, ' s, ', real(timer_kappa*100/tt0), '%'
         write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
     end if

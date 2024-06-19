@@ -110,7 +110,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
         do b1=1, dr%n_mode
             om1 = dr%iq(q1)%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
-            norm_sf(b1) = integrate_spectralfunction(q1, b1, b1, om1, om1, temperature, ls, tol, .false.)
+            norm_sf(b1) = integrate_spectralfunction(q1, b1, b1, om1, om1, temperature, ls, 1e-8_r8, .false.)
         end do
 
         !> Then we get the generalized eigenvectors
