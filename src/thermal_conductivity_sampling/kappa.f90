@@ -12,7 +12,7 @@ use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix, &
                                   lo_expandoperation_pair
-use type_blas_lapack_wrappers, only: lo_dgelss, lo_gemm
+use type_blas_lapack_wrappers, only: lo_gemm, lo_gemv
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
 use scattering, only: lo_scattering_rates
@@ -391,7 +391,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    real(r8), dimension(:, :, :), allocatable :: Fnb, Fbb
+    real(r8), dimension(:, :, :), allocatable :: Fnb
+    real(r8), dimension(:, :), allocatable :: Fbb
     real(r8), dimension(3, 3) :: kappa
     real(r8), dimension(niter) :: scfcheck
     real(r8) :: mixingparameter
@@ -402,7 +403,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         real(r8), dimension(3, 3) :: m0
         mixingparameter = 0.95_r8
         allocate (Fnb(3, dr%n_mode, dr%n_irr_qpoint))
-        allocate (Fbb(3, dr%n_mode, dr%n_full_qpoint))
+        allocate (Fbb(3, dr%n_mode * dr%n_full_qpoint))
         Fnb = 0.0_r8
         Fbb = 0.0_r8
         scfcheck = 0.0_r8
@@ -416,7 +417,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
         ! get the Fn values all across the BZ
         foldout: block
             real(r8), dimension(3) :: v
-            integer :: iq, jq, iop, b1
+            integer :: iq, jq, iop, b1, i2
 
             Fbb = 0.0_r8
             do iq = 1, qp%n_full_point
@@ -424,12 +425,13 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                 iop = qp%ap(iq)%operation_from_irreducible
                 jq = qp%ap(iq)%irreducible_index
                 do b1 = 1, dr%n_mode
+                    i2 = (iq - 1) * dr%n_mode + b1
                     if (iop .gt. 0) then
                         v = lo_operate_on_vector(uc%sym%op(iop), dr%iq(jq)%Fn(:, b1), reciprocal=.true.)
-                        Fbb(:, b1, iq) = v
+                        Fbb(:, i2) = v
                     else
                         v = -lo_operate_on_vector(uc%sym%op(abs(iop)), dr%iq(jq)%Fn(:, b1), reciprocal=.true.)
-                        Fbb(:, b1, iq) = v
+                        Fbb(:, i2) = v
                     end if
                 end do
             end do
@@ -496,7 +498,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
                 iter, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), scfcheck(iter)
 
             ! If we had too many iterations I want to adjust the mixing a little
-            if (iter .gt. 15 .and. mixingparameter .gt. 0.10) then
+            if (iter .gt. 15 .and. mixingparameter .gt. 0.50) then
                 mixingparameter = mixingparameter*0.98_r8
             end if
         end block addandcheck
@@ -518,26 +520,26 @@ subroutine apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
     !> The starting Fn
-    real(r8), dimension(:, :, :), intent(in) :: Fbb
+    real(r8), dimension(:, :), intent(in) :: Fbb
     !> The Fn on which we applied the scattering matrix
     real(r8), dimension(:, :, :), intent(out) :: Fnb
 
+    real(r8), dimension(:, :), allocatable :: buf
     real(r8), dimension(3) :: v0
-    integer :: il, b1, b2, q1, q2
+    integer :: il, b1, b2, q1, q2, i2, a
+
+    allocate(buf(3, sr%nlocal_point))
 
     Fnb = 0.0_r8
+    ! First we do matrix multiplication, using BLAS
+    do a=1, 3
+        call lo_gemv(sr%Xi, Fbb(a, :), buf(a, :))
+    end do
+    ! Then we distribute
     do il=1, sr%nlocal_point
         q1 = sr%q1(il)
         b1 = sr%b1(il)
-        v0 = 0.0_r8
-        do q2=1, qp%n_full_point
-            do b2 = 1,dr%n_mode
-                if (dr%aq(q2)%omega(b2) .lt. lo_freqtol) cycle
-
-                v0 = v0 + sr%Xi(il, q2, b2) * Fbb(:, b2, q2)
-            end do
-        end do
-        Fnb(:, b1, q1) = Fnb(:, b1, q1) - v0 / dr%iq(q1)%qs(b1)
+        Fnb(:, b1, q1) = Fnb(:, b1, q1) - buf(:, il) / dr%iq(q1)%qs(b1)
     end do
     call mw%allreduce('sum', Fnb)
 end subroutine

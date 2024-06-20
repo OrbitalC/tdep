@@ -35,7 +35,8 @@ type lo_scattering_rates
     !> Let's precompute the Bose-Einstein distribution and adaptive smearing
     real(r8), dimension(:, :), allocatable :: be, sigma_q
     !> The scattering matrix
-    real(r8), dimension(:, :, :), allocatable :: Xi
+   !real(r8), dimension(:, :, :), allocatable :: Xi
+    real(r8), dimension(:, :), allocatable :: Xi
 
     contains
         !> Generate the scattering amplitudes
@@ -145,7 +146,8 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     sr%nlocal_point = nlocal_point
     allocate(sr%q1(nlocal_point))
     allocate(sr%b1(nlocal_point))
-    allocate(sr%Xi(nlocal_point, qp%n_full_point, dr%n_mode))
+   !allocate(sr%Xi(nlocal_point, qp%n_full_point, dr%n_mode))
+    allocate(sr%Xi(nlocal_point, qp%n_full_point * dr%n_mode))
 
     ! Let's set it to zero
     sr%Xi = 0.0_r8

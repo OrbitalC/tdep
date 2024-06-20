@@ -33,15 +33,15 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
     !> The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
     !> The gaussian integration width
-    real(r8) :: sig1, sig2, sig3, sigma
+    real(r8) :: sigma
     !> Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, psisq, prefactor, mle_ratio, pref_sigma, f0
+    real(r8) :: om1, om2, om3, plf, psisq, prefactor, pref_sigma, f0
     !> The bose-einstein distribution for the modes
     real(r8) :: n2, n3
     !> The complex threephonon matrix element
     complex(r8) :: c0
     !> Integers for do loops
-    integer :: i, qi, q1, q2, q3, b1, b2, b3
+    integer :: qi, q1, q2, q3, b1, b2, b3, i2, i3
     !> Is the triplet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
@@ -60,7 +60,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
-    sig1 = sr%sigma_q(q1, b1)
     pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
 
     call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -82,7 +81,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
             if (om2 .lt. lo_freqtol) cycle
 
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
-            sig2 = sr%sigma_q(qp%ap(q2)%irreducible_index, b2)
             prefactor = threephonon_prefactor * mcg%weight * mult
 
             evp1 = 0.0_r8
@@ -92,9 +90,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
                 if (om3 .lt. lo_freqtol) cycle
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                sig3 = sr%sigma_q(qp%ap(q3)%irreducible_index, b3)
-               !sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
-               !sigma = sqrt(sig2**2 + sig3**2)
                 sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
                 sigma = min(1.0_r8, sigma)
 
@@ -113,25 +108,27 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
                     n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
                     n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
 
+                    i2 = (q2 - 1) * dr%n_mode + b2
+                    i3 = (q3 - 1) * dr%n_mode + b3
                     f0 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
                     g0 = g0 + f0
-                    sr%Xi(il, q2, b2) = sr%Xi(il, q2, b2) + 2.0_r8 * f0 * om2 / om1
-                    sr%Xi(il, q3, b3) = sr%Xi(il, q3, b3) + 2.0_r8 * f0 * om3 / om1
+                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
+                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
 
                     f0 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
                     g0 = g0 - f0
-                    sr%Xi(il, q2, b2) = sr%Xi(il, q2, b2) - 2.0_r8 * f0 * om2 / om1
-                    sr%Xi(il, q3, b3) = sr%Xi(il, q3, b3) - 2.0_r8 * f0 * om3 / om1
+                    sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
+                    sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
 
                     f0 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
                     g0 = g0 + f0
-                    sr%Xi(il, q2, b2) = sr%Xi(il, q2, b2) + 2.0_r8 * f0 * om2 / om1
-                    sr%Xi(il, q3, b3) = sr%Xi(il, q3, b3) + 2.0_r8 * f0 * om3 / om1
+                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
+                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
 
                     f0 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
                     g0 = g0 - f0
-                    sr%Xi(il, q2, b2) = sr%Xi(il, q2, b2) - 2.0_r8 * f0 * om2 / om1
-                    sr%Xi(il, q3, b3) = sr%Xi(il, q3, b3) - 2.0_r8 * f0 * om3 / om1
+                    sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
+                    sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
                 end if
             end do
         end do
