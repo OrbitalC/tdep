@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module type_forceconstant_fourthorder
-use konstanter, only: flyt, lo_huge, lo_hugeint, lo_tol, lo_sqtol, lo_status, lo_bohr_to_A, lo_forceconstant_4th_HartreeBohr_to_eVA, &
-                      lo_forceconstant_4th_eVa_to_HartreeBohr, lo_exitcode_symmetry
+use konstanter, only: r8, flyt, lo_huge, lo_hugeint, lo_tol, lo_sqtol, lo_status, lo_bohr_to_A, lo_forceconstant_4th_HartreeBohr_to_eVA, &
+                      lo_forceconstant_4th_eVa_to_HartreeBohr, lo_exitcode_symmetry, lo_twopi
 use gottochblandat, only: open_file, lo_sqnorm, lo_chop, lo_stop_gracefully
 use type_crystalstructure, only: lo_crystalstructure
 use type_distancetable, only: lo_distancetable
@@ -59,6 +59,8 @@ contains
     procedure :: forces
     !> four-phonon scattering amplitude
     procedure :: scatteringamplitude
+    !> pre-transform to q-space
+    procedure :: pretransform
     !> destroy it
     procedure :: unallocate
 #ifdef AGRESSIVE_SANITY
@@ -465,5 +467,55 @@ complex(flyt) function scatteringamplitude(fc, omega, egv, q2, q3, q4)
     end do
     scatteringamplitude = c0/omegaprod
 end function
+
+!> Do half the transform to q-space
+pure subroutine pretransform(fcf, q2, q3, q4, ptf)
+    !> Fourth order forceconstant
+    class(lo_forceconstant_fourthorder), intent(in) :: fcf
+    !> The q-vectors, without the 2pi
+    real(r8), dimension(3), intent(in) :: q2, q3, q4
+    !> Flattened, pre-transformed matrix element
+    complex(r8), dimension(:), intent(out) :: ptf
+
+    integer :: i, j, k, l, m
+
+    complex(r8) :: expiqr
+    real(r8), dimension(3) :: rv2, rv3, rv4
+    real(r8) :: iqr
+    integer :: a1, a2, a3, a4, ia, ib, ic, id, q, nb
+
+    nb = fcf%na*3
+    ptf = 0.0_r8
+    do a1 = 1, fcf%na
+    do q = 1, fcf%atom(a1)%n
+        a2 = fcf%atom(a1)%quartet(q)%i2
+        a3 = fcf%atom(a1)%quartet(q)%i3
+        a4 = fcf%atom(a1)%quartet(q)%i4
+
+        rv2 = fcf%atom(a1)%quartet(q)%lv2
+        rv3 = fcf%atom(a1)%quartet(q)%lv3
+        rv4 = fcf%atom(a1)%quartet(q)%lv4
+
+        iqr = dot_product(q2, rv2) + dot_product(q3, rv3) + dot_product(q4, rv4)
+        iqr = -iqr*lo_twopi
+        expiqr = cmplx(cos(iqr), sin(iqr), r8)
+        do l = 1, 3
+        do k = 1, 3
+        do j = 1, 3
+        do i = 1, 3
+            ia = (a1 - 1)*3 + i
+            ib = (a2 - 1)*3 + j
+            ic = (a3 - 1)*3 + k
+            id = (a4 - 1)*3 + l
+            ! Now for the grand flattening scheme, consistent with the zgeru operations.
+            m = (ia - 1)*nb*nb*nb + (ib - 1)*nb*nb + (ic - 1)*nb + id
+            ptf(m) = ptf(m) + fcf%atom(a1)%quartet(q)%mwm(i, j, k, l)*expiqr
+        end do
+        end do
+        end do
+        end do
+    end do
+    end do
+end subroutine
 
 end module

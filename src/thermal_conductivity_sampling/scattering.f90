@@ -1,6 +1,6 @@
 #include "precompilerdefinitions"
 module scattering
-use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_twopi, lo_tol, &
+use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
                       lo_phonongroupveltol
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
@@ -12,6 +12,8 @@ use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_fft_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use lo_randomnumbers, only: lo_mersennetwister
+use lo_fftgrid_helper, only: lo_montecarlo_grid, singlet_to_triplet, triplet_to_singlet, &
+                             fft_third_grid_index, fft_fourth_grid_index
 
 use options, only: lo_opts
 
@@ -35,7 +37,6 @@ type lo_scattering_rates
     !> Let's precompute the Bose-Einstein distribution and adaptive smearing
     real(r8), dimension(:, :), allocatable :: be, sigma_q
     !> The scattering matrix
-   !real(r8), dimension(:, :, :), allocatable :: Xi
     real(r8), dimension(:, :), allocatable :: Xi
 
     contains
@@ -45,24 +46,6 @@ type lo_scattering_rates
         procedure :: destroy => sr_destroy
         !> Measure size in memory, in bytes
         procedure :: size_in_mem => sr_size_in_mem
-end type
-
-type lo_montecarlo_grid
-    !> The size of the grid
-    integer :: npoints
-    !> The weight of each point on the monte-carlo grid
-    real(r8) :: weight
-    !> The dimensions of the grid
-    integer, dimension(3) :: mc_dims
-    !> The dimensions of the full grid
-    integer, dimension(3) :: full_dims
-    !> The ratio between the full and mc grids
-    real(r8), dimension(3) :: ratio
-
-contains
-    procedure :: initialize => initialize_montecarlo_grid
-    procedure :: mc_point_to_full
-    procedure :: generate_grid
 end type
 
 contains
@@ -146,7 +129,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     sr%nlocal_point = nlocal_point
     allocate(sr%q1(nlocal_point))
     allocate(sr%b1(nlocal_point))
-   !allocate(sr%Xi(nlocal_point, qp%n_full_point, dr%n_mode))
     allocate(sr%Xi(nlocal_point, qp%n_full_point * dr%n_mode))
 
     ! Let's set it to zero
@@ -256,41 +238,6 @@ end subroutine
 #include "scattering_threephonon.f90"
 #include "scattering_fourphonon.f90"
 
-!> convert a linear index to a triplet
-pure function singlet_to_triplet(l, ny, nz) result(gi)
-    !> linear index
-    integer, intent(in) :: l
-    !> second dimension
-    integer, intent(in) :: ny
-    !> third dimension
-    integer, intent(in) :: nz
-    !> grid-index
-    integer, dimension(3) :: gi
-
-    integer :: i, j, k
-
-    k = mod(l, nz)
-    if (k .eq. 0) k = nz
-    j = mod((l - k)/nz, ny) + 1
-    i = (l - k - (j - 1)*nz)/(nz*ny) + 1
-    gi = [i, j, k]
-end function
-
-!> convert a triplet index to a singlet
-pure function triplet_to_singlet(gi, ny, nz) result(l)
-    !> grid-index
-    integer, dimension(3), intent(in) :: gi
-    !> second dimension
-    integer, intent(in) :: ny
-    !> third dimension
-    integer, intent(in) :: nz
-    !> linear index
-    integer :: l
-
-    l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
-end function
-
-
 subroutine sr_destroy(sr)
     !> The scattering amplitudes
     class(lo_scattering_rates), intent(inout) :: sr
@@ -322,68 +269,4 @@ function sr_size_in_mem(sr) result(mem)
     if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi) * size(sr%Xi)
     mem = mem / 8
 end function
-
-subroutine initialize_montecarlo_grid(mcg, full_dims, mc_dims)
-    !> The monte carlo grid
-    class(lo_montecarlo_grid), intent(out) :: mcg
-    !> The dimensions of the full grid
-    integer, dimension(3), intent(in) :: full_dims
-    !> The dimensions of the monte carlo grid
-    integer, dimension(3), intent(in) :: mc_dims
-
-    !> Some integers for the do loop
-    integer :: i
-
-    mcg%full_dims = full_dims
-    do i=1, 3
-        mcg%mc_dims(i) = min(mc_dims(i), mcg%full_dims(i))
-        mcg%ratio(i) = real(mcg%full_dims(i), r8) / real(mcg%mc_dims(i), r8)
-    end do
-    mcg%npoints = mcg%mc_dims(1) * mcg%mc_dims(2) * mcg%mc_dims(3)
-    mcg%weight = 1.0_r8 / real(mcg%npoints, r8)
-end subroutine
-
-function mc_point_to_full(mcg, imc, rng) result(ifull)
-    !> The monte carlo grid
-    class(lo_montecarlo_grid), intent(in) :: mcg
-    !> The point on the monte-carlo grid
-    integer, intent(in) :: imc
-    ! The random number generator
-    type(lo_mersennetwister), intent(inout) :: rng
-    !> The point on the full grid
-    integer :: ifull
-    !> The triplets of point on the monte-carlo and full grids
-    integer, dimension(3) :: gi_mc, gi_full
-
-    gi_mc = singlet_to_triplet(imc, mcg%mc_dims(2), mcg%mc_dims(3))
-    ! This way of generating the number makes it work even if the ratio is not an integer
-    gi_full(1) = ceiling((real(gi_mc(1), r8) - 1.0_r8) * mcg%ratio(1) + rng%rnd_real() * mcg%ratio(1))
-    gi_full(2) = ceiling((real(gi_mc(2), r8) - 1.0_r8) * mcg%ratio(2) + rng%rnd_real() * mcg%ratio(2))
-    gi_full(3) = ceiling((real(gi_mc(3), r8) - 1.0_r8) * mcg%ratio(3) + rng%rnd_real() * mcg%ratio(3))
-    ifull = triplet_to_singlet(gi_full, mcg%full_dims(2), mcg%full_dims(3))
-end function
-
-subroutine generate_grid(mcg, qgrid, rng)
-    !> The monte carlo grid
-    class(lo_montecarlo_grid), intent(in) :: mcg
-    ! The random number generator
-    type(lo_mersennetwister), intent(inout) :: rng
-    !> The grid to be generated
-    integer, dimension(:), intent(out) :: qgrid
-
-    integer :: qi, qprev, qtest
-
-    ! To improve convergence, we avoid repeating points in the integration grid
-    qgrid(1) = mcg%mc_point_to_full(1, rng)
-    qprev = qgrid(1)
-    qtest = qgrid(1)
-    do qi=2, mcg%npoints
-        do while(qtest .eq. qprev)
-            qtest = mcg%mc_point_to_full(qi, rng)
-        end do
-        qgrid(qi) = qtest
-        qprev = qtest
-    end do
-end subroutine
-
 end module

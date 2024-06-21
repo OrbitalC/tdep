@@ -507,7 +507,6 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
     deallocate(Fbb)
 end subroutine
 
-
 subroutine apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
     !> integration weights
     type(lo_scattering_rates), intent(inout) :: sr

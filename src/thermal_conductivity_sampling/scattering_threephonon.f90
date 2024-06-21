@@ -76,6 +76,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         call pretransform_phi3(fct, qv2, qv3, ptf)
+        ! call fct%pretransform(qv2, qv3, ptf)
+        ! ptf = ptf * 6.0_r8
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -142,37 +144,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
     call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
-
-
-!> returns the index on the grid that gives q3=-q1-q2
-pure function fft_third_grid_index(i1, i2, dims) result(i3)
-    !> index to q1
-    integer, intent(in) :: i1
-    !> index to q2
-    integer, intent(in) :: i2
-    !> dimensions of the grid
-    integer, dimension(3), intent(in) :: dims
-    !> index to q3
-    integer :: i3
-
-    integer, dimension(3) :: gi1, gi2, gi3
-    integer :: l, k
-
-    ! Convert triplet to singlet
-    gi1 = singlet_to_triplet(i1, dims(2), dims(3))
-    gi2 = singlet_to_triplet(i2, dims(2), dims(3))
-    do l = 1, 3
-        gi3(l) = 3 - gi1(l) - gi2(l)
-    end do
-    do k = 1, 3
-    do l = 1, 3
-        if (gi3(l) .lt. 1) gi3(l) = gi3(l) + dims(l)
-        if (gi3(l) .gt. dims(l)) gi3(l) = gi3(l) - dims(l)
-    end do
-    end do
-    ! convert it back to a singlet
-    i3 = triplet_to_singlet(gi3, dims(2), dims(3))
-end function
 
 !> Get the Fourier transform of the third order matrix element
 subroutine pretransform_phi3(fct, q2, q3, ptf)

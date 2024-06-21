@@ -84,7 +84,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         qv4 = qp%ap(q4)%r
-        call pretransform_phi4(fcf, qv2, qv3, qv4, ptf)
+        call fcf%pretransform(qv2, qv3, qv4, ptf)
 
         prefactor = fourphonon_prefactor * mcg%weight**2 * mult
         do b2=1, dr%n_mode
@@ -194,91 +194,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
     call mem%deallocate(qgridfull1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
-
-
-!> returns the index on the grid that gives q4=-q3-q2-q1
-pure function fft_fourth_grid_index(i1, i2, i3, dims) result(i4)
-    !> index to q1
-    integer, intent(in) :: i1
-    !> index to q2
-    integer, intent(in) :: i2
-    !> index to q3
-    integer, intent(in) :: i3
-    !> dimensions of the grid
-    integer, dimension(3), intent(in) :: dims
-    !> index to q4
-    integer :: i4
-
-    integer, dimension(3) :: gi1, gi2, gi3, gi4
-    integer :: l, k
-    ! Convert triplet to singlet
-    gi1 = singlet_to_triplet(i1, dims(2), dims(3))
-    gi2 = singlet_to_triplet(i2, dims(2), dims(3))
-    gi3 = singlet_to_triplet(i3, dims(2), dims(3))
-    do l = 1, 3
-         gi4(l) = 4 - gi1(l) - gi2(l) - gi3(l)
-   end do
-   do k = 1, 3
-   do l = 1, 3
-       if (gi4(l) .lt. 1) gi4(l) = gi4(l) + dims(l)
-       if (gi4(l) .gt. dims(l)) gi4(l) = gi4(l) - dims(l)
-   end do
-   end do
-
-    ! convert it back to a singlet
-    i4 = triplet_to_singlet(gi4, dims(2), dims(3))
-end function
-
-!> Get the Fourier transform of the fourth order matrix element
-subroutine pretransform_phi4(fcf, q2, q3, q4, ptf)
-    !> third order forceconstant
-    type(lo_forceconstant_fourthorder), intent(in) :: fcf
-    !> q-vectors
-    real(r8), dimension(3), intent(in) :: q2, q3, q4
-    !> flattened, pretransformed matrix element
-    complex(r8), dimension(:), intent(out) :: ptf
-
-    integer :: i, j, k, l, m
-
-    complex(r8) :: expiqr
-    real(r8), dimension(3) :: rv2, rv3, rv4
-    real(r8) :: iqr
-    integer :: a1, a2, a3, a4, ia, ib, ic, id, q, nb
-
-    nb = fcf%na*3
-    ptf = 0.0_r8
-    do a1 = 1, fcf%na
-    do q = 1, fcf%atom(a1)%n
-        a2 = fcf%atom(a1)%quartet(q)%i2
-        a3 = fcf%atom(a1)%quartet(q)%i3
-        a4 = fcf%atom(a1)%quartet(q)%i4
-
-        rv2 = fcf%atom(a1)%quartet(q)%lv2
-        rv3 = fcf%atom(a1)%quartet(q)%lv3
-        rv4 = fcf%atom(a1)%quartet(q)%lv4
-
-        iqr = dot_product(q2, rv2) + dot_product(q3, rv3) + dot_product(q4, rv4)
-        iqr = -iqr*lo_twopi
-        expiqr = cmplx(cos(iqr), sin(iqr), r8)
-        do l = 1, 3
-        do k = 1, 3
-        do j = 1, 3
-        do i = 1, 3
-            ia = (a1 - 1)*3 + i
-            ib = (a2 - 1)*3 + j
-            ic = (a3 - 1)*3 + k
-            id = (a4 - 1)*3 + l
-            ! Now for the grand flattening scheme, consistent with the zgeru operations above.
-            m = (ia - 1)*nb*nb*nb + (ib - 1)*nb*nb + (ic - 1)*nb + id
-            ptf(m) = ptf(m) + fcf%atom(a1)%quartet(q)%mwm(i, j, k, l)*expiqr
-        end do
-        end do
-        end do
-        end do
-    end do
-    end do
-end subroutine
-
 
 subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     !> The qpoint mesh

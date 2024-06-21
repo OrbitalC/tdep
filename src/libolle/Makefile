@@ -55,6 +55,7 @@ $(OBJECT_PATH)lo_longrange_electrostatics_optz.o \
 $(OBJECT_PATH)lo_longrange_electrostatics_dynmat.o \
 $(OBJECT_PATH)lo_dielectric_interaction.o \
 $(OBJECT_PATH)lo_dielectric_interaction_matrixelements.o \
+$(OBJECT_PATH)lo_fftgrid_helper.o\
 $(OBJECT_PATH)quadratures_stencils.o \
 $(OBJECT_PATH)quadratic_programming.o \
 $(OBJECT_PATH)quadratic_programming_slvr.o \
@@ -317,6 +318,11 @@ $(OBJECT_PATH)lo_dielectric_interaction.o:\
 $(OBJECT_PATH)lo_dielectric_interaction_matrixelements.o:\
 	$(OBJECT_PATH)lo_dielectric_interaction.o
 	$(FC) $(FFLAGS) -c lo_dielectric_interaction_matrixelements.f90 -o $@
+
+$(OBJECT_PATH)lo_fftgrid_helper.o:\
+    $(OBJECT_PATH)konstanter.o\
+    $(OBJECT_PATH)lo_randomnumbers.o
+	$(FC) $(FFLAGS) -c lo_fftgrid_helper.f90 -o $@
 
 $(OBJECT_PATH)quadratures_stencils.o:\
     $(OBJECT_PATH)konstanter.o\
