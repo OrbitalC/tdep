@@ -114,8 +114,9 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                     n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                     n4p = n4 + 1.0_r8
 
-                    sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                    if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / lo_pi
+                    sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4))
+                    if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / sqrt(lo_pi)
+                    sigma = sigma * pref_sigma
                     if (abs(om1 + om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 - om2 - om4 - om3) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
