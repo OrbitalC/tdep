@@ -193,8 +193,7 @@ kappa: block
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
                        'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
-        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%bteniter, opts%btetol, &
-                           opts%isotopescattering, opts%thirdorder, opts%fourthorder, mw, mem)
+        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%bteniter, opts%btetol, mw, mem)
     end if
     call get_kappa(dr, qp, uc, opts%temperature, kappa)
     if (mw%talk) write(*, *) ''

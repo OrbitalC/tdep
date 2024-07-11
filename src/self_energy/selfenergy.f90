@@ -31,12 +31,16 @@ type lo_selfenergy
     real(r8), dimension(:, :, :), allocatable :: im_weight
     !> The frequency of the basis set
     real(r8), dimension(:), allocatable :: omega_n
+    !> The real part at omega->0
+    real(r8), dimension(:, :), allocatable :: re_static
     !> The max frequency
     real(r8) :: omega_max
     !> The width of each lorentzian in the basis set
     real(r8) :: width
     !> The number of basis elements
     integer :: nbasis
+    !> Were the IFC obtained with stochastic sampling ?
+    logical :: stochastic
 contains
     !> initialize the selfenergy
     procedure :: initialize => initialize_selfenergy
@@ -61,7 +65,7 @@ end type
 contains
 
 !> Initialize the self-energy type
-subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, mw, mem)
+subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, stochastic, mw, mem)
     !> The selfenergy
     class(lo_selfenergy), intent(out) :: ls
     !> The q-point mesh
@@ -74,6 +78,8 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, mw
     logical, intent(in) :: thirdorder
     !> Do we compute fourth order ?
     logical, intent(in) :: fourthorder
+    !> Where the IFC obtained with stochastic sampling ?
+    logical, intent(in) :: stochastic
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -96,12 +102,16 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, mw
         end do
     end do
 
+    ls%stochastic = stochastic
+
     ! First, let's allocate everything
     ls%nbasis = nbasis
     allocate(ls%im_weight(ls%nbasis, dr%n_mode, qp%n_irr_point))
     allocate(ls%omega_n(ls%nbasis))
+    allocate(ls%re_static(dr%n_mode, qp%n_irr_point))
     ls%im_weight = 0.0_r8
     ls%omega_n = 0.0_r8
+    ls%re_static = 0.0_r8
 
     ! Now, let's decide on a maximum frequency, this depends on the processes that we compute
     omega_max = -lo_huge
@@ -187,7 +197,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     ! Helper for Fourier transforms
     complex(r8), dimension(dr%n_mode**4) :: evp3
     !> To precompute the bose-einstein distribution and the adaptive smearing parameter
-    real(r8), dimension(:, :), allocatable :: bose_einstein, sigma_q
+    real(r8), dimension(:, :), allocatable :: bose_einstein
     ! The qpoints in cartesian coordinates
     real(r8), dimension(3) :: qv2, qv3, qv4
     ! The q-point grid dimension
@@ -197,7 +207,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> For the harmonic values
     real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
     !> For the scattering
-    real(r8) :: psisq, sigma, sig1, sig2, sig3, sig4, prefactor, plf1, plf2, plf3, plf4, pref_sigma
+    real(r8) :: psisq, sigma, prefactor, plf1, plf2, plf3, plf4, pref_sigma
     !> Integers for the do loops
     integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, qi, qj
     !> Integer for the parallelization
@@ -235,14 +245,11 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         call mem%allocate(qgridfull2, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     end if
 
-    ! Let's precompute some things to avoid repeated computation of sqrt and exp
+    ! Let's precompute the Bose-Einstein distribution since this will be used all over
     allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
-    allocate(sigma_q(qp%n_irr_point, dr%n_mode))
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             bose_einstein(q1, b1) = lo_planck(temperature, dr%iq(q1)%omega(b1))
-            sigma_q(q1, b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
-                                                dr%default_smearing(b1), 1.0_r8)
         end do
     end do
 
@@ -328,7 +335,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permutation symmetry
 
-                ! Here we check if the quartet can be reduced by symmetry
+                ! Here we check if the triplet can be reduced by symmetry
                 call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
                 if (isred) cycle
 
@@ -345,7 +352,6 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     ! We already get some harmonic values for this mode
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
-                    sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
                     ! Projection of the IFC on this mode
                     evp1 = 0.0_r8
@@ -357,12 +363,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         ! We already get some harmonic values for this mode
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
-                        sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
 
                         ! The smearing for the gaussian integration
-                        ! sigma = sqrt(sig2**2 + sig3**2)
                         sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-                        sigma = min(1.0_r8, sigma)
+                        if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / lo_pi
 
                         ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
@@ -400,7 +404,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 q3 = qgridfull2(qj)
                 if (q3 .lt. q2) cycle  ! This is for permutation
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
-                 if (q4 .lt. q3) cycle  ! This is for permutation
+                if (q4 .lt. q3) cycle  ! This is for permutation
 
                  ! Here we check if the quartet can be reduced by symmetry
                 call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
@@ -421,7 +425,6 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
                     n2p = n2 + 1.0_r8
-                    sig2 = sigma_q(qp%ap(q2)%irreducible_index, b2)
 
                     ! Projection of the IFC on this mode
                     evp1 = 0.0_r8
@@ -435,7 +438,6 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
                         n3p = n3 + 1.0_r8
-                        sig3 = sigma_q(qp%ap(q3)%irreducible_index, b3)
 
                         ! Projection of ths IFC on this mode
                         evp2 = 0.0_r8
@@ -449,12 +451,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
                             n4 = bose_einstein(qp%ap(q4)%irreducible_index, b4)
                             n4p = n4 + 1.0_r8
-                            sig4 = sigma_q(qp%ap(q4)%irreducible_index, b4)
 
                             ! The smearing for the gaussian integration
-                            ! sigma = sqrt(sig2**2 + sig3**2 + sig4**2)
                             sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                            sigma = min(1.0_r8, sigma)
+                            if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / lo_pi
 
                             ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8
@@ -540,6 +540,19 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
             end do
         end do
     end block fixdegen
+
+    ! Now we compute the static part of the self energy
+    realstatic: block
+        ! Buffer for the weights
+        real(r8), dimension(ls%nbasis) :: buf
+        integer :: iq, b1, j
+
+        do iq=1, qp%n_irr_point
+            do b1=1, dr%n_mode
+                ls%re_static(b1, iq) = ls%evaluate_real_selfenergy_onepoint(iq, b1, 0.0_r8)
+            end do
+        end do
+    end block realstatic
     ! And voila, we have our imaginary self-energy. Now we just have to find what to do with it
 end subroutine
 
@@ -565,6 +578,7 @@ subroutine write_selfenergy_to_hdf5(ls, input_id)
     call h5%store_data(ls%im_weight, h5%file_id, 'weight', enhet='unitless')
     call h5%store_data(ls%omega_n, h5%file_id, 'omega_n', enhet='atomic')
     call h5%store_data(ls%harm_freq, h5%file_id, 'harmonic_frequencies', enhet='atomic')
+    call h5%store_data(ls%re_static, h5%file_id, 'real_static', enhet='atomic')
 end subroutine
 
 !> Clean destruction of the self energy type
@@ -723,6 +737,7 @@ function evaluate_spectralfunction_onepoint(ls, q1, b1, a) result(res)
         f0 = realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
         se_real = se_real + f0 * ls%im_weight(n, b1, q1)
     end do
+    if (.not. ls%stochastic) se_real = se_real - ls%re_static(b1, q1)
     f0 = a**2 - om1**2 - 2.0_r8 * om1 * se_real
     f1 = 2.0_r8 * om1 * se_imag
     res = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
@@ -957,6 +972,6 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation / mult
+    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
 end subroutine
 end module

@@ -129,7 +129,7 @@ selfenergy: block
         write (*, *) 'Calculating self-energy'
     end if
     timer_se = walltime()
-    call ls%initialize(qp, dr, opts%nbasis, opts%thirdorder, opts%fourthorder, mw, mem)
+    call ls%initialize(qp, dr, opts%nbasis, opts%thirdorder, opts%fourthorder, opts%stochastic, mw, mem)
     call ls%compute(qp, dr, uc, fct, fcf, opts%temperature, opts%isotopescattering, &
                     opts%thirdorder, opts%fourthorder, opts%qg3ph, opts%qg4ph, mw, mem)
     timer_se = walltime() - timer_se

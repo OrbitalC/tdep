@@ -19,6 +19,7 @@ type lo_opts
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
     logical :: isotopescattering     !< use isotope scattering
+    logical :: stochastic = .false.  !< was the stochastic sampling used to compute the IFC ?
 
     ! Debugging things
     logical :: timereversal
@@ -74,6 +75,9 @@ subroutine parse(opts)
                  required=.false., act='store', def='1.0', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_readqmesh
+    call cli%add(switch='--stochastic', &
+                 help='Do not remove the static contribution to the self energy', &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
 
     call cli%add(switch='--temperature', &
                  help='Evaluate thermal conductivity at a single temperature.', &
@@ -136,6 +140,7 @@ subroutine parse(opts)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--nothirdorder', val=dumlog)
     opts%thirdorder = .not. dumlog
+    call cli%get(switch='--stochastic', val=opts%stochastic, error=lo_status)
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
     call cli%get(switch='--dospoints', val=opts%dospoints)
     call cli%get(switch='--readiso', val=opts%readiso)

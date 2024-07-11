@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
-                      lo_phonongroupveltol
+                      lo_phonongroupveltol, lo_tol
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -34,8 +34,8 @@ type lo_scattering_rates
     integer :: nlocal_point
     !> The list of qpoint and modes for this rank
     integer, dimension(:), allocatable :: q1, b1
-    !> Let's precompute the Bose-Einstein distribution and adaptive smearing
-    real(r8), dimension(:, :), allocatable :: be, sigma_q
+    !> Let's precompute the Bose-Einstein distribution
+    real(r8), dimension(:, :), allocatable :: be
     !> The scattering matrix
     real(r8), dimension(:, :), allocatable :: Xi
 
@@ -101,12 +101,9 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
     ! We can start some precomputation
     allocate(sr%be(qp%n_irr_point, dr%n_mode))
-    allocate(sr%sigma_q(qp%n_irr_point, dr%n_mode))
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
-            sr%sigma_q(q1, b1) = qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), &
-                                                   dr%default_smearing(b1), opts%sigma)
         end do
     end do
 
@@ -175,6 +172,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         real(r8), dimension(:, :), allocatable :: buf_lw
         !> Buffer for the linewidth of the local point
         real(r8) :: buf, f0, velnorm
+        !> Some integers for the loops
         integer :: j, q1, b1, b2
 
         call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -233,7 +231,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     end block scatt
 end subroutine
 
-
 #include "scattering_isotope.f90"
 #include "scattering_threephonon.f90"
 #include "scattering_fourphonon.f90"
@@ -248,7 +245,6 @@ subroutine sr_destroy(sr)
     if (allocated(sr%q1)) deallocate(sr%q1)
     if (allocated(sr%b1)) deallocate(sr%b1)
     if (allocated(sr%be)) deallocate(sr%be)
-    if (allocated(sr%sigma_q)) deallocate(sr%sigma_q)
     sr%nlocal_point = -lo_hugeint
 end subroutine
 
@@ -265,7 +261,6 @@ function sr_size_in_mem(sr) result(mem)
     if (allocated(sr%q1)) mem = mem + storage_size(sr%q1) * size(sr%q1)
     if (allocated(sr%b1)) mem = mem + storage_size(sr%b1) * size(sr%b1)
     if (allocated(sr%be)) mem = mem + storage_size(sr%be) * size(sr%be)
-    if (allocated(sr%sigma_q)) mem = mem + storage_size(sr%sigma_q) * size(sr%sigma_q)
     if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi) * size(sr%Xi)
     mem = mem / 8
 end function

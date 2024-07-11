@@ -70,7 +70,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
     call mcg%generate_grid(qgridfull1, rng)
     call mcg%generate_grid(qgridfull2, rng)
 
-    full_loop: do qi=1, mcg%npoints
+    do qi=1, mcg%npoints
     do qj=1, mcg%npoints
         q2 = qgridfull1(qi)
         q3 = qgridfull2(qj)
@@ -91,6 +91,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
+            n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+            n2p = n2 + 1.0_r8
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
 
             evp1 = 0.0_r8
@@ -99,6 +101,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                 om3 = dr%aq(q3)%omega(b3)
                 if (om3 .lt. lo_freqtol) cycle
 
+                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
+                n3p = n3 + 1.0_r8
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
                 evp2 = 0.0_r8
@@ -107,15 +111,19 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                     om4 = dr%aq(q4)%omega(b4)
                     if (om4 .lt. lo_freqtol) cycle
 
+                    n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
+                    n4p = n4 + 1.0_r8
+
                     sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                    sigma = min(1.0_r8, sigma)
-                    if (abs(om1 + om2 + om3 - om4) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om2 + om4 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 + om3 + om4 - om2) .lt. 4.0_r8 * sigma .or. &
+                    if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / lo_pi
+                    if (abs(om1 + om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 - om4 - om3) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om3 - om2 - om4) .lt. 4.0_r8 * sigma .or. &
+                        abs(om1 - om3 + om2 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om4 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                        abs(om1 - om2 - om3 - om4) .lt. 4.0_r8 * sigma) then
+                        abs(om1 - om4 + om2 + om3) .lt. 4.0_r8) then
 
                         egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
 
@@ -124,13 +132,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         evp3 = conjg(evp3)
                         c0 = dot_product(evp3, ptf)
                         psisq = abs(c0*conjg(c0)) * prefactor
-
-                        n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                        n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
-                        n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
-                        n2p = n2 + 1.0_r8
-                        n3p = n3 + 1.0_r8
-                        n4p = n4 + 1.0_r8
 
                         plf1 = n2p * n3p * n4p - n2 * n3 * n4
                         plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
@@ -141,14 +142,14 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         i3 = (q3 - 1) * dr%n_mode + b3
                         i4 = (q4 - 1) * dr%n_mode + b4
 
-                        f0 = 2.0_r8 * plf1 * psisq * lo_gauss(om1, om2 + om3 + om4, sigma)
-                        g0 = g0 + 3.0_r8 * f0
+                        f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        g0 = g0 + f0
                         sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
                         sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
                         sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
 
-                        f0 = 2.0_r8 * plf1 * psisq * lo_gauss(om1,-om2 - om3 - om4, sigma)
-                        g0 = g0 - 3.0_r8 * f0
+                        f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        g0 = g0 - f0
                         sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
                         sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
                         sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
@@ -161,6 +162,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         g0 = g0 - f0
                         sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
 
+
                         f0 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
                         g0 = g0 + f0
                         sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
@@ -169,6 +171,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         g0 = g0 - f0
                         sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
 
+
                         f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
                         g0 = g0 + f0
                         sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
@@ -176,12 +179,13 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
                         g0 = g0 - f0
                         sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
+
                     end if
                 end do
             end do
         end do
     end do
-    end do full_loop
+    end do
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -259,5 +263,5 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation / mult
+    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
 end subroutine

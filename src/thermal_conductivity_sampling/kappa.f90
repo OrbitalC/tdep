@@ -37,15 +37,13 @@ subroutine compute_qs(dr, qp, temperature)
     !> temperature
     real(r8), intent(in) :: temperature
 
-    real(r8) :: buf, om1, n1, velnorm, lw
+    real(r8) :: buf, velnorm, lw
     integer :: q1, b1
 
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
-            om1 = dr%iq(q1)%omega(b1)
-            if (om1 .lt. lo_freqtol) cycle
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
 
-            n1 = lo_planck(temperature, om1)
             lw = dr%iq(q1)%linewidth(b1)
             dr%iq(q1)%qs(b1) = 2.0_r8 * lw
             velnorm = norm2(dr%iq(q1)%vel(:, b1))
@@ -74,7 +72,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     real(r8), dimension(3, 3), intent(out) :: kappa
 
     real(r8), dimension(3) :: v0, v1
-    real(r8) :: n1, f0, omega, prefactor, velnorm
+    real(r8) :: n1, f0, om1, prefactor
     integer :: i, j, k, l
 
     integer :: q1, b1
@@ -94,9 +92,9 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
                 v1 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%vel(:, b1), reciprocal=.true.)
                 v2 = v2 + lo_outerproduct(v0, v1)
             end do
-            omega = dr%iq(q1)%omega(b1)
-            n1 = lo_planck(temperature, omega)
-            buf = prefactor * omega**2 * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
+            om1 = dr%iq(q1)%omega(b1)
+            n1 = lo_planck(temperature, om1)
+            buf = prefactor * om1**2 * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
             dr%iq(q1)%kappa(:, :, b1) = buf
             kappa = kappa + buf * qp%ip(q1)%integration_weight
         end do
@@ -338,21 +336,16 @@ subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc, mem)
     integer :: i, iop, nx
 
     call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(icoeff, [nx, 9], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    ! First we get the matrix to symmetrize the results
     ops = 0.0_r8
     do iop=1, uc%sym%n
         ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
     end do
     call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
     call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
-    allocate (icoeff(nx, 9))
-    ! And get the pseudoinverse.
     call lo_real_pseudoinverse(coeff, icoeff)
-    ! And the irreducible representation of the total
-    allocate (x(nx))
-    flat = lo_flattentensor(kappa)
-    x = matmul(icoeff, flat)
-    call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
     symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
 
     flat = lo_flattentensor(kappa)
@@ -366,10 +359,12 @@ subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc, mem)
     flat = lo_flattentensor(kappa_offdiag)
     flat = matmul(symmetrizer, flat)
     kappa_offdiag = lo_unflatten_2tensor(flat)
+
+    call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(icoeff, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
-subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
-                         isotope, threephonon, fourphonon, mw, mem)
+subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
     !> integration weights
     type(lo_scattering_rates), intent(inout) :: sr
     !> dispersions
@@ -384,15 +379,13 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
     integer, intent(in) :: niter
     !> Tolerance
     real(r8), intent(in) :: tol
-    !> What do we compute ?
-    logical, intent(in) :: isotope, threephonon, fourphonon
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
     real(r8), dimension(:, :, :), allocatable :: Fnb
-    real(r8), dimension(:, :), allocatable :: Fbb
+    real(r8), dimension(:, :), allocatable :: Fbb, buf
     real(r8), dimension(3, 3) :: kappa
     real(r8), dimension(niter) :: scfcheck
     real(r8) :: mixingparameter
@@ -402,8 +395,12 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
     init: block
         real(r8), dimension(3, 3) :: m0
         mixingparameter = 0.95_r8
-        allocate (Fnb(3, dr%n_mode, dr%n_irr_qpoint))
-        allocate (Fbb(3, dr%n_mode * dr%n_full_qpoint))
+        call mem%allocate(Fnb, [3, dr%n_mode, qp%n_irr_point], persistent=.false., &
+                          scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(Fbb, [3, dr%n_mode * qp%n_full_point], persistent=.false., &
+                          scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(buf, [3, sr%nlocal_point], persistent=.false., &
+                          scalable=.false., file=__FILE__, line=__LINE__)
         Fnb = 0.0_r8
         Fbb = 0.0_r8
         scfcheck = 0.0_r8
@@ -419,6 +416,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
             real(r8), dimension(3) :: v
             integer :: iq, jq, iop, b1, i2
 
+            Fnb = 0.0_r8
             Fbb = 0.0_r8
             do iq = 1, qp%n_full_point
                 if (mod(iq, mw%n) .ne. mw%r) cycle
@@ -438,28 +436,43 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
             call mw%allreduce('sum', Fbb)
         end block foldout
 
-        ! The most time consuming part of the iterative method is in this function
-        call apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
+        ! Multiply the off-diagonal part of Xi with F
+        applyXi: block
+            integer :: il, b1, q1, a
+
+            ! We use BLAS for this, and we have to do it for each cartesian direction
+            do a=1, 3
+                call lo_gemv(sr%Xi, Fbb(a, :), buf(a, :))
+            end do
+            ! And now we distribute the results on the irreducible qpoints
+            do il=1, sr%nlocal_point
+                q1 = sr%q1(il)
+                b1 = sr%b1(il)
+                Fnb(:, b1, q1) = Fnb(:, b1, q1) - buf(:, il) / dr%iq(q1)%qs(b1)
+            end do
+            call mw%allreduce('sum', Fnb)
+        end block applyXi
+
+        ! make sure degeneracies are satisfied properly and add the previous thing
         distributeF: block
             real(r8), dimension(3) :: v0
             integer :: q1, b1, b2, j
-        ! make sure degeneracies are satisfied properly and add the previous thing
-        do q1=1, qp%n_irr_point
-            do b1 = 1, dr%n_mode
-                v0 = 0.0_r8
-                do j = 1, dr%iq(q1)%degeneracy(b1)
-                    b2 = dr%iq(q1)%degenmode(j, b1)
-                    v0 = v0 + Fnb(:, b2, q1)
+            do q1=1, qp%n_irr_point
+                do b1 = 1, dr%n_mode
+                    v0 = 0.0_r8
+                    do j = 1, dr%iq(q1)%degeneracy(b1)
+                        b2 = dr%iq(q1)%degenmode(j, b1)
+                        v0 = v0 + Fnb(:, b2, q1)
+                    end do
+                    v0 = v0/real(dr%iq(q1)%degeneracy(b1), r8)
+                    do j = 1, dr%iq(q1)%degeneracy(b1)
+                        b2 = dr%iq(q1)%degenmode(j, b1)
+                        Fnb(:, b2, q1) = v0
+                    end do
+                    ! Add the previous thing
+                    Fnb(:, b1, q1) = dr%iq(q1)%F0(:, b1) + Fnb(:, b1, q1)
                 end do
-                v0 = v0/real(dr%iq(q1)%degeneracy(b1), r8)
-                do j = 1, dr%iq(q1)%degeneracy(b1)
-                    b2 = dr%iq(q1)%degenmode(j, b1)
-                    Fnb(:, b2, q1) = v0
-                end do
-                ! Add the previous thing
-                Fnb(:, b1, q1) = dr%iq(q1)%F0(:, b1) + Fnb(:, b1, q1)
             end do
-        end do
         end block distributeF
 
         ! Add everything together and check convergency
@@ -503,43 +516,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, &
             end if
         end block addandcheck
     end do scfloop
-    deallocate(Fnb)
-    deallocate(Fbb)
-end subroutine
-
-subroutine apply_scattering_matrix_on_f(sr, dr, qp, mw, mem, Fbb, Fnb)
-    !> integration weights
-    type(lo_scattering_rates), intent(inout) :: sr
-    !> dispersions
-    type(lo_phonon_dispersions), intent(inout) :: dr
-    !> q-mesh
-    class(lo_qpoint_mesh), intent(in) :: qp
-    !> MPI helper
-    type(lo_mpi_helper), intent(inout) :: mw
-    !> memory tracker
-    type(lo_mem_helper), intent(inout) :: mem
-    !> The starting Fn
-    real(r8), dimension(:, :), intent(in) :: Fbb
-    !> The Fn on which we applied the scattering matrix
-    real(r8), dimension(:, :, :), intent(out) :: Fnb
-
-    real(r8), dimension(:, :), allocatable :: buf
-    real(r8), dimension(3) :: v0
-    integer :: il, b1, b2, q1, q2, i2, a
-
-    allocate(buf(3, sr%nlocal_point))
-
-    Fnb = 0.0_r8
-    ! First we do matrix multiplication, using BLAS
-    do a=1, 3
-        call lo_gemv(sr%Xi, Fbb(a, :), buf(a, :))
-    end do
-    ! Then we distribute
-    do il=1, sr%nlocal_point
-        q1 = sr%q1(il)
-        b1 = sr%b1(il)
-        Fnb(:, b1, q1) = Fnb(:, b1, q1) - buf(:, il) / dr%iq(q1)%qs(b1)
-    end do
-    call mw%allreduce('sum', Fnb)
+    call mem%deallocate(Fnb, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(Fbb, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 end module

@@ -76,8 +76,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         call pretransform_phi3(fct, qv2, qv3, ptf)
-        ! call fct%pretransform(qv2, qv3, ptf)
-        ! ptf = ptf * 6.0_r8
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -93,12 +91,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
                 sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-                sigma = min(1.0_r8, sigma)
+                if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / lo_pi
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
                     abs(om1 - om2 + om3) .lt. 4.0_r8 * sigma .or. &
-                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma) then
+                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
+                    abs(om1 + om2 + om3) .lt. 4.0_r8 * sigma) then
 
                     evp2 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
