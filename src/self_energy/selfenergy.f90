@@ -365,9 +365,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
 
                         ! The smearing for the gaussian integration
-                        sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3))
-                        if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / sqrt(lo_pi)
-                        sigma = sigma * pref_sigma
+                        sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
+                        sigma = max(0.25_r8 * dr%default_smearing(b3), sigma)
+                        sigma = min(4.0_r8 * dr%default_smearing(b3), sigma)
 
                         ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
@@ -454,9 +454,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             n4p = n4 + 1.0_r8
 
                             ! The smearing for the gaussian integration
-                            sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4))
-                            if (sigma .lt. 0.001_r8) sigma = 1.0_r8 / sqrt(lo_pi)
-                            sigma = sigma * pref_sigma
+                            sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
+                            sigma = max(0.25_r8 * dr%default_smearing(b3), sigma)
+                            sigma = min(4.0_r8 * dr%default_smearing(b3), sigma)
 
                             ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8

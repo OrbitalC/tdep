@@ -39,6 +39,8 @@ type lo_thermalconductivity_helper
     real(r8), dimension(:, :), allocatable :: lw_gk
     !> The linewidths within perturbation theory
     real(r8), dimension(:, :), allocatable :: lw_pert
+    !> Ioffe-Regel an Non-Markovian measures
+    real(r8) :: ir, nm
     contains
         procedure :: compute_thermal_conductivity
         procedure :: write_to_hdf5 => write_tc_to_hdf5
@@ -86,7 +88,7 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     allocate(tc%lw_gk(dr%n_mode, qp%n_irr_point))
     allocate(tc%lw_pert(dr%n_mode, qp%n_irr_point))
 
-    pref = lo_pi / (lo_kb_hartree * temperature**2)
+    pref = lo_pi / (lo_kb_hartree * temperature**2) / uc%volume
 
     ! For the nice progressbar
     t0 = walltime()
@@ -99,6 +101,8 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     tc%kappa_rta_od = 0.0_r8
     tc%kappa_gk = 0.0_r8
     tc%kappa_gk_od = 0.0_r8
+    tc%ir = 0.0_r8
+    tc%nm = 0.0_r8
 
     ! This seems to be a good compromise between accuracy/speed
     tol = 1e-13_r8
@@ -125,6 +129,9 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
             f1 = ls%evaluate_imag_selfenergy_onepoint(q1, b1, om1)
             n1 = lo_planck(temperature, om1)
 
+            ! Get the Ioffe-Regel measure
+            tc%ir = tc%ir + f1 / om1 * qp%ip(q1)%integration_weight
+
             do b2=1, dr%n_mode
                 om2 = dr%iq(q1)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
@@ -146,9 +153,11 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
 
                     ! While we are at it, we can store the linewidths of the mode
                     ! With full memory effects
-                    tc%lw_gk(b1, q1) = 0.5_r8 / pref / f0 * lo_harmonic_oscillator_cv(temperature, om1)
+                    tc%lw_gk(b1, q1) = 0.5_r8 * om1**2 * n1 * (n1 + 1.0_r8) / f0 / lo_pi ! Why the / lo_pi ?
                     ! Within perturbation theory
                     tc%lw_pert(b1, q1) = f1
+                    ! And the Non-Markovian measure
+                    tc%nm = tc%nm + (tc%lw_gk(b1, q1) - tc%lw_pert(b1, q1)) / tc%lw_pert(b1, q1) * qp%ip(q1)%integration_weight
                 else
                     tc%kappa_gk_od = tc%kappa_gk_od + groupvelsq(:, :, b1, b2) * f0 * qp%ip(q1)%integration_weight
                     tc%kappa_rta_od = tc%kappa_rta_od + groupvelsq(:, :, b1, b2) * f3 * f4 * qp%ip(q1)%integration_weight
@@ -163,58 +172,62 @@ subroutine compute_thermal_conductivity(tc, qp, dr, ls, uc, fc, nenergy, tempera
     call mw%allreduce('sum', tc%kappa_rta_od)
     call mw%allreduce('sum', tc%lw_gk)
     call mw%allreduce('sum', tc%lw_pert)
+    call mw%allreduce('sum', tc%ir)
+    call mw%allreduce('sum', tc%nm)
 
-    ! If we want the linewdith to actually be linewidth we have to take the inverse
-    tc%kappa_gk = tc%kappa_gk * pref / uc%volume
-    tc%kappa_gk_od = tc%kappa_gk_od * pref / uc%volume
+    tc%kappa_gk = tc%kappa_gk * pref
+    tc%kappa_gk_od = tc%kappa_gk_od * pref
 
-    tc%kappa_rta = tc%kappa_rta * pref / uc%volume / lo_pi
-    tc%kappa_rta_od = tc%kappa_rta_od * pref / uc%volume / lo_pi
+    tc%kappa_rta = tc%kappa_rta * pref / lo_pi
+    tc%kappa_rta_od = tc%kappa_rta_od * pref / lo_pi
+
+    tc%ir = tc%ir / dr%n_mode
+    tc%nm = tc%nm / dr%n_mode
 
     call mem%deallocate(groupvelsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-    symmetrize: block
-        real(r8), dimension(9, 9) :: symmetrizer
-        real(r8), dimension(:, :), allocatable :: coeff, icoeff
-        real(r8), dimension(:), allocatable :: x
-        real(r8), dimension(:, :, :), allocatable :: ops
-        real(r8), dimension(9) :: flat
-        integer :: i, iop, nx
+   !symmetrize: block
+   !    real(r8), dimension(9, 9) :: symmetrizer
+   !    real(r8), dimension(:, :), allocatable :: coeff, icoeff
+   !    real(r8), dimension(:), allocatable :: x
+   !    real(r8), dimension(:, :, :), allocatable :: ops
+   !    real(r8), dimension(9) :: flat
+   !    integer :: i, iop, nx
 
-        call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        ops = 0.0_r8
-        do iop=1, uc%sym%n
-            ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
-        end do
-        call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
-        call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
-        allocate (icoeff(nx, 9))
-        ! And get the pseudoinverse.
-        call lo_real_pseudoinverse(coeff, icoeff)
-        ! And the irreducible representation of the total
-        allocate (x(nx))
-        flat = lo_flattentensor(tc%kappa_gk)
-        x = matmul(icoeff, flat)
-        call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+   !    call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+   !    ops = 0.0_r8
+   !    do iop=1, uc%sym%n
+   !        ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
+   !    end do
+   !    call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
+   !    call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
+   !    allocate (icoeff(nx, 9))
+   !    ! And get the pseudoinverse.
+   !    call lo_real_pseudoinverse(coeff, icoeff)
+   !    ! And the irreducible representation of the total
+   !    allocate (x(nx))
+   !    flat = lo_flattentensor(tc%kappa_gk)
+   !    x = matmul(icoeff, flat)
+   !    call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
-        symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
+   !    symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
 
-        flat = lo_flattentensor(tc%kappa_gk)
-        flat = matmul(symmetrizer, flat)
-        tc%kappa_gk = lo_unflatten_2tensor(flat)
+   !    flat = lo_flattentensor(tc%kappa_gk)
+   !    flat = matmul(symmetrizer, flat)
+   !    tc%kappa_gk = lo_unflatten_2tensor(flat)
 
-        flat = lo_flattentensor(tc%kappa_gk_od)
-        flat = matmul(symmetrizer, flat)
-        tc%kappa_gk_od = lo_unflatten_2tensor(flat)
+   !    flat = lo_flattentensor(tc%kappa_gk_od)
+   !    flat = matmul(symmetrizer, flat)
+   !    tc%kappa_gk_od = lo_unflatten_2tensor(flat)
 
-        flat = lo_flattentensor(tc%kappa_rta)
-        flat = matmul(symmetrizer, flat)
-        tc%kappa_rta = lo_unflatten_2tensor(flat)
+   !    flat = lo_flattentensor(tc%kappa_rta)
+   !    flat = matmul(symmetrizer, flat)
+   !    tc%kappa_rta = lo_unflatten_2tensor(flat)
 
-        flat = lo_flattentensor(tc%kappa_rta_od)
-        flat = matmul(symmetrizer, flat)
-        tc%kappa_rta_od = lo_unflatten_2tensor(flat)
-    end block symmetrize
+   !    flat = lo_flattentensor(tc%kappa_rta_od)
+   !    flat = matmul(symmetrizer, flat)
+   !    tc%kappa_rta_od = lo_unflatten_2tensor(flat)
+   !end block symmetrize
 end subroutine
 
 

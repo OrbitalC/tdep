@@ -90,9 +90,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
                 if (om3 .lt. lo_freqtol) cycle
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3))
-                if (sigma .lt. 0.001) sigma = 1.0_r8 / sqrt(lo_pi)
-                sigma = sigma * pref_sigma
+                sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
+                sigma = max(0.25_r8 * dr%default_smearing(b3), sigma)
+                sigma = min(4.0_r8 * dr%default_smearing(b3), sigma)
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &

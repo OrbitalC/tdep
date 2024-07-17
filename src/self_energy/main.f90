@@ -148,6 +148,9 @@ kappa: block
     if (mw%talk) then
         write (*, *) ''
         write (*, *) ''
+        write (*, "(1X,A21,2X,F8.5)") 'Ioffe-Regel measure', tc%ir
+        write (*, "(1X,A21,2X,F8.5)") 'Non-Markovian measure', tc%nm
+        write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
         write (*, *) 'Markovian approximation'
         m0 = tc%kappa_rta*lo_kappa_au_to_SI
