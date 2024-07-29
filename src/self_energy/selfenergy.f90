@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module selfenergy
 use konstanter, only: r8, lo_freqtol, lo_huge, lo_hugeint, lo_pi, lo_twopi, lo_exitcode_param, lo_tol
-use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
+use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck, lo_linear_least_squares
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -277,6 +277,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         A_inequal(n, n) = 1
     end do
 
+    amat = 0.0_r8
     ! Prefill the feature matrix for the non-negative least-squares
     do n=1, ls%nbasis
         do m=1, ls%nbasis
@@ -366,8 +367,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                         ! The smearing for the gaussian integration
                         sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-                        sigma = max(0.25_r8 * dr%default_smearing(b3), sigma)
-                        sigma = min(4.0_r8 * dr%default_smearing(b3), sigma)
+                        sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
+                        sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
 
                         ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
@@ -455,8 +456,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                             ! The smearing for the gaussian integration
                             sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                            sigma = max(0.25_r8 * dr%default_smearing(b3), sigma)
-                            sigma = min(4.0_r8 * dr%default_smearing(b3), sigma)
+                            sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
+                            sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
 
                             ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8
@@ -504,8 +505,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         c = 0.0_r8
         call lo_dgemv(transpose(amat), ymat, c)
         ! With this and the inequality constraints, the quadratic programing is equivalent to a non-negative lsq
-        call lo_solve_quadratic_program(Q, c, sol, A_equal, A_inequal, &
-                                        B_equal, B_inequal, 0, ls%nbasis, 0, 1e-13_r8)
+        call lo_solve_quadratic_program(Q, c, sol, A_equal, A_inequal, B_equal, B_inequal, 0, ls%nbasis, 0, 1e-13_r8)
         ! I want my zeros to be zeros
         do n=1, ls%nbasis
             if (sol(n) .lt. 1e-13_r8) sol(n) = 0.0_r8

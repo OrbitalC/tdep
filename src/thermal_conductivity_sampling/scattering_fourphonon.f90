@@ -39,13 +39,15 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
     ! The gaussian integration width
     real(r8) :: sigma, pref_sigma
     !> Stuff for the linewidths
-    real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4, f0
+    real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4
     !> Integers for do loops
-    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4
+    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4, q1f
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
     real(r8) :: mult
+    !> All the prefactors for the scattering
+    real(r8) :: f0, f1, f2, f3, f4, f5, f6, f7, f8
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -63,6 +65,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
     pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
+    q1f = qp%ip(q1)%full_index
 
     ! Prepare the grid for the monte-carlo average
     call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -115,8 +118,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                     n4p = n4 + 1.0_r8
 
                     sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                    sigma = max(0.25_r8 * dr%default_smearing(b4), sigma)
-                    sigma = min(4.0_r8 * dr%default_smearing(b4), sigma)
+                    sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
+                    sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
                     if (abs(om1 + om2 + om3 + om4) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 - om2 - om4 - om3) .lt. 4.0_r8 * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. 4.0_r8 * sigma .or. &
@@ -143,44 +146,65 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, g0, 
                         i3 = (q3 - 1) * dr%n_mode + b3
                         i4 = (q4 - 1) * dr%n_mode + b4
 
+                       !f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                       !g0 = g0 + f0
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
+
+                       !f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                       !g0 = g0 - f0
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
+
+                       !f0 = 2.0_r8 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
+                       !g0 = g0 + f0
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
+
+                       !f0 = 2.0_r8 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
+                       !g0 = g0 - f0
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
+
+
+                       !f0 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
+                       !g0 = g0 + f0
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
+
+                       !f0 = 2.0_r8 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
+                       !g0 = g0 - f0
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
+
+
+                       !f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
+                       !g0 = g0 + f0
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
+
+                       !f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
+                       !g0 = g0 - f0
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
+
+
                         f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
-                        g0 = g0 + f0
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
-                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
+                        f1 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        f2 = 2.0_r8 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
+                        f3 = 2.0_r8 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
+                        f4 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
+                        f5 = 2.0_r8 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
+                        f6 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
+                        f7 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
 
-                        f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
-                        g0 = g0 - f0
-                        sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
-                        sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
-                        sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
+                        g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
 
-                        f0 = 2.0_r8 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
-                        g0 = g0 + f0
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * f0 * om2 / om1
-
-                        f0 = 2.0_r8 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
-                        g0 = g0 - f0
-                        sr%Xi(il, i2) = sr%Xi(il, i2) - 2.0_r8 * f0 * om2 / om1
-
-
-                        f0 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
-                        g0 = g0 + f0
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * f0 * om3 / om1
-
-                        f0 = 2.0_r8 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
-                        g0 = g0 - f0
-                        sr%Xi(il, i3) = sr%Xi(il, i3) - 2.0_r8 * f0 * om3 / om1
-
-
-                        f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
-                        g0 = g0 + f0
-                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * f0 * om4 / om1
-
-                        f0 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
-                        g0 = g0 - f0
-                        sr%Xi(il, i4) = sr%Xi(il, i4) - 2.0_r8 * f0 * om4 / om1
-
+                        if (q1f .ne. q2 .or. b1 .ne. b2) then
+                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
+                        end if
+                        if (q1f .ne. q3 .or. b1 .ne. b3) then
+                            sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f4 - f5) * om3 / om1
+                        end if
+                        if (q1f .ne. q4 .or. b1 .ne. b4) then
+                            sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f6 - f7) * om4 / om1
+                        end if
                     end if
                 end do
             end do

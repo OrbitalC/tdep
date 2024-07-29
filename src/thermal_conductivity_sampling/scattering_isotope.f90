@@ -25,12 +25,14 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
     ! prefactor and phonon buffers
     real(r8) :: om1, om2, sigma, psisq, prefactor, f0
     ! Integers for do loops
-    integer :: q1, b1, q2, b2, i, niso
+    integer :: q1, b1, q2, b2, i, niso, q1f
 
     q1 = sr%q1(il)
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
+
+    q1f = qp%ip(q1)%full_index
 
     do q2=1, qp%n_full_point
         prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
@@ -47,7 +49,9 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
 
                 f0 = psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
                 g0 = g0 + f0
-                sr%Xi(il, i) = sr%Xi(il, i) + f0 * om2 / om1
+                if (q1f .ne. q2 .or. b1 .ne. b2) then
+                    sr%Xi(il, i) = sr%Xi(il, i) + f0 * om2 / om1
+                end if
             end if
         end do
     end do
