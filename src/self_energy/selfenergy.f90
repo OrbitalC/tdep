@@ -254,7 +254,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     end do
 
     ! We can already precompute the prefactor for the adaptive broadening factor
-    pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
+  ! pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
+    pref_sigma = qp%ip(1)%radius
 
     ! Let's prepare the non-negative least-squares
     allocate(A_inequal(ls%nbasis, ls%nbasis))
