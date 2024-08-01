@@ -16,7 +16,6 @@ type lo_opts
     real(flyt) :: thres              !< consider Gaussian 0 if x-mu is larger than this number times sigma.
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
-    real(flyt) :: mixing             !< mixing parameter for self consistent linewidth
     real(flyt) :: scftol             !< tolerance for the self-consistent linewidth
     real(flyt) :: btetol             !< tolerance for the self-consistent linewidth
     integer :: niter                 !< Number of iteration for the self consistent linewidths
@@ -24,7 +23,6 @@ type lo_opts
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
-    logical :: readlw                !< Do we read the linewidths from a file ?
 
     integer :: correctionlevel       !< how hard to correct
     integer :: mfppts                !< number of points on mfp-plots
@@ -80,10 +78,6 @@ subroutine parse(opts)
                  help='Consider four-phonon contributions to the scattering.',  &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--read_linewidths', &
-                 help='Read the linewidths from a infile.grid_thermal_conductivity_sampling.hdf5.',  &
-                 required=.false., act='store_true', def='.false.', error=lo_status)
-    if (lo_status .ne. 0) stop
     cli_qpoint_grid
     call cli%add(switch='--sigma', &
                  help='Global scaling factor for adaptive Gaussian smearing.', &
@@ -102,10 +96,6 @@ subroutine parse(opts)
     call cli%add(switch='--max_mfp', &
                  help='Add a limit on the mean free path as an approximation of domain size.', &
                  required=.false., act='store', def='-1', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--mixing', &
-                 help='Mixing parameter for the self-consistent linewidth.', &
-                 required=.false., act='store', def='0.75', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--scftol', &
                  help='Tolerance for the self-consistent linewidth.', &
@@ -191,16 +181,10 @@ subroutine parse(opts)
     opts%thirdorder = .not. dumlog
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt
-    call cli%get(switch='--read_linewidths', val=opts%readlw)
     call cli%get(switch='--readqmesh', val=opts%readqmesh)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
-    call cli%get(switch='--mixing', val=opts%mixing)
-    if (opts%mixing .lt. 0.0_flyt .or. opts%mixing .gt. 1.0_flyt) then
-        write (*, *) 'Mixing parameter should be between 0.0 and 1.0.'
-        stop
-    end if
     call cli%get(switch='--scftol', val=opts%scftol)
     call cli%get(switch='--btetol', val=opts%btetol)
     call cli%get(switch='--dumpgrid', val=opts%dumpgrid)

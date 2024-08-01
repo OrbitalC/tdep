@@ -183,13 +183,13 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         do il=1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then
-                call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, buf, mw, mem)
+                call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, opts%thres, buf, mw, mem)
             end if
             if (opts%thirdorder) then
-                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, buf, mw, mem)
+                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, opts%thres, buf, mw, mem)
             end if
             if (opts%fourthorder) then
-                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, buf, mw, mem)
+                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, opts%thres, buf, mw, mem)
             end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then

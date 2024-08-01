@@ -1,6 +1,6 @@
 
 
-subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, mem)
+subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, g0, mw, mem)
     !> The local point
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -13,6 +13,8 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
     type(lo_crystalstructure), intent(in) :: uc
     !> The temperature
     real(r8), intent(in) :: temperature
+    !> The threshold for gaussian integration
+    real(r8), intent(in) :: thres
     !> The linewidth for this mode
     real(r8), intent(inout) :: g0
     !> MPI helper
@@ -41,7 +43,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, g0, mw, m
             if (om2 .lt. lo_freqtol) cycle
 
             sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
-            if (abs(om1 - om2) .lt. 4.0_r8 * sigma) then
+            if (abs(om1 - om2) .lt. thres * sigma) then
                 i = (q2 - 1) * dr%n_mode + b2
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)

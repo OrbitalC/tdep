@@ -1,6 +1,6 @@
 
 
-subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0, mw, mem)
+subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thres, g0, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -17,6 +17,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
     type(lo_montecarlo_grid), intent(in) :: mcg
     !> The random number generator
     type(lo_mersennetwister), intent(inout) :: rng
+    !> The threshold for gaussian integration
+    real(r8), intent(in) :: thres
     !> The linewidth for this mode
     real(r8), intent(inout) :: g0
     !> Mpi helper
@@ -96,10 +98,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, g0,
                 sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
 
                 ! Do we need to compute the scattering ?
-                if (abs(om1 + om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                    abs(om1 - om2 + om3) .lt. 4.0_r8 * sigma .or. &
-                    abs(om1 - om2 - om3) .lt. 4.0_r8 * sigma .or. &
-                    abs(om1 + om2 + om3) .lt. 4.0_r8 * sigma) then
+                if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &
+                    abs(om1 - om2 + om3) .lt. thres * sigma .or. &
+                    abs(om1 - om2 - om3) .lt. thres * sigma .or. &
+                    abs(om1 + om2 + om3) .lt. thres * sigma) then
 
                     evp2 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
