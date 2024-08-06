@@ -33,7 +33,9 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> The full qpoint grid, to be shuffled
     integer, dimension(:), allocatable :: qgridfull1, qgridfull2
     !> The qpoints in cartesian coordinates
-    real(r8), dimension(3) :: qv2, qv3, qv4
+    real(r8), dimension(3) :: qv2, qv3, qv4, veldiff
+    !> The inverse reciprocal lattice vector
+    real(r8), dimension(3, 3) :: gvec
     !> The complex scattering amplitude
     complex(r8) :: c0
     !> Frequencies, bose-einstein occupation and scattering strength
@@ -69,6 +71,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
   ! pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
     pref_sigma = qp%ip(1)%radius
     q1f = qp%ip(q1)%full_index
+
+    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / mcg%full_dims(1)
+    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / mcg%full_dims(2)
+    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / mcg%full_dims(3)
 
     n1 = sr%be(q1, b1)
 
@@ -122,9 +128,20 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                     n4p = n4 + 1.0_r8
 
-                    sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                    sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
-                    sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
+                    ! if (b3 .eq. b4 .and. q3 .eq. q4) cycle
+                    ! if (b3 .eq. b4) cycle
+
+                    veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)
+                    sigma = max(norm2(veldiff * gvec(1, :)), &
+                                norm2(veldiff * gvec(2, :)), &
+                                norm2(veldiff * gvec(3, :)))
+
+                    if (sigma .lt. lo_freqtol) cycle
+
+                 !  sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
+                 !  sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
+                 !  sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
+
                     if (abs(om1 + om2 + om3 + om4) .lt. thres * sigma .or. &
                         abs(om1 - om2 - om4 - om3) .lt. thres * sigma .or. &
                         abs(om1 + om2 - om3 - om4) .lt. thres * sigma .or. &

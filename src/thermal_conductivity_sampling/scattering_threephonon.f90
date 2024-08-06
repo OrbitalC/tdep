@@ -105,6 +105,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                             norm2(veldiff * gvec(2, :)), &
                             norm2(veldiff * gvec(3, :)))
 
+                if (sigma .lt. lo_freqtol) cycle
+
               ! sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
               ! sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
               ! sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
