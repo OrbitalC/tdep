@@ -33,7 +33,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     !> The full qpoint grid, to be shuffled
     integer, dimension(:), allocatable :: qgridfull
     !> The qpoints and the dimension of the qgrid
-    real(r8), dimension(3) :: qv2, qv3
+    real(r8), dimension(3) :: qv2, qv3, veldiff
+    !> The inverse reciprocal lattice vector
+    real(r8), dimension(3, 3) :: gvec
     !> The gaussian integration width
     real(r8) :: sigma
     !> Frequencies, bose-einstein occupation and scattering strength
@@ -66,6 +68,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     pref_sigma = qp%ip(1)%radius
     q1f = qp%ip(q1)%full_index
 
+    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / mcg%full_dims(1)
+    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / mcg%full_dims(2)
+    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / mcg%full_dims(3)
+
     call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mcg%generate_grid(qgridfull, rng)
 
@@ -94,9 +100,14 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 if (om3 .lt. lo_freqtol) cycle
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-                sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
-                sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
+                veldiff = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)
+                sigma = max(norm2(veldiff * gvec(1, :)), &
+                            norm2(veldiff * gvec(2, :)), &
+                            norm2(veldiff * gvec(3, :)))
+
+              ! sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
+              ! sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
+              ! sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &

@@ -197,8 +197,8 @@ kappa: block
     end if
     call get_kappa(dr, qp, uc, opts%temperature, kappa)
     if (mw%talk) write(*, *) ''
-    ! if (mw%talk) write(*, *) '... symmetrizing the thermal conductivity tensors'
-    ! call symmetrize_kappa(kappa, kappa_offdiag, kappa_sma, uc, mem)
+    if (mw%talk) write(*, *) '... symmetrizing the thermal conductivity tensors'
+    call symmetrize_kappa(kappa, kappa_offdiag, kappa_sma, uc)
     if (mw%talk) then
         write (*, *) ''
         write (*, *) 'THERMAL CONDUCTIVITY'

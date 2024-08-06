@@ -11,7 +11,7 @@ use type_crystalstructure, only: lo_crystalstructure
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix, &
-                                  lo_expandoperation_pair
+                                  lo_expandoperation_pair, lo_operate_on_secondorder_tensor
 use type_blas_lapack_wrappers, only: lo_gemm, lo_gemv
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
@@ -320,48 +320,35 @@ contains
     end function
 end subroutine
 
-subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc, mem)
+subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc)
     !> The different kappa
     real(r8), dimension(3, 3), intent(inout) :: kappa, kappa_sma, kappa_offdiag
     !> The unit cell
     type(lo_crystalstructure), intent(in) :: uc
-    !> memory tracker
-    type(lo_mem_helper), intent(inout) :: mem
 
-    real(r8), dimension(9, 9) :: symmetrizer
-    real(r8), dimension(:, :), allocatable :: coeff, icoeff
-    real(r8), dimension(:), allocatable :: x
-    real(r8), dimension(:, :, :), allocatable :: ops
-    real(r8), dimension(9) :: flat
-    integer :: i, iop, nx
+    real(r8), dimension(3, 3) :: tmp1, tmp2, tmp3, f0
+    integer :: iop
 
-    call mem%allocate(ops, [9, 9, uc%sym%n + 1], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%allocate(icoeff, [nx, 9], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
-    ! First we get the matrix to symmetrize the results
-    ops = 0.0_r8
+    tmp1 = 0.0_r8
+    tmp2 = 0.0_r8
+    tmp3 = 0.0_r8
     do iop=1, uc%sym%n
-        ops(:, :, iop) = lo_expandoperation_pair(uc%sym%op(iop)%m)
+        tmp1 = tmp1 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa)
+        tmp2 = tmp2 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa_sma)
+        tmp3 = tmp3 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa_offdiag)
     end do
-    call lo_transpositionmatrix(ops(:, :, uc%sym%n+1))
-    call lo_real_nullspace_coefficient_matrix(invariant_operations=ops, coeff=coeff, nvar=nx)
-    call lo_real_pseudoinverse(coeff, icoeff)
-    symmetrizer = lo_chop(matmul(coeff, icoeff), lo_sqtol)
 
-    flat = lo_flattentensor(kappa)
-    flat = matmul(symmetrizer, flat)
-    kappa = lo_unflatten_2tensor(flat)
+    kappa = tmp1 / uc%sym%n
+    tmp1 = sum(abs(kappa))
+    kappa = lo_chop(kappa, tmp1*1e-6_r8)
 
-    flat = lo_flattentensor(kappa_sma)
-    flat = matmul(symmetrizer, flat)
-    kappa_sma = lo_unflatten_2tensor(flat)
+    kappa_sma = tmp2 / uc%sym%n
+    tmp2 = sum(abs(kappa_sma))
+    kappa_sma = lo_chop(kappa_sma, tmp2*1e-6_r8)
 
-    flat = lo_flattentensor(kappa_offdiag)
-    flat = matmul(symmetrizer, flat)
-    kappa_offdiag = lo_unflatten_2tensor(flat)
-
-    call mem%deallocate(ops, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mem%deallocate(icoeff, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    kappa_offdiag = tmp3 / uc%sym%n
+    tmp3 = sum(abs(kappa_offdiag))
+    kappa_offdiag = lo_chop(kappa_offdiag, tmp3*1e-6_r8)
 end subroutine
 
 subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
