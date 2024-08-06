@@ -22,6 +22,10 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, g0
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
+    !> The inverse reciprocal lattice vector
+    real(r8), dimension(3, 3) :: gvec
+    ! The q-point grid dimension
+    integer, dimension(3) :: dims
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
@@ -34,6 +38,16 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, g0
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
+    select type(qp)
+    class is (lo_fft_mesh)
+        dims = qp%griddensity
+    class default
+        call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
+    end select
+    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / dims(1)
+    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / dims(2)
+    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / dims(3)
+
     q1f = qp%ip(q1)%full_index
 
     do q2=1, qp%n_full_point
@@ -42,7 +56,13 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, g0
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
-            sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+          ! sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+            sigma = max(norm2(dr%aq(q2)%vel(:, b2) * gvec(1, :)), &
+                        norm2(dr%aq(q2)%vel(:, b2) * gvec(2, :)), &
+                        norm2(dr%aq(q2)%vel(:, b2) * gvec(3, :)))
+            sigma = min(sigma, dr%default_smearing(b2)*4.0_r8)
+            sigma = max(sigma, dr%default_smearing(b2)*0.25_r8)
+
             if (abs(om1 - om2) .lt. thres * sigma) then
                 i = (q2 - 1) * dr%n_mode + b2
 

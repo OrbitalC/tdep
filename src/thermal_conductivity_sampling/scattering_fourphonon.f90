@@ -128,15 +128,14 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                     n4p = n4 + 1.0_r8
 
-                    ! if (b3 .eq. b4 .and. q3 .eq. q4) cycle
-                    ! if (b3 .eq. b4) cycle
-
                     veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)
                     sigma = max(norm2(veldiff * gvec(1, :)), &
                                 norm2(veldiff * gvec(2, :)), &
                                 norm2(veldiff * gvec(3, :)))
 
                     if (sigma .lt. lo_freqtol) cycle
+                    sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
+                    sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
 
                  !  sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
                  !  sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
@@ -185,19 +184,16 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
                         ! And then to the scattering matrix
                         if (q1f .ne. q2 .or. b1 .ne. b2) then
-                            sr%Xi(il, i2) = sr%Xi(il, i2) + 4.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
-                           !sr%Xi(il, i2) = sr%Xi(il, i2) + (12.0_r8 * (f0 - f1) + 4.0_r8 * (f2 - f3)) * om2 / om1
-                           !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7)) * om2 / om1
+                           !sr%Xi(il, i2) = sr%Xi(il, i2) + 4.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
+                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3)) * om2 / om1
                         end if
                         if (q1f .ne. q3 .or. b1 .ne. b3) then
-                            sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f4 - f5) * om3 / om1
-                           !sr%Xi(il, i3) = sr%Xi(il, i3) + (12.0_r8 * (f0 - f1) + 4.0_r8 * (f4 - f5)) * om3 / om1
-                           !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7)) * om3 / om1
+                           !sr%Xi(il, i3) = sr%Xi(il, i3) + 4.0_r8 * (f0 - f1 + f4 - f5) * om3 / om1
+                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f4 - f5)) * om3 / om1
                         end if
                         if (q1f .ne. q4 .or. b1 .ne. b4) then
-                            sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f6 - f7) * om4 / om1
-                           !sr%Xi(il, i4) = sr%Xi(il, i4) + (12.0_r8 * (f0 - f1) + 4.0_r8 * (f6 - f7)) * om4 / om1
-                           !sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7)) * om4 / om1
+                           !sr%Xi(il, i4) = sr%Xi(il, i4) + 4.0_r8 * (f0 - f1 + f6 - f7) * om4 / om1
+                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f6 - f7)) * om4 / om1
                         end if
 
                      ! Those are formulas directly from the FourPhonon paper
