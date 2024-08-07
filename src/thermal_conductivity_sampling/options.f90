@@ -23,6 +23,7 @@ type lo_opts
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
+    integer :: integrationtype      !< gaussian or tetrahedron
 
     integer :: correctionlevel       !< how hard to correct
     integer :: mfppts                !< number of points on mfp-plots
@@ -69,6 +70,10 @@ subroutine parse(opts)
                  help='Read the isotope distribution from `infile.isotopes`.', &
                  help_markdown='The format is specified [here](../page/files.html#infile.isotopes).', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--integrationtype', switch_ab='-it', &
+                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian and 3 Tetrahedron.', &
+                 required=.false., act='store', def='2', choices='1,2,3', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
                  help='Not consider third order contributions to the scattering.',  &
@@ -182,6 +187,7 @@ subroutine parse(opts)
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
     if (opts%tau_boundary .gt. 0.0_flyt) opts%tau_boundary = 1E10_flyt
     call cli%get(switch='--readqmesh', val=opts%readqmesh)
+    call cli%get(switch='--integrationtype', val=opts%integrationtype)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)

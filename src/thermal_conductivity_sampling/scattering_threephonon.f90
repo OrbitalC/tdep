@@ -1,6 +1,7 @@
 
 
-subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thres, g0, mw, mem)
+subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thres, &
+                                          g0, integrationtype, smearing, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -21,6 +22,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     real(r8), intent(in) :: thres
     !> The linewidth for this mode
     real(r8), intent(inout) :: g0
+    !> what kind of integration are we doing
+    integer, intent(in) :: integrationtype
+    !> The smearing width
+    real(r8), intent(in) :: smearing
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -98,14 +103,21 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 if (om3 .lt. lo_freqtol) cycle
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
-                veldiff = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)
-                sigma = max(norm2(veldiff * gvec(1, :)), &
-                            norm2(veldiff * gvec(2, :)), &
-                            norm2(veldiff * gvec(3, :)))
+                select case (integrationtype)
+
+                case (1)
+                    sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
+                case (2)
+                    veldiff = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)
+                    sigma = max(norm2(veldiff * gvec(1, :)), &
+                                norm2(veldiff * gvec(2, :)), &
+                                norm2(veldiff * gvec(3, :)))
 
               ! Do we need this in the end ?
+                if (sigma .lt. lo_freqtol) cycle
               ! sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b2), sigma)
               ! sigma = min(4.00_r8 * dr%default_smearing(b3), 4.00_r8 * dr%default_smearing(b2), sigma)
+            end select
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &

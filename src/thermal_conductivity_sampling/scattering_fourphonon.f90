@@ -1,6 +1,7 @@
 
 
-subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thres, g0, mw, mem)
+subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thres, &
+                                         g0,integrationtype, smearing,  mw, mem)
     !> The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -21,6 +22,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     real(r8), intent(in) :: thres
     !> The linewidth for this mode
     real(r8), intent(inout) :: g0
+    !> what kind of integration are we doing
+    integer, intent(in) :: integrationtype
+    !> The smearing width
+    real(r8), intent(in) :: smearing
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -127,13 +132,17 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                     n4p = n4 + 1.0_r8
 
-                    veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)
-                    sigma = max(norm2(veldiff * gvec(1, :)), &
-                                norm2(veldiff * gvec(2, :)), &
-                                norm2(veldiff * gvec(3, :)))
-
+                    select case (integrationtype)
+                    case (1)
+                        sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
+                    case (2)
+                        veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)
+                        sigma = max(norm2(veldiff * gvec(1, :)), &
+                                    norm2(veldiff * gvec(2, :)), &
+                                    norm2(veldiff * gvec(3, :)))
                     ! This removes pathological cases for the gaussian broadening
                     if (sigma .lt. lo_freqtol) cycle
+                    end select
 
                     if (abs(om1 + om2 + om3 + om4) .lt. thres * sigma .or. &
                         abs(om1 - om2 - om4 - om3) .lt. thres * sigma .or. &

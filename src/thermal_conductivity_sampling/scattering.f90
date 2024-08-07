@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
-                      lo_phonongroupveltol, lo_tol
+                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -183,13 +183,16 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         do il=1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then
-                call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, opts%thres, buf, mw, mem)
+                call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, opts%thres, buf, &
+                    opts%integrationtype, opts%sigma, mw, mem)
             end if
             if (opts%thirdorder) then
-                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, opts%thres, buf, mw, mem)
+                call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, &
+                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
             end if
             if (opts%fourthorder) then
-                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, opts%thres, buf, mw, mem)
+                call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, &
+                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
             end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
