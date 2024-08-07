@@ -170,30 +170,30 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                         plf4 = 3.0_r8 * n4 * n3p * n2p - n4p * n3 * n2
 
                         ! Prefactors, including the matrix elements and dirac
-                        f0 = psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
-                        f1 = psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
-                        f2 = psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
-                        f3 = psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
-                        f4 = psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
-                        f5 = psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
-                        f6 = psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
-                        f7 = psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
+                        f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        f1 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        f2 = 2.0_r8 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
+                        f3 = 2.0_r8 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
+                        f4 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
+                        f5 = 2.0_r8 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
+                        f6 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
+                        f7 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
 
                         ! Add everything to the linewidth, the pref comes from permutations
-                        g0 = g0 + 6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7)
+                        g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
 
                         ! And then to the scattering matrix
                         if (q1f .ne. q2 .or. b1 .ne. b2) then
                            !sr%Xi(il, i2) = sr%Xi(il, i2) + 4.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
-                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3)) * om2 / om1
+                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
                         end if
                         if (q1f .ne. q3 .or. b1 .ne. b3) then
                            !sr%Xi(il, i3) = sr%Xi(il, i3) + 4.0_r8 * (f0 - f1 + f4 - f5) * om3 / om1
-                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f4 - f5)) * om3 / om1
+                            sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f4 - f5) * om3 / om1
                         end if
                         if (q1f .ne. q4 .or. b1 .ne. b4) then
                            !sr%Xi(il, i4) = sr%Xi(il, i4) + 4.0_r8 * (f0 - f1 + f6 - f7) * om4 / om1
-                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (6.0_r8 * (f0 - f1) + 2.0_r8 * (f6 - f7)) * om4 / om1
+                            sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f6 - f7) * om4 / om1
                         end if
 
                      ! Those are formulas directly from the FourPhonon paper
