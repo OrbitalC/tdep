@@ -39,7 +39,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     !> The gaussian integration width
     real(r8) :: sigma
     !> Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, psisq, prefactor, pref_sigma, f0, f1, f2, f3
+    real(r8) :: om1, om2, om3, plf, psisq, prefactor, f0, f1, f2, f3
     !> The bose-einstein distribution for the modes
     real(r8) :: n2, n3
     !> The complex threephonon matrix element
@@ -64,8 +64,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
-  ! pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
-    pref_sigma = qp%ip(1)%radius
     q1f = qp%ip(q1)%full_index
 
     gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / mcg%full_dims(1)
@@ -105,13 +103,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                             norm2(veldiff * gvec(2, :)), &
                             norm2(veldiff * gvec(3, :)))
 
-                if (sigma .lt. lo_freqtol) cycle
-                sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
-                sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
-
-              ! sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-              ! sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
-              ! sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
+              ! Do we need this in the end ?
+              ! sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b2), sigma)
+              ! sigma = min(4.00_r8 * dr%default_smearing(b3), 4.00_r8 * dr%default_smearing(b2), sigma)
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &
@@ -133,21 +127,21 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     i2 = (q2 - 1) * dr%n_mode + b2
                     i3 = (q3 - 1) * dr%n_mode + b3
 
-                    ! The prefactor for the scattering
-                    f0 = psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
-                    f1 = psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
-                    f2 = psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
-                    f3 = psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
+                    ! The prefactor for the scattering, the 2.0_r8 comes from permutation of om2/om3
+                    f0 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
+                    f1 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
+                    f2 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
+                    f3 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
 
-                    ! Add everything to the linewidth, the 2.0_r8 comes from permutation of om2/om3
-                    g0 = g0 + 2.0_r8 * (f0 - f1 + f2 - f3)
+                    ! Add everything to the linewidth
+                    g0 = g0 + f0 - f1 + f2 - f3
 
                     ! And to the scattering matrix
                     if (q1f .ne. q2 .or. b1 .ne. b2) then
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 4.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
+                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
                     end if
                     if (q1f .ne. q3 .or. b1 .ne. b3) then
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 4.0_r8 * (f0 - f1 + f2 - f3) * om3 / om1
+                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3) * om3 / om1
                     end if
                 end if
             end do
