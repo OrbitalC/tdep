@@ -136,12 +136,31 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     case (1)
                         sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                     case (2)
-                        veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)
-                        sigma = max(norm2(veldiff * gvec(1, :)), &
-                                    norm2(veldiff * gvec(2, :)), &
-                                    norm2(veldiff * gvec(3, :)))
+                      ! veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4) + lo_phonongroupveltol
+                      ! sigma = max(norm2(veldiff * gvec(1, :)), &
+                      !             norm2(veldiff * gvec(2, :)), &
+                      !             norm2(veldiff * gvec(3, :)))
+
+                      ! if (sigma .lt. lo_freqtol) cycle
+
+                      ! sigma = max(0.25_r8 * minval(dr%default_smearing), sigma)
+                      ! sigma = min(4.00_r8 * maxval(dr%default_smearing), sigma)
+
+                      ! sigma = sqrt(qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2 + &
+                      !              qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q1)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)**2 + &
+                      ! sigma = sqrt(qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q1)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)**2 + &
+                      !              qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q1)%vel(:, b4), dr%default_smearing(b4), 1.0_r8)**2)
+                        sigma = sqrt(sr%sigsq(q1, b1) + &
+                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
+                                     sr%sigsq(qp%ap(q4)%irreducible_index, b4))
+
+
+                      ! sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
+                      ! sigma = min(4.00_r8 * dr%default_smearing(b3), 4.00_r8 * dr%default_smearing(b4), sigma)
                     ! This removes pathological cases for the gaussian broadening
-                    if (sigma .lt. lo_freqtol) cycle
+                  ! if (sigma .lt. lo_freqtol) cycle
+                  !   if (sigma .lt. lo_freqtol) sigma = maxval(dr%default_smearing) * 0.25_r8
                     end select
 
                     if (abs(om1 + om2 + om3 + om4) .lt. thres * sigma .or. &
@@ -160,11 +179,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                         evp3 = conjg(evp3)
                         c0 = dot_product(evp3, ptf)
                         psisq = abs(c0*conjg(c0)) * prefactor
-
-                        ! Flat indices for the scattering matrix
-                        i2 = (q2 - 1) * dr%n_mode + b2
-                        i3 = (q3 - 1) * dr%n_mode + b3
-                        i4 = (q4 - 1) * dr%n_mode + b4
 
                         ! Prefactors, only the Bose-Einstein distributions
                         plf1 = n2p * n3p * n4p - n2 * n3 * n4
@@ -187,12 +201,15 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
                         ! And then to the scattering matrix
                         if (q1f .ne. q2 .or. b1 .ne. b2) then
+                            i2 = (q2 - 1) * dr%n_mode + b2
                             sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
                         end if
                         if (q1f .ne. q3 .or. b1 .ne. b3) then
+                            i3 = (q3 - 1) * dr%n_mode + b3
                             sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
                         end if
                         if (q1f .ne. q4 .or. b1 .ne. b4) then
+                            i4 = (q4 - 1) * dr%n_mode + b4
                             sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
                         end if
 

@@ -56,6 +56,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     !> If so, what is its multiplicity
     real(r8) :: mult
 
+    real(r8) :: tmp, sig1, sig2, sig3
+    integer :: ii, jj
+
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -104,19 +107,55 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
                 select case (integrationtype)
-
                 case (1)
                     sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                 case (2)
-                    veldiff = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)
-                    sigma = max(norm2(veldiff * gvec(1, :)), &
-                                norm2(veldiff * gvec(2, :)), &
-                                norm2(veldiff * gvec(3, :)))
+                  ! veldiff = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3) + lo_phonongroupveltol
+                  ! sigma = max(norm2(veldiff * gvec(1, :)), &
+                  !             norm2(veldiff * gvec(2, :)), &
+                  !             norm2(veldiff * gvec(3, :)))
 
-              ! Do we need this in the end ?
-                if (sigma .lt. lo_freqtol) cycle
-              ! sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b2), sigma)
-              ! sigma = min(4.00_r8 * dr%default_smearing(b3), 4.00_r8 * dr%default_smearing(b2), sigma)
+                  ! sigma = sqrt(qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2 + &
+                  !              qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)**2 + &
+                  ! sigma = sqrt(qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)**2 + &
+                  !              qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)**2)
+                  ! sigma = (qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8) + &
+                  !          qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8) + &
+                  !          qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q3)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)) / 3.0_r8
+
+                  !     sigma = min(qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8), &
+                  !                 qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q1)%vel(:, b2), dr%default_smearing(b2), 1.0_r8), &
+                  !                 qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q1)%vel(:, b3), dr%default_smearing(b3), 1.0_r8))
+
+                  !     sigma = (norm2(dr%iq(q1)%vel(:, b1)) + &
+                  !              norm2(dr%aq(q2)%vel(:, b2)) + &
+                  !              norm2(dr%aq(q3)%vel(:, b3))) * qp%ip(q1)%radius * lo_twopi / sqrt(2.0_r8)
+
+                  !     sig1 = norm2(dr%iq(q1)%vel(:, b1) * gvec(1, :)) + &
+                  !            norm2(dr%iq(q1)%vel(:, b1) * gvec(2, :)) + &
+                  !            norm2(dr%iq(q1)%vel(:, b1) * gvec(3, :))
+                  !     sig2 = norm2(dr%aq(q2)%vel(:, b2) * gvec(1, :)) + &
+                  !            norm2(dr%aq(q2)%vel(:, b2) * gvec(2, :)) + &
+                  !            norm2(dr%aq(q2)%vel(:, b2) * gvec(3, :))
+                  !     sig3 = norm2(dr%aq(q3)%vel(:, b3) * gvec(1, :)) + &
+                  !            norm2(dr%aq(q3)%vel(:, b3) * gvec(2, :)) + &
+                  !            norm2(dr%aq(q3)%vel(:, b3) * gvec(3, :))
+                  !     sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
+
+                        sigma = sqrt(sr%sigsq(q1, b1) + &
+                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+
+                  ! sigma = norm2(veldiff) * qp%ip(1)%radius
+
+                    ! Do we need this in the end ?
+                  ! if (sigma .lt. lo_freqtol) cycle
+                  ! sigma = max(0.25_r8 * minval(dr%default_smearing), sigma)
+                  ! sigma = min(4.00_r8 * maxval(dr%default_smearing), sigma)
+                  ! write(*, *) sigma / lo_frequency_THz_to_Hartree
+                  ! sigma = max(0.5_r8 * dr%default_smearing(b2), 0.5_r8 * dr%default_smearing(b3), sigma)
+                  ! sigma = min(2.00_r8 * dr%default_smearing(b2), 2.00_r8 * dr%default_smearing(b3), sigma)
+                  !  if (sigma .lt. lo_freqtol) sigma = maxval(dr%default_smearing) * 0.25_r8
             end select
 
                 ! Do we need to compute the scattering ?
@@ -135,10 +174,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
                     n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
 
-                    ! Get the index for the scattering matrix
-                    i2 = (q2 - 1) * dr%n_mode + b2
-                    i3 = (q3 - 1) * dr%n_mode + b3
-
                     ! The prefactor for the scattering, the 2.0_r8 comes from permutation of om2/om3
                     f0 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
                     f1 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
@@ -150,9 +185,11 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
 
                     ! And to the scattering matrix
                     if (q1f .ne. q2 .or. b1 .ne. b2) then
+                        i2 = (q2 - 1) * dr%n_mode + b2
                         sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
                     end if
                     if (q1f .ne. q3 .or. b1 .ne. b3) then
+                        i3 = (q3 - 1) * dr%n_mode + b3
                         sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3) * om3 / om1
                     end if
                 end if
