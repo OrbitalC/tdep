@@ -104,22 +104,12 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     ! We can start some precomputation
     allocate(sr%be(qp%n_irr_point, dr%n_mode))
     allocate(sr%sigsq(qp%n_irr_point, dr%n_mode))
-    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / dims(1)
-    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / dims(2)
-    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / dims(3)
+
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
 
-            sigma = (norm2(dr%iq(q1)%vel(:, b1) * gvec(1, :)) + &
-                     norm2(dr%iq(q1)%vel(:, b1) * gvec(2, :)) + &
-                     norm2(dr%iq(q1)%vel(:, b1) * gvec(3, :)))**2
-            sr%sigsq(q1, b1) = sigma
-        end do
-    end do
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            if (sr%sigsq(q1, b1) .lt. lo_phonongroupveltol) sr%sigsq(q1, b1) = maxval(sr%sigsq) / 5.0
+            sr%sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2
         end do
     end do
 

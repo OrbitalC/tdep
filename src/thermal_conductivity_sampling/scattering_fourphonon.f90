@@ -38,9 +38,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> The full qpoint grid, to be shuffled
     integer, dimension(:), allocatable :: qgridfull1, qgridfull2
     !> The qpoints in cartesian coordinates
-    real(r8), dimension(3) :: qv2, qv3, qv4, veldiff
-    !> The inverse reciprocal lattice vector
-    real(r8), dimension(3, 3) :: gvec
+    real(r8), dimension(3) :: qv2, qv3, qv4
     !> The complex scattering amplitude
     complex(r8) :: c0
     !> Frequencies, bose-einstein occupation and scattering strength
@@ -48,9 +46,9 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     ! The gaussian integration width
     real(r8) :: sigma
     !> Stuff for the linewidths
-    real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4, plf5, plf6, plf7, n1
+    real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4, plf5, plf6, plf7
     !> Integers for do loops
-    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4, q1f
+    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
@@ -73,13 +71,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     b1 = sr%b1(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
-    q1f = qp%ip(q1)%full_index
-
-    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / mcg%full_dims(1)
-    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / mcg%full_dims(2)
-    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / mcg%full_dims(3)
-
-    n1 = sr%be(q1, b1)
 
     ! Prepare the grid for the monte-carlo average
     call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -136,31 +127,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     case (1)
                         sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                     case (2)
-                      ! veldiff = dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4) + lo_phonongroupveltol
-                      ! sigma = max(norm2(veldiff * gvec(1, :)), &
-                      !             norm2(veldiff * gvec(2, :)), &
-                      !             norm2(veldiff * gvec(3, :)))
-
-                      ! if (sigma .lt. lo_freqtol) cycle
-
-                      ! sigma = max(0.25_r8 * minval(dr%default_smearing), sigma)
-                      ! sigma = min(4.00_r8 * maxval(dr%default_smearing), sigma)
-
-                      ! sigma = sqrt(qp%adaptive_sigma(qp%ip(q1)%radius, dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2 + &
-                      !              qp%adaptive_sigma(qp%ap(q2)%radius, dr%aq(q1)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)**2 + &
-                      ! sigma = sqrt(qp%adaptive_sigma(qp%ap(q3)%radius, dr%aq(q1)%vel(:, b3), dr%default_smearing(b3), 1.0_r8)**2 + &
-                      !              qp%adaptive_sigma(qp%ap(q4)%radius, dr%aq(q1)%vel(:, b4), dr%default_smearing(b4), 1.0_r8)**2)
                         sigma = sqrt(sr%sigsq(q1, b1) + &
                                      sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                      sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
                                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
-
-
-                      ! sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
-                      ! sigma = min(4.00_r8 * dr%default_smearing(b3), 4.00_r8 * dr%default_smearing(b4), sigma)
-                    ! This removes pathological cases for the gaussian broadening
-                  ! if (sigma .lt. lo_freqtol) cycle
-                  !   if (sigma .lt. lo_freqtol) sigma = maxval(dr%default_smearing) * 0.25_r8
                     end select
 
                     if (abs(om1 + om2 + om3 + om4) .lt. thres * sigma .or. &
@@ -199,47 +169,14 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                         ! Add everything to the linewidth, the pref comes from permutations
                         g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
 
-                        ! And then to the scattering matrix
-                        if (q1f .ne. q2 .or. b1 .ne. b2) then
-                            i2 = (q2 - 1) * dr%n_mode + b2
-                            sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
-                        end if
-                        if (q1f .ne. q3 .or. b1 .ne. b3) then
-                            i3 = (q3 - 1) * dr%n_mode + b3
-                            sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
-                        end if
-                        if (q1f .ne. q4 .or. b1 .ne. b4) then
-                            i4 = (q4 - 1) * dr%n_mode + b4
-                            sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
-                        end if
+                        i2 = (q2 - 1) * dr%n_mode + b2
+                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
 
-                     ! Those are formulas directly from the FourPhonon paper
-                     !  psisq = psisq * 12.0_r8  ! Different way to normalize the matrix elements
-                     !  plf1 = n2p * n3p  * n4 / n1 * psisq * lo_gauss(om1, -om2 - om3 + om4, sigma)
-                     !  plf2 = n2p * n4p  * n3 / n1 * psisq * lo_gauss(om1, -om2 - om4 + om3, sigma)
-                     !  plf3 = n3p * n4p  * n2 / n1 * psisq * lo_gauss(om1, -om3 - om4 + om2, sigma)
-                     !  plf4 = n2p * n3 * n4 / n1 * psisq * lo_gauss(om1, -om2 + om3 + om4, sigma)
-                     !  plf5 = n3p * n2 * n4 / n1 * psisq * lo_gauss(om1, -om3 + om2 + om4, sigma)
-                     !  plf6 = n4p * n2 * n3 / n1 * psisq * lo_gauss(om1, -om4 + om2 + om3, sigma)
-                     !  plf7 = n2 * n3 * n4 / n1 * psisq * lo_gauss(om1, om2 + om3 + om4, sigma)
+                        i3 = (q3 - 1) * dr%n_mode + b3
+                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
 
-                     !  ! Prefactors (or lack of) comes from permutations
-                     !  g0 = g0 + (plf1 + plf2 + plf3) + (plf4 + plf5 + plf6) + plf7
-
-                     !  i2 = (q2 - 1) * dr%n_mode + b2
-                     !  i3 = (q3 - 1) * dr%n_mode + b3
-                     !  i4 = (q4 - 1) * dr%n_mode + b4
-
-                     !  f0 = 0.5_r8 * (-plf1 - plf2 + plf3 - plf4 + plf5 + plf6) + plf7 / 6.0_r8
-                     !  sr%Xi(il, i2) = sr%Xi(il, i2) + f0 * om2 / om1
-                     !  f0 = 0.5_r8 * (-plf1 + plf2 - plf3 + plf4 - plf5 + plf6) + plf7 / 6.0_r8
-                     !  sr%Xi(il, i3) = sr%Xi(il, i3) + f0 * om3 / om1
-                     !  f0 = 0.5_r8 * (plf1 - plf2 - plf3 + plf4 + plf5 - plf6) + plf7 / 6.0_r8
-                     !  sr%Xi(il, i4) = sr%Xi(il, i4) + f0 * om4 / om1
-
-                       !sr%Xi(il, i2) = sr%Xi(il, i2) + (0.5_r8 * plf1 + 0.5_r8 * plf4 + plf7 / 6.0_r8) * om2 / om1
-                       !sr%Xi(il, i3) = sr%Xi(il, i3) + (0.5_r8 * plf2 + 0.5_r8 * plf5 + plf7 / 6.0_r8) * om3 / om1
-                       !sr%Xi(il, i4) = sr%Xi(il, i4) + (0.5_r8 * plf3 + 0.5_r8 * plf6 + plf7 / 6.0_r8) * om4 / om1
+                        i4 = (q4 - 1) * dr%n_mode + b4
+                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
                     end if
                 end do
             end do

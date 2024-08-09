@@ -27,8 +27,6 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    !> The inverse reciprocal lattice vector
-    real(r8), dimension(3, 3) :: gvec
     ! The q-point grid dimension
     integer, dimension(3) :: dims
     ! Eigenvectors
@@ -36,7 +34,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     ! prefactor and phonon buffers
     real(r8) :: om1, om2, sigma, psisq, prefactor, f0
     ! Integers for do loops
-    integer :: q1, b1, q2, b2, i, niso, q1f
+    integer :: q1, b1, q2, b2, i, niso
 
     q1 = sr%q1(il)
     b1 = sr%b1(il)
@@ -49,11 +47,6 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     class default
         call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
     end select
-    gvec(1, :) = uc%reciprocal_latticevectors(:, 1) / dims(1)
-    gvec(2, :) = uc%reciprocal_latticevectors(:, 2) / dims(2)
-    gvec(3, :) = uc%reciprocal_latticevectors(:, 3) / dims(3)
-
-    q1f = qp%ip(q1)%full_index
 
     do q2=1, qp%n_full_point
         prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
@@ -61,15 +54,12 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
-          ! sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
             select case (integrationtype)
             case (1)
                 sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
             case (2)
-                sigma = max(norm2(dr%aq(q2)%vel(:, b2) * gvec(1, :)), &
-                            norm2(dr%aq(q2)%vel(:, b2) * gvec(2, :)), &
-                            norm2(dr%aq(q2)%vel(:, b2) * gvec(3, :)))
-                if (sigma .lt. lo_freqtol) cycle
+                sigma = sqrt(sr%sigsq(q1, b1) + &
+                             sr%sigsq(qp%ap(q2)%irreducible_index, b2))
             end select
 
             if (abs(om1 - om2) .lt. thres * sigma) then
@@ -80,9 +70,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
 
                 f0 = psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
                 g0 = g0 + f0
-                if (q1f .ne. q2 .or. b1 .ne. b2) then
-                    sr%Xi(il, i) = sr%Xi(il, i) + f0 * om2 / om1
-                end if
+                sr%Xi(il, i) = sr%Xi(il, i) + f0 * om2 / om1
             end if
         end do
     end do
