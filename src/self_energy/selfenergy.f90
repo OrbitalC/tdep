@@ -197,7 +197,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     ! Helper for Fourier transforms
     complex(r8), dimension(dr%n_mode**4) :: evp3
     !> To precompute the bose-einstein distribution and the adaptive smearing parameter
-    real(r8), dimension(:, :), allocatable :: bose_einstein
+    real(r8), dimension(:, :), allocatable :: bose_einstein, sigmasquare
     ! The qpoints in cartesian coordinates
     real(r8), dimension(3) :: qv2, qv3, qv4
     ! The q-point grid dimension
@@ -207,7 +207,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> For the harmonic values
     real(r8) :: om1, om2, om3, om4, n2, n3, n4, n2p, n3p, n4p
     !> For the scattering
-    real(r8) :: psisq, sigma, prefactor, plf1, plf2, plf3, plf4, pref_sigma
+    real(r8) :: psisq, sigma, prefactor, plf1, plf2, plf3, plf4
     !> Integers for the do loops
     integer :: n, m, q1, b1, q2, b2, q3, b3, q4, b4, qi, qj
     !> Integer for the parallelization
@@ -247,15 +247,13 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
     ! Let's precompute the Bose-Einstein distribution since this will be used all over
     allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
+    allocate(sigmasquare(qp%n_irr_point, dr%n_mode))
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             bose_einstein(q1, b1) = lo_planck(temperature, dr%iq(q1)%omega(b1))
+            sigmasquare(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2
         end do
     end do
-
-    ! We can already precompute the prefactor for the adaptive broadening factor
-  ! pref_sigma = qp%ip(1)%radius * lo_twopi / sqrt(2.0_r8)
-    pref_sigma = qp%ip(1)%radius
 
     ! Let's prepare the non-negative least-squares
     allocate(A_inequal(ls%nbasis, ls%nbasis))
@@ -322,7 +320,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
                 psisq = isotope_scattering_strength(uc, egviso) * prefactor_iso * qp%ap(q2)%integration_weight
-                sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), 1.0_r8)
+                sigma = sqrt(sigmasquare(qp%ap(q2)%irreducible_index, b2))
                 do n=1, ls%nbasis
                     ymat(n) = ymat(n) + psisq * lo_gauss(ls%omega_n(n), om2, sigma) * om1 * om2
                 end do
@@ -366,10 +364,9 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
 
-                        ! The smearing for the gaussian integration
-                        sigma = norm2(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)) * pref_sigma
-                        sigma = max(0.25_r8 * dr%default_smearing(b2), 0.25_r8 * dr%default_smearing(b3), sigma)
-                        sigma = min(4.0_r8 * dr%default_smearing(b2), 4.0_r8 * dr%default_smearing(b3), sigma)
+                        sigma = sqrt(sigmasquare(q1, b1) + &
+                                     sigmasquare(qp%ap(q2)%irreducible_index, b2) + &
+                                     sigmasquare(qp%ap(q3)%irreducible_index, b3))
 
                         ! Projection of the IFC on this mode
                         evp2 = 0.0_r8
@@ -456,9 +453,10 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                             n4p = n4 + 1.0_r8
 
                             ! The smearing for the gaussian integration
-                            sigma = norm2(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4)) * pref_sigma
-                            sigma = max(0.25_r8 * dr%default_smearing(b3), 0.25_r8 * dr%default_smearing(b4), sigma)
-                            sigma = min(4.0_r8 * dr%default_smearing(b3), 4.0_r8 * dr%default_smearing(b4), sigma)
+                            sigma = sqrt(sigmasquare(q1, b1) + &
+                                         sigmasquare(qp%ap(q2)%irreducible_index, b2) + &
+                                         sigmasquare(qp%ap(q3)%irreducible_index, b3) + &
+                                         sigmasquare(qp%ap(q4)%irreducible_index, b4))
 
                             ! Projection of ths IFC on this mode
                             evp3 = 0.0_r8

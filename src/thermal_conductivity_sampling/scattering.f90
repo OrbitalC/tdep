@@ -69,8 +69,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    !> The inverse reciprocal lattice vector
-    real(r8), dimension(3, 3) :: gvec
     !> The q-point grid dimension
     integer, dimension(3) :: dims
     !> The random number generator
@@ -78,7 +76,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     !> To initialize the random number generator and timing
     real(r8) :: rseed, t0, sigma
     !> Some integers
-    integer :: q1, b1, q1f, il, j, k, nlocal_point, ctr
+    integer :: q1, b1, il, j, nlocal_point, ctr
     !> The grids for monte-carlo integration
     type(lo_montecarlo_grid) :: mcg3, mcg4
 
@@ -104,7 +102,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     ! We can start some precomputation
     allocate(sr%be(qp%n_irr_point, dr%n_mode))
     allocate(sr%sigsq(qp%n_irr_point, dr%n_mode))
-
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))

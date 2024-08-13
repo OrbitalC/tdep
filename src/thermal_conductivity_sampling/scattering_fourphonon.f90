@@ -48,7 +48,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> Stuff for the linewidths
     real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4, plf5, plf6, plf7
     !> Integers for do loops
-    integer :: i, q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4
+    integer :: q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity

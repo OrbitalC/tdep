@@ -27,8 +27,6 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    ! The q-point grid dimension
-    integer, dimension(3) :: dims
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
@@ -41,13 +39,6 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
-    select type(qp)
-    class is (lo_fft_mesh)
-        dims = qp%griddensity
-    class default
-        call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
-    end select
-
     do q2=1, qp%n_full_point
         prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
         do b2=1, dr%n_mode
@@ -56,7 +47,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
 
             select case (integrationtype)
             case (1)
-                sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
+                sigma = lo_frequency_THz_to_Hartree * smearing
             case (2)
                 sigma = sqrt(sr%sigsq(q1, b1) + &
                              sr%sigsq(qp%ap(q2)%irreducible_index, b2))
@@ -66,6 +57,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
                 i = (q2 - 1) * dr%n_mode + b2
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
+
                 psisq = isotope_scattering_strength(uc, egviso) * prefactor
 
                 f0 = psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
