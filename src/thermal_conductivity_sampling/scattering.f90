@@ -251,6 +251,7 @@ subroutine sr_destroy(sr)
     if (allocated(sr%q1)) deallocate(sr%q1)
     if (allocated(sr%b1)) deallocate(sr%b1)
     if (allocated(sr%be)) deallocate(sr%be)
+    if (allocated(sr%sigsq)) deallocate(sr%sigsq)
     sr%nlocal_point = -lo_hugeint
 end subroutine
 

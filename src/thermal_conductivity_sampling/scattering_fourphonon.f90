@@ -170,13 +170,16 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                         g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
 
                         i2 = (q2 - 1) * dr%n_mode + b2
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
+                        sr%Xi(il, i2) = sr%Xi(il, i2) + 6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
 
                         i3 = (q3 - 1) * dr%n_mode + b3
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
+                        sr%Xi(il, i3) = sr%Xi(il, i3) + 6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
 
                         i4 = (q4 - 1) * dr%n_mode + b4
-                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
+                        sr%Xi(il, i4) = sr%Xi(il, i4) + 6.0_r8 * (f0 - f1) + 2.0_r8 * (f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
                     end if
                 end do
             end do

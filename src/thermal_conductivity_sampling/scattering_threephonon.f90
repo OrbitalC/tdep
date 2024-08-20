@@ -97,13 +97,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
 
                 select case (integrationtype)
-                case (1)
-                    sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
-                case (2)
-                    sigma = sqrt(sr%sigsq(q1, b1) + &
-                                 sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-                                 sr%sigsq(qp%ap(q3)%irreducible_index, b3))
-            end select
+                    case (1)
+                        sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
+                    case (2)
+                        sigma = sqrt(sr%sigsq(q1, b1) + &
+                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+                end select
 
                 ! Do we need to compute the scattering ?
                 if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &
