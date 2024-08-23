@@ -18,8 +18,7 @@ type lo_opts
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: scftol             !< tolerance for the self-consistent linewidth
     real(flyt) :: btetol             !< tolerance for the self-consistent linewidth
-    integer :: niter                 !< Number of iteration for the self consistent linewidths
-    integer :: bteniter              !< Number of iteration for the self consistent linewidths
+    integer :: scfiterations         !< Number of iteration for the Boltzmann equation
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
@@ -118,11 +117,7 @@ subroutine parse(opts)
                  help='Do not consider isotope scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--niter', &
-                 help='Number of iterations for the self consistent computation of the linewidths.', &
-                 required=.false., act='store', def='-1', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--bte_niter', &
+    call cli%add(switch='--scfiterations', &
                  help='Number of iterations for the iterative Boltzmann equation.', &
                  required=.false., act='store', def='200', error=lo_status)
     if (lo_status .ne. 0) stop
@@ -177,8 +172,7 @@ subroutine parse(opts)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
     call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph)
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph)
-    call cli%get(switch='--niter', val=opts%niter)
-    call cli%get(switch='--bte_niter', val=opts%bteniter)
+    call cli%get(switch='--scfiterations', val=opts%scfiterations)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--threshold', val=opts%thres)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)

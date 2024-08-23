@@ -186,14 +186,14 @@ kappa: block
     call compute_qs(dr, qp, opts%temperature)
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
-    if (opts%bteniter .gt. 0) then
+    if (opts%scfiterations .gt. 0) then
         if (mw%talk) then
             write(*, *) ''
             write(*, *) '... solving iterative BTE'
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
                        'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
-        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%bteniter, opts%btetol, mw, mem)
+        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, mw, mem)
     end if
     call get_kappa(dr, qp, uc, opts%temperature, kappa)
     if (mw%talk) write(*, *) ''
