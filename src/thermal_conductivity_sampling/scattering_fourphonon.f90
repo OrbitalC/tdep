@@ -88,7 +88,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
         call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
         if (isred) cycle
-        mult = 1.0_r8
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
@@ -260,5 +259,5 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
+    mult = real(qp%ip(q1)%n_invariant_operation, r8) / mult
 end subroutine
