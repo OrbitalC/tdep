@@ -209,7 +209,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
             if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
         end do
-        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
 
         ! Reduce the linewidth
         call mw%allreduce('sum', buf_lw)
