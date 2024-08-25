@@ -166,7 +166,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
         t0 = walltime()
         if (mw%talk) call lo_progressbar_init()
-        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', 0, sr%nlocal_point, 0.0_r8)
+        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', 1, sr%nlocal_point, 0.0_r8)
         do il=1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then
@@ -192,7 +192,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             buf_lw(sr%q1(il), sr%b1(il)) = buf
 
             if (mw%talk .and. lo_trueNtimes(il, 127, sr%nlocal_point)) then
-          ! if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
                 call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
             end if
         end do
