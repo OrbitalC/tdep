@@ -91,6 +91,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     ! Initialize the random number generator
     call rng%init(iseed=mw%r, rseed=walltime())
 
+    if (mw%talk) write(*, *) '... creating Monte-Carlo grid'
     ! Initialize the monte-carlo grid
     if (opts%thirdorder) then
         call mcg3%initialize(dims, opts%qg3ph)
@@ -110,6 +111,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end do
     end do
 
+    if (mw%talk) write(*, *) '... distributing q-point/modes on MPI ranks'
     ! First we distribute qpoint and modes on mpi ranks
     ctr = 0
     nlocal_point = 0
@@ -151,25 +153,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end do
     end do
 
-    memory_estimate: block
-        real(r8), dimension(mw%n) :: mb
-        integer :: nrow, ncol
-
-        nrow = qp%n_irr_point * dr%n_mode
-        ncol = qp%n_full_point * dr%n_mode
-
-        mb(mw%r+1) = real(sr%size_in_mem(), r8) / 1024_r8**2
-        call mw%allreduce('sum', mb)
-        if (mw%talk) then
-            write(*, *) ''
-            write(*, *) 'Lower bound estimate of the memory usage :'
-            write(*, "(1X,A31,':',1X,I10,A2,I10)") 'size of the scattering matrix', nrow, 'x', ncol
-            write(*, "(1X,A31,':',4(1X,A20))") 'Memory usage (MiB)', 'total', 'avg per rank', 'max', 'min'
-            write(*, "(1X,A31,1X,4(1X,F20.6))") '', sum(mb), sum(mb) / mw%n, maxval(mb), minval(mb)
-            write(*, *) ''
-        end if
-    end block memory_estimate
-
     scatt: block
         !> Buffer to contains the linewidth
         real(r8), dimension(:, :), allocatable :: buf_lw
@@ -183,6 +166,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
         t0 = walltime()
         if (mw%talk) call lo_progressbar_init()
+        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', 0, sr%nlocal_point, 0.0_r8)
         do il=1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then
@@ -207,8 +191,12 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             ! Now we can update the linewidth for this mode
             buf_lw(sr%q1(il), sr%b1(il)) = buf
 
-            if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
+            if (mw%talk .and. lo_trueNtimes(il, 127, sr%nlocal_point)) then
+          ! if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
+                call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
+            end if
         end do
+        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
 
         ! Reduce the linewidth
         call mw%allreduce('sum', buf_lw)

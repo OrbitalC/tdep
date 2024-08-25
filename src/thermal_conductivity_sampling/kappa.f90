@@ -1,17 +1,15 @@
 #include "precompilerdefinitions"
 module kappa
-use konstanter, only: r8, lo_tol, lo_sqtol, lo_pi, lo_kb_hartree, lo_freqtol, lo_huge, lo_kappa_au_to_SI, &
+use konstanter, only: r8, lo_sqtol, lo_kb_hartree, lo_freqtol, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
-use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_gauss, &
-                          lo_real_nullspace_coefficient_matrix, lo_transpositionmatrix, lo_real_pseudoinverse, &
-                          lo_flattentensor, lo_unflatten_2tensor
+use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_symmetryoperation, only: lo_operate_on_vector, lo_eigenvector_transformation_matrix, &
-                                  lo_expandoperation_pair, lo_operate_on_secondorder_tensor
+                                  lo_operate_on_secondorder_tensor
 use type_blas_lapack_wrappers, only: lo_gemm, lo_gemv
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 
@@ -320,35 +318,23 @@ contains
     end function
 end subroutine
 
-subroutine symmetrize_kappa(kappa, kappa_sma, kappa_offdiag, uc)
-    !> The different kappa
-    real(r8), dimension(3, 3), intent(inout) :: kappa, kappa_sma, kappa_offdiag
+subroutine symmetrize_kappa(kappa, uc)
+    !> The kappa to symmetrize
+    real(r8), dimension(3, 3), intent(inout) :: kappa
     !> The unit cell
     type(lo_crystalstructure), intent(in) :: uc
 
-    real(r8), dimension(3, 3) :: tmp1, tmp2, tmp3, f0
+    real(r8), dimension(3, 3) :: tmp
     integer :: iop
 
-    tmp1 = 0.0_r8
-    tmp2 = 0.0_r8
-    tmp3 = 0.0_r8
+    tmp = 0.0_r8
     do iop=1, uc%sym%n
-        tmp1 = tmp1 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa)
-        tmp2 = tmp2 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa_sma)
-        tmp3 = tmp3 + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa_offdiag)
+        tmp = tmp + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa)
     end do
 
-    kappa = tmp1 / uc%sym%n
-    tmp1 = sum(abs(kappa))
-    kappa = lo_chop(kappa, tmp1*1e-6_r8)
-
-    kappa_sma = tmp2 / uc%sym%n
-    tmp2 = sum(abs(kappa_sma))
-    kappa_sma = lo_chop(kappa_sma, tmp2*1e-6_r8)
-
-    kappa_offdiag = tmp3 / uc%sym%n
-    tmp3 = sum(abs(kappa_offdiag))
-    kappa_offdiag = lo_chop(kappa_offdiag, tmp3*1e-6_r8)
+    kappa = tmp / uc%sym%n
+    tmp = sum(abs(kappa))
+    kappa = lo_chop(kappa, tmp*1e-6_r8)
 end subroutine
 
 subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)

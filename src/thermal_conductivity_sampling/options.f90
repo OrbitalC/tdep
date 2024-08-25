@@ -12,27 +12,23 @@ type lo_opts
     integer, dimension(3) :: qg4ph   !< The grid for the fourphonon integration
     logical :: readqmesh             !< read q-grid from file
     real(flyt) :: temperature        !< temperature
-    real(flyt) :: sigma              !< scaling factor for adaptice gaussian
+    real(flyt) :: sigma              !< scaling factor for adaptive gaussian
     real(flyt) :: thres              !< consider Gaussian 0 if x-mu is larger than this number times sigma.
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
-    real(flyt) :: scftol             !< tolerance for the self-consistent linewidth
-    real(flyt) :: btetol             !< tolerance for the self-consistent linewidth
+    real(flyt) :: btetol             !< tolerance for the iterative BTE
     integer :: scfiterations         !< Number of iteration for the Boltzmann equation
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
-    integer :: integrationtype      !< gaussian or tetrahedron
+    logical :: isotopescattering     !< use isotope scattering
+    integer :: integrationtype       !< adaptive or standard gaussian integration
 
-    integer :: correctionlevel       !< how hard to correct
     integer :: mfppts                !< number of points on mfp-plots
-    logical :: dumpgrid              !< print everything on a grid
-    !logical :: thinfilm             !< Austins thin film thing
 
     ! Debugging things
     logical :: timereversal
     logical :: qpsymmetry
-    logical :: isotopescattering
     !
     integer :: verbosity
 contains
@@ -71,8 +67,8 @@ subroutine parse(opts)
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--integrationtype', switch_ab='-it', &
-                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian and 3 Tetrahedron.', &
-                 required=.false., act='store', def='2', choices='1,2,3', error=lo_status)
+                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian.', &
+                 required=.false., act='store', def='2', choices='1,2', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
                  help='Not consider third order contributions to the scattering.',  &
@@ -101,17 +97,9 @@ subroutine parse(opts)
                  help='Add a limit on the mean free path as an approximation of domain size.', &
                  required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--scftol', &
-                 help='Tolerance for the self-consistent linewidth.', &
-                 required=.false., act='store', def='1e-2', error=lo_status)
-    if (lo_status .ne. 0) stop
     call cli%add(switch='--btetol', &
                  help='Tolerance for the iterative BTE solution.', &
                  required=.false., act='store', def='1e-5', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--dumpgrid', &
-                 help='Write files with q-vectors, frequencies, eigenvectors and group velocities for a grid.', &
-                 required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--noisotope', &
                  help='Do not consider isotope scattering.', &
@@ -143,10 +131,6 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nosym', hidden=.true., help='', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--correctionlevel', hidden=.true., &
-                 help='How agressively things are corrected due to broken symmetries.', &
-                 required=.false., act='store', def='4', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_manpage
     cli_verbose
@@ -185,11 +169,8 @@ subroutine parse(opts)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
-    call cli%get(switch='--scftol', val=opts%scftol)
     call cli%get(switch='--btetol', val=opts%btetol)
-    call cli%get(switch='--dumpgrid', val=opts%dumpgrid)
     ! stuff that's not really an option
-    call cli%get(switch='--correctionlevel', val=opts%correctionlevel)
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog
     call cli%get(switch='--nosym', val=dumlog)
@@ -206,14 +187,15 @@ subroutine parse(opts)
     ! Get things to atomic units
     opts%mfp_max = opts%mfp_max*lo_m_to_Bohr
 
+    ! Set automatic values for Monte-Carlo grids
     if (opts%thirdorder) then
         do i=1, 3
-            if (opts%qg3ph(i) .lt. 0) opts%qg3ph(i) = opts%qgrid(i)
+            if (opts%qg3ph(i) .lt. 0 .or. opts%qg3ph(i) .gt. opts%qgrid(i)) opts%qg3ph(i) = opts%qgrid(i)
         end do
     end if
     if (opts%fourthorder) then
         do i=1, 3
-            if (opts%qg4ph(i) .lt. 0) opts%qg4ph(i) = opts%qgrid(i)
+            if (opts%qg4ph(i) .lt. 0 .or. opts%qg4ph(i) .gt. opts%qgrid(i)) opts%qg4ph(i) = opts%qgrid(i)
         end do
     end if
 
