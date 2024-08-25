@@ -152,6 +152,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             sr%b1(il) = b1
         end do
     end do
+    if (mw%talk) write(*, *) '... Everything is ready, starting scattering computation'
 
     scatt: block
         !> Buffer to contains the linewidth
@@ -166,7 +167,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
         t0 = walltime()
         if (mw%talk) call lo_progressbar_init()
-        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', 1, sr%nlocal_point, 0.0_r8)
         do il=1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then

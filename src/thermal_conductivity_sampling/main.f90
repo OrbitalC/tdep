@@ -266,6 +266,8 @@ kappa: block
         write (u, "(A28)") '# Total thermal conductivity'
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
         write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+
+        close(u)
     end if
 
     timer_kappa = walltime() - timer_kappa
