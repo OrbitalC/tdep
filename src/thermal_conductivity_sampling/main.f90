@@ -52,7 +52,7 @@ initharmonic: block
     call mem%init()
 
     if (mw%talk) then
-        write(*, *) 'Recap of the parmeters governing the calculation'
+        write(*, *) 'Recap of the parameters governing the calculation'
         write(*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
         write(*, '(1X,A40,L3)') 'Thirdorder scattering                   ', opts%thirdorder
         write(*, '(1X,A40,L3)') 'Fourthorder scattering                  ', opts%fourthorder
