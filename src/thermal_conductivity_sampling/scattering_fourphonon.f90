@@ -52,7 +52,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
-    real(r8) :: mult
+    real(r8) :: mult, mult1, mult2, mult3, mult4
     !> All the prefactors for the scattering
     real(r8) :: f0, f1, f2, f3, f4, f5, f6, f7, f8
 
@@ -86,15 +86,16 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, mcg%full_dims)
         if (q4 .lt. q3) cycle
 
-        call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
-        if (isred) cycle
+!       TODO fix the invariance by symmetry to work with permutation invariance
+!       call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+!       if (isred) cycle
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
         qv4 = qp%ap(q4)%r
         call fcf%pretransform(qv2, qv3, qv4, ptf)
 
-        prefactor = fourphonon_prefactor * mcg%weight**2 * mult
+        prefactor = fourphonon_prefactor * mcg%weight**2
         do b2=1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -132,51 +133,61 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
                     end select
 
-                    if (abs(om1 + om2 + om3 + om4) .lt. thres * sigma .or. &
-                        abs(om1 - om2 - om4 - om3) .lt. thres * sigma .or. &
-                        abs(om1 + om2 - om3 - om4) .lt. thres * sigma .or. &
-                        abs(om1 - om2 + om3 + om4) .lt. thres * sigma .or. &
-                        abs(om1 + om3 - om2 - om4) .lt. thres * sigma .or. &
-                        abs(om1 - om3 + om2 + om4) .lt. thres * sigma .or. &
-                        abs(om1 + om4 - om2 - om3) .lt. thres * sigma .or. &
-                        abs(om1 - om4 + om2 + om3) .lt. thres) then
+                    egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
 
-                        egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+                    evp3 = 0.0_r8
+                    call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
+                    evp3 = conjg(evp3)
+                    c0 = dot_product(evp3, ptf)
+                    psisq = abs(c0*conjg(c0)) * prefactor
 
-                        evp3 = 0.0_r8
-                        call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
-                        evp3 = conjg(evp3)
-                        c0 = dot_product(evp3, ptf)
-                        psisq = abs(c0*conjg(c0)) * prefactor
-
-                        ! Prefactors, only the Bose-Einstein distributions
-                        plf1 = n2p * n3p * n4p - n2 * n3 * n4
-                        plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
-                        plf3 = 3.0_r8 * n3 * n2p * n4p - n3p * n2 * n4
-                        plf4 = 3.0_r8 * n4 * n3p * n2p - n4p * n3 * n2
-
-                        ! Prefactors, including the matrix elements and dirac
-                        f0 = 6.0_r8 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
-                        f1 = 6.0_r8 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
-                        f2 = 2.0_r8 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
-                        f3 = 2.0_r8 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
-                        f4 = 2.0_r8 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
-                        f5 = 2.0_r8 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
-                        f6 = 2.0_r8 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
-                        f7 = 2.0_r8 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
-
-                        ! Add everything to the linewidth, the pref comes from permutations
-                        g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
-
-                        i2 = (q2 - 1) * dr%n_mode + b2
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
-
-                        i3 = (q3 - 1) * dr%n_mode + b3
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
-
-                        i4 = (q4 - 1) * dr%n_mode + b4
-                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
+                    ! Take care of invariances caused by permutation
+                    if (q2 .eq. q3 .and. q3 .eq. q4) then
+                        mult1 = 1.0_r8
+                        mult2 = 1.0_r8
+                        mult3 = 1.0_r8
+                        mult4 = 1.0_r8
+                    else if ((q2 .ne. q3 .and. q3 .eq. q4) .or. &
+                                (q3 .ne. q2 .and. q2 .eq. q4) .or. &
+                                (q4 .ne. q2 .and. q2 .eq. q3)) then
+                        mult1 = 3.0_r8
+                        mult2 = 1.0_r8
+                        mult3 = 1.0_r8
+                        mult4 = 1.0_r8
+                    else
+                        mult1 = 6.0_r8
+                        mult2 = 2.0_r8
+                        mult3 = 2.0_r8
+                        mult4 = 2.0_r8
                     end if
+
+                    ! Prefactors, only the Bose-Einstein distributions
+                    plf1 = n2p * n3p * n4p - n2 * n3 * n4
+                    plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
+                    plf3 = 3.0_r8 * n3 * n2p * n4p - n3p * n2 * n4
+                    plf4 = 3.0_r8 * n4 * n3p * n2p - n4p * n3 * n2
+
+                    ! Prefactors, including the matrix elements and dirac
+                    f0 = mult1 * psisq * plf1 * lo_gauss(om1, om2 + om3 + om4, sigma)
+                    f1 = mult1 * psisq * plf1 * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                    f2 = mult2 * psisq * plf2 * lo_gauss(om1,-om2 + om3 + om4, sigma)
+                    f3 = mult2 * psisq * plf2 * lo_gauss(om1, om2 - om3 - om4, sigma)
+                    f4 = mult3 * psisq * plf3 * lo_gauss(om1,-om3 + om2 + om4, sigma)
+                    f5 = mult3 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
+                    f6 = mult4 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
+                    f7 = mult4 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
+
+                    ! Add everything to the linewidth, the pref comes from permutations
+                    g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
+
+                    i2 = (q2 - 1) * dr%n_mode + b2
+                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
+
+                    i3 = (q3 - 1) * dr%n_mode + b3
+                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
+
+                    i4 = (q4 - 1) * dr%n_mode + b4
+                    sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
                 end do
             end do
         end do
@@ -195,6 +206,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
+!TODO correct this to be working with permutation symmetry
 subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
@@ -250,7 +262,7 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
         end select
         ! The sorting allows to include permutation invariance
         call lo_qsort(qpp)
-        if (qpp(1) .gt. q2) then
+        if (qpp(1) .gt. q2 .or. qpp(2) .gt. q3) then
             isred = .true.
         ! For the weights, it's the same idea that for the triplet
         ! I compute the number of operations that let the quartet invariant

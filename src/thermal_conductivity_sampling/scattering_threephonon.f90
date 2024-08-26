@@ -52,7 +52,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     !> Is the triplet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
-    real(r8) :: mult
+    real(r8) :: mult, permutation_mult
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -75,9 +75,11 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
         q2 = qgridfull(qi)
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
+!       TODO fix the invariance by symmetry to work with permutation invariance
+!       call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_triplet)
+!       if (isred) cycle
 
-        call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
-        if (isred) cycle
+        prefactor = threephonon_prefactor * mcg%weight
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
@@ -87,7 +89,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
             if (om2 .lt. lo_freqtol) cycle
 
             egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
-            prefactor = threephonon_prefactor * mcg%weight * mult
 
             evp1 = 0.0_r8
             call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
@@ -105,37 +106,35 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                                      sr%sigsq(qp%ap(q3)%irreducible_index, b3))
                 end select
 
-                ! Do we need to compute the scattering ?
-                if (abs(om1 + om2 - om3) .lt. thres * sigma .or. &
-                    abs(om1 - om2 + om3) .lt. thres * sigma .or. &
-                    abs(om1 - om2 - om3) .lt. thres * sigma .or. &
-                    abs(om1 + om2 + om3) .lt. thres * sigma) then
+                evp2 = 0.0_r8
+                call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
+                evp2 = conjg(evp2)
+                c0 = dot_product(evp2, ptf)
+                psisq = abs(c0*conjg(c0)) * prefactor
 
-                    evp2 = 0.0_r8
-                    call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
-                    evp2 = conjg(evp2)
-                    c0 = dot_product(evp2, ptf)
-                    psisq = abs(c0*conjg(c0)) * prefactor
+                ! Let's get the Bose-Einstein distributions
+                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
 
-                    ! Let's get the Bose-Einstein distributions
-                    n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                    n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
+                ! The prefactor for the scattering
+                f0 = psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
+                f1 = psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
+                f2 = psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
+                f3 = psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
 
-                    ! The prefactor for the scattering, the 2.0_r8 comes from permutation of om2/om3
-                    f0 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma)
-                    f1 = 2.0_r8 * psisq * (n2 - n3) * lo_gauss(om1,  om2 - om3, sigma)
-                    f2 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, om2 + om3, sigma)
-                    f3 = 2.0_r8 * psisq * (n2 + n3 + 1.0_r8) * lo_gauss(om1, -om2 - om3, sigma)
-
-                    ! Add everything to the linewidth
-                    g0 = g0 + f0 - f1 + f2 - f3
-
-                    i2 = (q2 - 1) * dr%n_mode + b2
-                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1
-
-                    i3 = (q3 - 1) * dr%n_mode + b3
-                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3) * om3 / om1
+                if (q2 .eq. q3) then
+                    permutation_mult = 1.0_r8
+                else
+                    permutation_mult = 2.0_r8
                 end if
+                ! Add everything to the linewidth
+                g0 = g0 + (f0 - f1 + f2 - f3) * permutation_mult
+
+                i2 = (q2 - 1) * dr%n_mode + b2
+                sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3) * om2 / om1 * permutation_mult
+
+                i3 = (q3 - 1) * dr%n_mode + b3
+                sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3) * om3 / om1 * permutation_mult
             end do
         end do
     end do compute_loop
@@ -194,8 +193,8 @@ subroutine pretransform_phi3(fct, q2, q3, ptf)
     end do
 end subroutine
 
-
-subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
+! TODO fix this so that it works with permutation invariances
+subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_triplet)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> structure
@@ -206,6 +205,10 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     logical, intent(out) :: isred
     !> If it's reducible, what is its multiplicity
     real(r8), intent(out) :: mult
+    !> Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
+    !> The equivalent triplet
+    integer, dimension(:, :), allocatable, intent(out) :: red_triplet
 
     ! To hold the q-point in reduced coordinates
     real(r8), dimension(3) :: qv2, qv3, qv2p, qv3p
@@ -214,11 +217,16 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     !> The new triplet after the operation
     integer, dimension(2) :: qpp
     !> Integers for the loops
-    integer :: j, k
+    integer :: j, k, n
+
+    integer, dimension(:, :), allocatable :: newqp
 
     ! First get the q-points in reduce coordinates
     qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
     qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
+
+    allocate(newqp(2, qp%ip(q1)%n_invariant_operation*2))
+    newqp = -lo_hugeint
 
     mult = 0.0_r8
     isred = .false.
@@ -241,7 +249,11 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
             gi = qp%index_from_coordinate(qv3p)
             qpp(2) = qp%gridind2ind(gi(1), gi(2), gi(3))
         end select
-        if (minval(qpp) .gt. q2) then
+        ! If we got here, it means that the new triplet is on the grid
+
+        newqp(:, j) = qpp
+        call lo_qsort(qpp)
+        if (qpp(1) .gt. q2) then
             isred = .true.
         ! Now we have to determine the weight
         ! Two roads are possible
@@ -249,9 +261,12 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
         !      2. Look at the ratio between total number of operations and the ones
         !         that leaves this irreducible triplet unchanged
         ! The second road doesn't requires me to sum over all other qpoints, so I'll go with this one
-        else if (minval(qpp) .eq. q2 .and. maxval(qpp) .eq. q3) then
+        else if (qpp(1) .eq. q2 .and. qpp(2) .eq. q3) then
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
+    mult = real(qp%ip(q1)%n_invariant_operation, r8) / mult
+    ! We need to adjust for the permutation invariance
+    if (q2 .ne. q3) mult = 2.0_r8 * mult
+    call lo_return_unique(newqp, red_triplet)
 end subroutine
