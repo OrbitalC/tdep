@@ -2,7 +2,7 @@
 module kappa
 use konstanter, only: r8, lo_sqtol, lo_kb_hartree, lo_freqtol, lo_kappa_au_to_SI, &
                       lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
-use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop
+use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_harmonic_oscillator_cv
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -46,8 +46,8 @@ subroutine compute_qs(dr, qp, temperature)
             dr%iq(q1)%qs(b1) = 2.0_r8 * lw
             velnorm = norm2(dr%iq(q1)%vel(:, b1))
             if (velnorm .gt. lo_phonongroupveltol) then
-                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) * 0.5_r8 / lw
-                dr%iq(q1)%scalar_mfp(b1) = velnorm * 0.5_r8 / lw
+                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) / dr%iq(q1)%qs(b1)
+                dr%iq(q1)%scalar_mfp(b1) = velnorm / dr%iq(q1)%qs(b1)
                 dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
                 dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
             end if
@@ -70,29 +70,27 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     real(r8), dimension(3, 3), intent(out) :: kappa
 
     real(r8), dimension(3) :: v0, v1
-    real(r8) :: n1, f0, om1, prefactor
-    integer :: i, j, k, l
+    real(r8) :: f0, om1
+    integer :: j, k
 
     integer :: q1, b1
     real(r8), dimension(3, 3) :: v2, buf
-
-    prefactor = 1.0_r8/(uc%volume*lo_kb_hartree*temperature**2)
 
     kappa = 0.0_r8
     do q1=1, qp%n_irr_point
         dr%iq(q1)%kappa = 0.0_r8
         do b1=1, dr%n_mode
-            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+            om1 = dr%iq(q1)%omega(b1)
+            if (om1 .lt. lo_freqtol) cycle
+
             ! To ensure the symmetry, we average over the little group of each irreducible q-point
             v2 = 0.0_r8
             do j=1, uc%sym%n
                 v0 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%Fn(:, b1), reciprocal=.true.)
                 v1 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%vel(:, b1), reciprocal=.true.)
-                v2 = v2 + lo_outerproduct(v0, v1)
+                v2 = v2 + lo_outerproduct(v0, v1) / uc%sym%n
             end do
-            om1 = dr%iq(q1)%omega(b1)
-            n1 = lo_planck(temperature, om1)
-            buf = prefactor * om1**2 * n1 * (n1 + 1.0_r8) * v2 / uc%sym%n
+            buf = lo_harmonic_oscillator_cv(temperature, om1) * v2 / uc%volume
             dr%iq(q1)%kappa(:, :, b1) = buf
             kappa = kappa + buf * qp%ip(q1)%integration_weight
         end do
@@ -135,7 +133,8 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
         buf_vel = 0.0_r8
         buf_velsq = 0.0_r8
 
-        pref = 0.5_r8/(uc%volume*lo_kb_hartree*temperature**2)*qp%ip(iq)%integration_weight
+       !pref = 0.5_r8/(uc%volume*lo_kb_hartree*temperature**2)*qp%ip(iq)%integration_weight
+        pref = qp%ip(iq)%integration_weight / uc%volume
 
         ! Calculate the off-diagonal group velocity.
         groupvel: block
@@ -273,26 +272,24 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
             ! Skip gamma for acoustic branches
             if (dr%iq(iq)%omega(jmode) .lt. lo_freqtol) cycle
             om1 = dr%iq(iq)%omega(jmode)
-            do kmode = jmode, dr%n_mode
+            tau1 = dr%iq(iq)%linewidth(jmode)
+            do kmode = 1, dr%n_mode
                 ! We only compute the off diagonal contribution
-                if (jmode .eq. kmode) cycle
+                if (jmode .eq. kmode) cycle  ! We only want the off diagonal contribution
                 ! Skip gamma for acoustic branches
                 if (dr%iq(iq)%omega(kmode) .lt. lo_freqtol) cycle
 
                 om2 = dr%iq(iq)%omega(kmode)
-                n1 = lo_planck(temperature, om1)
-                n2 = lo_planck(temperature, om2)
-                tau1 = dr%iq(iq)%linewidth(jmode)
                 tau2 = dr%iq(iq)%linewidth(kmode)
 
-                f0 = n1 * (n2 + 1) + n2 * (n1 + 1)
-                f0 = f0 * (om1 + om2)**2 / 4.0_r8
+                ! This is consistent with the paper, but a bit different from QHGK
+                ! This probably comes from the fact that we don't work with creation/annihilation but
+                ! directly with displacement/momentup operator
+                f0 = 0.5_r8 * (lo_harmonic_oscillator_cv(temperature, om1) + &
+                               lo_harmonic_oscillator_cv(temperature, om2))
+
                 tau = (tau1 + tau2) / ((tau1 + tau2)**2 + (om1 - om2)**2)
                 kappa_offdiag(:, :) = kappa_offdiag(:, :) + buf_velsq(:, :, jmode, kmode) * tau * f0 * pref
-
-                ! We just have to reverse the difference between the frequencies in the somewhat lorentzian tau
-                tau = (tau1 + tau2) / ((tau1 + tau2)**2 + (om2 - om1)**2)
-                kappa_offdiag(:, :) = kappa_offdiag(:, :) + buf_velsq(:, :, kmode, jmode)*tau*f0*pref
             end do ! k mode
         end do ! j mode
     end do ! i qpt
@@ -421,7 +418,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
             do il=1, sr%nlocal_point
                 q1 = sr%q1(il)
                 b1 = sr%b1(il)
-                Fnb(:, b1, q1) = Fnb(:, b1, q1) - buf(:, il) / dr%iq(q1)%qs(b1)
+                Fnb(:, b1, q1) = -buf(:, il) / dr%iq(q1)%qs(b1)
             end do
             call mw%allreduce('sum', Fnb)
         end block applyXi

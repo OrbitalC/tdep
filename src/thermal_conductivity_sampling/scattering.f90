@@ -11,13 +11,13 @@ use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_fft_mesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
+use type_symmetryoperation, only: lo_operate_on_vector
 use lo_randomnumbers, only: lo_mersennetwister
 use lo_fftgrid_helper, only: lo_montecarlo_grid, singlet_to_triplet, triplet_to_singlet, &
                              fft_third_grid_index, fft_fourth_grid_index
 
 use options, only: lo_opts
 
-use type_symmetryoperation, only: lo_operate_on_vector
 use lo_sorting, only: lo_qsort
 
 implicit none
@@ -69,98 +69,102 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
-    !> The q-point grid dimension
-    integer, dimension(3) :: dims
     !> The random number generator
     type(lo_mersennetwister) :: rng
-    !> To initialize the random number generator and timing
-    real(r8) :: rseed, t0, sigma
-    !> Some integers
-    integer :: q1, b1, il, j, nlocal_point, ctr
     !> The grids for monte-carlo integration
     type(lo_montecarlo_grid) :: mcg3, mcg4
 
-    ! grid dimensions
-    select type(qp)
-    class is (lo_fft_mesh)
-        dims = qp%griddensity
-    class default
-        call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
-    end select
+    init: block
+        !> To initialize the random number generator and timing
+        real(r8) :: rseed, sigma
+        !> The q-point grid dimension
+        integer, dimension(3) :: dims
+        !> Some integers for the do loop/indices
+        integer :: q1, b1, il, j, nlocal_point, ctr
 
-    ! Initialize the random number generator
-    call rng%init(iseed=mw%r, rseed=walltime())
+        ! grid dimensions
+        select type(qp)
+        class is (lo_fft_mesh)
+            dims = qp%griddensity
+        class default
+            call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
+        end select
 
-    if (mw%talk) write(*, *) '... creating Monte-Carlo grid'
-    ! Initialize the monte-carlo grid
-    if (opts%thirdorder) then
-        call mcg3%initialize(dims, opts%qg3ph)
-    end if
-   if (opts%fourthorder) then
-       call mcg4%initialize(dims, opts%qg4ph)
-   end if
+        ! Initialize the random number generator
+        call rng%init(iseed=mw%r, rseed=walltime())
 
-    ! We can start some precomputation
-    allocate(sr%be(qp%n_irr_point, dr%n_mode))
-    allocate(sr%sigsq(qp%n_irr_point, dr%n_mode))
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
+        if (mw%talk) write(*, *) '... creating Monte-Carlo grid'
+        ! Initialize the monte-carlo grid
+        if (opts%thirdorder) then
+            call mcg3%initialize(dims, opts%qg3ph)
+        end if
+        if (opts%fourthorder) then
+            call mcg4%initialize(dims, opts%qg4ph)
+        end if
 
-            sr%sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2
+        ! We can start some precomputation
+        allocate(sr%be(qp%n_irr_point, dr%n_mode))
+        allocate(sr%sigsq(qp%n_irr_point, dr%n_mode))
+        sr%be = 0.0_r8
+        sr%sigsq = 0.0_r8
+        do q1=1, qp%n_irr_point
+            do b1=1, dr%n_mode
+                sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
+
+                sr%sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), opts%sigma)**2
+            end do
         end do
-    end do
 
-    if (mw%talk) write(*, *) '... distributing q-point/modes on MPI ranks'
-    ! First we distribute qpoint and modes on mpi ranks
-    ctr = 0
-    nlocal_point = 0
-    do q1 =1, qp%n_irr_point
-        do b1 = 1, dr%n_mode
-            ! We skip the acoustic mode at Gamma
-            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-            ctr = ctr + 1
+        if (mw%talk) write(*, *) '... distributing q-point/modes on MPI ranks'
+        ctr = 0
+        nlocal_point = 0
+        do q1 =1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
+                ! We skip the acoustic mode at Gamma
+                if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+                ctr = ctr + 1
 
-            ! MPI thing
-            if (mod(ctr, mw%n) .ne. mw%r) cycle
-            nlocal_point = nlocal_point + 1
+                ! MPI thing
+                if (mod(ctr, mw%n) .ne. mw%r) cycle
+                nlocal_point = nlocal_point + 1
+            end do
         end do
-    end do
 
-    ! We can allocate all we need
-    sr%nlocal_point = nlocal_point
-    allocate(sr%q1(nlocal_point))
-    allocate(sr%b1(nlocal_point))
-    allocate(sr%Xi(nlocal_point, qp%n_full_point * dr%n_mode))
+        ! We can allocate all we need
+        sr%nlocal_point = nlocal_point
+        allocate(sr%q1(nlocal_point))
+        allocate(sr%b1(nlocal_point))
+        allocate(sr%Xi(nlocal_point, qp%n_full_point * dr%n_mode))
+        sr%q1 = -lo_hugeint
+        sr%b1 = -lo_hugeint
+        sr%Xi = 0.0_r8
 
-    ! Let's set it to zero
-    sr%Xi = 0.0_r8
+        ! Let's attribute the q1/b1 indices to the ranks
+        il = 0
+        ctr = 0
+        do q1=1, qp%n_irr_point
+            do b1=1, dr%n_mode
+                ! We skip the acoustic mode at Gamma
+                if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+                ctr = ctr + 1
 
-    ! Let's attribute the q1/b1 indices to the ranks
-    il = 0
-    ctr = 0
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            ! We skip the acoustic mode at Gamma
-            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-            ctr = ctr + 1
-
-            ! MPI thing
-            if (mod(ctr, mw%n) .ne. mw%r) cycle
-            il = il + 1
-            sr%q1(il) = q1
-            sr%b1(il) = b1
+                ! MPI thing
+                if (mod(ctr, mw%n) .ne. mw%r) cycle
+                il = il + 1
+                sr%q1(il) = q1
+                sr%b1(il) = b1
+            end do
         end do
-    end do
-    if (mw%talk) write(*, *) '... Everything is ready, starting scattering computation'
+        if (mw%talk) write(*, *) '... Everything is ready, starting scattering computation'
+    end block init
 
     scatt: block
         !> Buffer to contains the linewidth
         real(r8), dimension(:, :), allocatable :: buf_lw
         !> Buffer for the linewidth of the local point
-        real(r8) :: buf, f0, velnorm
+        real(r8) :: buf, f0, velnorm, t0
         !> Some integers for the loops
-        integer :: j, q1, b1, b2
+        integer :: il, j, q1, b1, b2
 
         call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         buf_lw = 0.0_r8

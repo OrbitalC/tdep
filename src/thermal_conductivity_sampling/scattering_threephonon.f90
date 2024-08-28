@@ -83,7 +83,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
         q2 = qgridfull(qi)
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
-        call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_triplet)
+        call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, mw, mem)
         if (isred) cycle
 
         ! Let's compute the multiplicity due to permutation now
@@ -113,9 +113,12 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     case (1)
                         sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                     case (2)
-                        sigma = sqrt(sr%sigsq(q1, b1) + &
-                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+!                       sigma = sqrt(sr%sigsq(q1, b1) + &
+!                                    sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+!                                    sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+                        sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3), &
+                                                     min(dr%default_smearing(b2), dr%default_smearing(b3)), &
+                                                     smearing)
                 end select
 
                 ! This is the multiplication of eigv of phonons 1 and 2 and now 3
@@ -207,7 +210,7 @@ subroutine pretransform_phi3(fct, q2, q3, ptf)
     end do
 end subroutine
 
-subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_triplet)
+subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, mw, mem)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> structure
@@ -218,10 +221,12 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_trip
     logical, intent(out) :: isred
     !> If it's reducible, what is its multiplicity
     integer, intent(out) :: mult
-    !> Memory helper
-    type(lo_mem_helper), intent(inout) :: mem
     !> The equivalent triplet
     integer, dimension(:, :), allocatable, intent(out) :: red_triplet
+    !> Mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
 
     !> The new-qpoints and the temporary invariant triplet
     integer, dimension(:, :), allocatable :: newqp, tmp_triplet
@@ -230,7 +235,7 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_trip
     !> To get the index of the new triplet on the fft_grid
     integer, dimension(3) :: gi
     !> The new triplet after the operation
-    integer, dimension(2) :: qpp, ind_qsort
+    integer, dimension(2) :: qpp
     !> Integers for the loops
     integer :: j, k, n, ctr, ctr2
 
@@ -281,6 +286,12 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_trip
     end do
     mult = qp%ip(q1)%n_invariant_operation / mult
 
+    ! For stability, replace points not on the grid with starting q-point
+    ! Should not be needed if the grid respect the symmetries of the lattice though
+    do j=1, qp%ip(q1)%n_invariant_operation
+        if (minval(newqp(:, j)) .lt. 0) newqp(:, j) = [q2, q3]
+    end do
+
     ! Now we need the unique triplet after applying symmetries
     call lo_return_unique(newqp, tmp_triplet)
     n = size(tmp_triplet, 2)
@@ -319,4 +330,13 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, mem, red_trip
             ctr = ctr + 1
         end if
     end do
+    deallocate(tmp_triplet)
+    deallocate(newqp)
+
+    if (size(red_triplet, 2) .ne. mult) then
+        call lo_stop_gracefully( &
+            ['The multiplicity and the number of reduced triplet do not agree.       ', &
+             'Check that your q-grid respect the space group symmetry of your system.'], &
+             lo_exitcode_param, __FILE__, __LINE__, mw%comm)
+    end if
 end subroutine

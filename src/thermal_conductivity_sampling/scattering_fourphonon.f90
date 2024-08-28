@@ -48,13 +48,15 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> Stuff for the linewidths
     real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf1, plf2, plf3, plf4, plf5, plf6, plf7
     !> Integers for do loops
-    integer :: q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4
+    integer :: q1, q2, q3, q4, b1, b2, b3, b4, qi, qj, i2, i3, i4, i
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
     real(r8) :: mult, mult1, mult2, mult3, mult4
     !> All the prefactors for the scattering
-    real(r8) :: f0, f1, f2, f3, f4, f5, f6, f7, f8
+    real(r8) :: f0, f1, f2, f3, f4, f5, f6, f7, fall
+    !> The reducible triplet corresponding to the currently computed quartet
+    integer, dimension(:, :), allocatable :: red_quartet
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -87,8 +89,9 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
         if (q4 .lt. q3) cycle
 
 !       TODO fix the invariance by symmetry to work with permutation invariance
-!       call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+!       call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult, red_quartet, mw, mem)
 !       if (isred) cycle
+!       stop
 
         qv2 = qp%ap(q2)%r
         qv3 = qp%ap(q3)%r
@@ -127,10 +130,13 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     case (1)
                         sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                     case (2)
-                        sigma = sqrt(sr%sigsq(q1, b1) + &
-                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
-                                     sr%sigsq(qp%ap(q4)%irreducible_index, b4))
+!                       sigma = sqrt(sr%sigsq(q1, b1) + &
+!                                    sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+!                                    sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
+!                                    sr%sigsq(qp%ap(q4)%irreducible_index, b4))
+                        sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b3) - dr%aq(q3)%vel(:, b4), &
+                                                     min(dr%default_smearing(b3), dr%default_smearing(b4)), &
+                                                     smearing)
                     end select
 
                     egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
@@ -176,18 +182,32 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     f5 = mult3 * psisq * plf3 * lo_gauss(om1, om3 - om2 - om4, sigma)
                     f6 = mult4 * psisq * plf4 * lo_gauss(om1,-om4 + om3 + om2, sigma)
                     f7 = mult4 * psisq * plf4 * lo_gauss(om1, om4 - om3 - om2, sigma)
+                    fall = f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
 
                     ! Add everything to the linewidth, the pref comes from permutations
-                    g0 = g0 + f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7
+                    g0 = g0 + fall
 
                     i2 = (q2 - 1) * dr%n_mode + b2
-                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om2 / om1
+                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * fall * om2 / om1
 
                     i3 = (q3 - 1) * dr%n_mode + b3
-                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om3 / om1
+                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * fall * om3 / om1
 
                     i4 = (q4 - 1) * dr%n_mode + b4
-                    sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * (f0 - f1 + f2 - f3 + f4 - f5 + f6 - f7) * om4 / om1
+                    sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * fall * om4 / om1
+
+!                   do i=1, size(red_quartet, 2)
+!                       g0 = g0 + fall
+
+!                       i2 = (red_quartet(1, i) - 1) * dr%n_mode + b2
+!                       sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8 * fall * om2 / om1
+
+!                       i3 = (red_quartet(2, i) - 1) * dr%n_mode + b3
+!                       sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8 * fall * om3 / om1
+
+!                       i4 = (red_quartet(3, i) - 1) * dr%n_mode + b4
+!                       sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8 * fall * om4 / om1
+!                   end do
                 end do
             end do
         end do
@@ -207,7 +227,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 end subroutine
 
 !TODO correct this to be working with permutation symmetry
-subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
+subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult, red_quartet, mw, mem)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> structure
@@ -218,7 +238,15 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     logical, intent(out) :: isred
     !> If it's reducible, what is its multiplicity
     real(r8), intent(out) :: mult
+    !> The equivalent triplet
+    integer, dimension(:, :), allocatable, intent(out) :: red_quartet
+    !> Mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> Memory helper
+    type(lo_mem_helper), intent(inout) :: mem
 
+    !> The new-qpoints and the temporary invariant triplet
+    integer, dimension(:, :), allocatable :: newqp, tmp_quartet
     ! To hold the q-point in reduced coordinates
     real(r8), dimension(3) :: qv2, qv3, qv4, qv2p, qv3p, qv4p
     !> To get the index of the new triplet on the fft_grid
@@ -226,12 +254,15 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     !> The new triplet after the operation
     integer, dimension(3) :: qpp
     !> Integers for the loops
-    integer :: j, k
+    integer :: j, k, n, ctr, ctr2
 
     ! First get the reciprocal lattice vectors, in reduce coordinates
     qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
     qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
     qv4 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q4)%r)
+
+    allocate(newqp(3, qp%ip(q1)%n_invariant_operation))
+    newqp = -lo_hugeint
 
     isred = .false.
     mult = 0.0_r8
@@ -260,6 +291,7 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
             gi = qp%index_from_coordinate(qv4p)
             qpp(3) = qp%gridind2ind(gi(1), gi(2), gi(3))
         end select
+        newqp(:, j) = qpp
         ! The sorting allows to include permutation invariance
         call lo_qsort(qpp)
         if (qpp(1) .gt. q2 .or. qpp(2) .gt. q3) then
@@ -272,4 +304,50 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
         end if
     end do
     mult = real(qp%ip(q1)%n_invariant_operation, r8) / mult
+
+    call lo_return_unique(newqp, tmp_quartet)
+    n = size(tmp_quartet, 2)
+
+    write(*, *) tmp_quartet
+!   allocate(red_quartet(2, n))
+!   red_quartet = tmp_quartet
+
+    ! Now we have the same problem of permutation as in the third order
+    ! So first, we count the quartet equivalent by permutation, a little bit harder
+    ctr = 0
+    do j=1, n
+        ctr2 = 0
+        do k=j, n
+            if (k .eq. j) cycle
+            if ((tmp_quartet(1, j) .eq. tmp_quartet(2, k)) .and. (tmp_quartet(2, j) .eq. tmp_quartet(3, k)) .or. &
+                (tmp_quartet(1, j) .eq. tmp_quartet(2, k)) .and. (tmp_quartet(1, j) .eq. tmp_quartet(3, k))) then
+                ctr2 = ctr2 + 1
+            end if
+        end do
+        if (ctr2 .eq. 0) ctr = ctr + 1
+    end do
+
+    ! Now we can create the list of equivalent quartet with permutation removed
+    allocate(red_quartet(2, ctr))
+    ctr = 1
+    do j=1, n
+        ctr2 = 0
+        do k=j, n
+        end do
+        if (ctr2 .eq. 0) then
+            red_quartet(1, ctr) = tmp_quartet(1, j)
+            red_quartet(2, ctr) = tmp_quartet(2, j)
+            red_quartet(3, ctr) = tmp_quartet(3, j)
+            ctr = ctr + 1
+        end if
+    end do
+    deallocate(tmp_quartet)
+    deallocate(newqp)
+    if (size(red_quartet, 2) .ne. mult) then
+        call lo_stop_gracefully( &
+            ['The multiplicity and the number of reduced quartet do not agree, check that your q-grid can respect the symmetry of your system'], &
+             lo_exitcode_param, __FILE__, __LINE__, mw%comm)
+    end if
+
+
 end subroutine
