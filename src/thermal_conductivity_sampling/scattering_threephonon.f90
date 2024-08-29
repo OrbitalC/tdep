@@ -51,14 +51,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     integer :: qi, q1, q2, q3, b1, b2, b3, i2, i3, i
     !> Is the triplet irreducible ?
     logical :: isred
-    !> If so, what is its multiplicity
-    integer :: mult
     !> Also what is the prefactor due to permutation ?
     real(r8) :: permutation_mult
     !> The reducible triplet corresponding to the currently computed triplet
     integer, dimension(:, :), allocatable :: red_triplet
-
-    integer :: aaa
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -83,7 +79,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
         q2 = qgridfull(qi)
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
-        call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, mw, mem)
+        call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, red_triplet, mw, mem)
         if (isred) cycle
 
         ! Let's compute the multiplicity due to permutation now
@@ -113,12 +109,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     case (1)
                         sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
                     case (2)
-!                       sigma = sqrt(sr%sigsq(q1, b1) + &
-!                                    sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-!                                    sr%sigsq(qp%ap(q3)%irreducible_index, b3))
-                        sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3), &
-                                                     min(dr%default_smearing(b2), dr%default_smearing(b3)), &
-                                                     smearing)
+                        sigma = sqrt(sr%sigsq(q1, b1) + &
+                                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                                     sr%sigsq(qp%ap(q3)%irreducible_index, b3))
                 end select
 
                 ! This is the multiplication of eigv of phonons 1 and 2 and now 3
@@ -143,7 +136,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 fall = permutation_mult * psisq * (f0 - f1 + f2 - f3)
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
-                do i=1, mult
+                do i=1, size(red_triplet, 2)
                     g0 = g0 + fall
 
                     i2 = (red_triplet(1, i) - 1) * dr%n_mode + b2
@@ -163,6 +156,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    deallocate(red_triplet)
 end subroutine
 
 !> Get the Fourier transform of the third order matrix element
@@ -210,7 +204,7 @@ subroutine pretransform_phi3(fct, q2, q3, ptf)
     end do
 end subroutine
 
-subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, mw, mem)
+subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, red_triplet, mw, mem)
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     !> structure
@@ -219,8 +213,6 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, 
     integer, intent(in) :: q1, q2, q3
     !> Is the triplet reducible ?
     logical, intent(out) :: isred
-    !> If it's reducible, what is its multiplicity
-    integer, intent(out) :: mult
     !> The equivalent triplet
     integer, dimension(:, :), allocatable, intent(out) :: red_triplet
     !> Mpi helper
@@ -229,114 +221,114 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult, red_triplet, 
     type(lo_mem_helper), intent(inout) :: mem
 
     !> The new-qpoints and the temporary invariant triplet
-    integer, dimension(:, :), allocatable :: newqp, tmp_triplet
-    ! To hold the q-point in reduced coordinates
-    real(r8), dimension(3) :: qv2, qv3, qv2p, qv3p
-    !> To get the index of the new triplet on the fft_grid
-    integer, dimension(3) :: gi
-    !> The new triplet after the operation
-    integer, dimension(2) :: qpp
-    !> Integers for the loops
-    integer :: j, k, n, ctr, ctr2
+    integer, dimension(:, :), allocatable :: newqp, newqp_sort
+    !> An integer to keep size of thing
+    integer :: n
 
-    ! First get the q-points in reduce coordinates
-    qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
-    qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
+    ! Little explanation of what is happening here
+    ! First I generate all triplet point that are equivalent in the little star of q1
+    ! Also, I return the fact that it's irreducible if I possible by permutation
+    ! Then I remove the doublet (including permutation) in order to return the list of equivalent triplet
+    ! With this, I can generate equivalent triplet even if the grid does not respect the space group of the crystal
+    ! You should make your grid respect it, but you never now
 
-    allocate(newqp(2, qp%ip(q1)%n_invariant_operation))
+    n = qp%ip(q1)%n_invariant_operation
+
+    ! We will need this to keep equivalent point
+    call mem%allocate(newqp, [2, n], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(newqp_sort, [2, n], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     newqp = -lo_hugeint
+    newqp_sort = -lo_hugeint
 
-    mult = 0
-    isred = .false.
-    ! Let's try all operations that leaves q1 invariant
-    do j=1, qp%ip(q1)%n_invariant_operation
-        k = qp%ip(q1)%invariant_operation(j)
-        qpp = -lo_hugeint
-        select type(qp); type is(lo_fft_mesh)
-            ! Rotate q2 and look if it's the on grid
-            qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
-            if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+    ! The first part is to generate all qpoint invariant in little star of q1
+    get_equivalent: block
+        !> To hold the q-point in reduced coordinates
+        real(r8), dimension(3) :: qv2, qv3, qv2p, qv3p
+        !> To get the index of the new triplet on the fft_grid
+        integer, dimension(3) :: gi
+        !> The new triplet after the operation
+        integer, dimension(2) :: qpp
+        !> Integers for the do loops
+        integer :: j, k
 
-            ! Rotate q3 and look if it's the on grid
-            qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
-            if (qp%is_point_on_grid(qv3p) .eqv. .false.) cycle
+        ! First get the q-points in reduce coordinates
+        qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+        qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
 
-            ! If everything is on the grid, get the index of each point
-            gi = qp%index_from_coordinate(qv2p)
-            qpp(1) = qp%gridind2ind(gi(1), gi(2), gi(3))
-            gi = qp%index_from_coordinate(qv3p)
-            qpp(2) = qp%gridind2ind(gi(1), gi(2), gi(3))
-        end select
-        ! If we got here, it means that the new triplet is on the grid
+        isred = .false.
+        ! Let's try all operations that leaves q1 invariant
+        do j=1, n
+            k = qp%ip(q1)%invariant_operation(j)
+            qpp = -lo_hugeint
+            select type(qp); type is(lo_fft_mesh)
+                ! Rotate q2 and look if it's the on grid
+                qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+                if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
 
-        ! We need to get the reducible q-triplet before the sorting
-        newqp(:, j) = qpp
-        call lo_qsort(qpp)
-        if (qpp(1) .gt. q2) then
-            isred = .true.
-        ! Now we have to determine the weight
-        ! Two roads are possible
-        !      1. Get the ratio of number of red point that can give this irreducible point
-        !      2. Look at the ratio between total number of operations and the ones
-        !         that leaves this irreducible triplet unchanged
-        ! The second road doesn't requires me to sum over all other qpoints, so I'll go with this one
-        else if (qpp(1) .eq. q2 .and. qpp(2) .eq. q3) then
-            mult = mult + 1
+                ! Rotate q3 and look if it's the on grid
+                qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
+                if (qp%is_point_on_grid(qv3p) .eqv. .false.) cycle
+
+                ! If everything is on the grid, get the index of each point
+                gi = qp%index_from_coordinate(qv2p)
+                qpp(1) = qp%gridind2ind(gi(1), gi(2), gi(3))
+                gi = qp%index_from_coordinate(qv3p)
+                qpp(2) = qp%gridind2ind(gi(1), gi(2), gi(3))
+            end select
+            ! If we got here, it means that the new triplet is on the grid
+            ! We need to keep the symmetry equivalent point in the order they came in
+            newqp(:, j) = qpp
+            ! We also need them sorted, to check for redundancy and reducibility
+            call lo_qsort(qpp)
+            newqp_sort(:, j) = qpp
+            ! Now I check if I can reduce this triplet
+            if (qpp(1) .gt. q2) isred = .true.
+        end do
+
+        ! For stability, replace points not on the grid with starting q-point
+        ! Should not be needed if the grid respect the symmetries of the lattice though
+        if (minval(newqp) .lt. 0) then
+            do j=1, n
+                if (any(newqp(:, j) .lt. 0)) then
+                    newqp(:, j) = [q2, q3]
+                    newqp_sort(:, j) = [q2, q3]
+                end if
+            end do
         end if
-    end do
-    mult = qp%ip(q1)%n_invariant_operation / mult
+    end block get_equivalent
 
-    ! For stability, replace points not on the grid with starting q-point
-    ! Should not be needed if the grid respect the symmetries of the lattice though
-    do j=1, qp%ip(q1)%n_invariant_operation
-        if (minval(newqp(:, j)) .lt. 0) newqp(:, j) = [q2, q3]
-    end do
+    ! Then we just get rid of redundant point in the list
+    sort_reducible: block
+        !> Integers for the loops
+        integer :: j, k, ctr, ctr2
 
-    ! Now we need the unique triplet after applying symmetries
-    call lo_return_unique(newqp, tmp_triplet)
-    n = size(tmp_triplet, 2)
-
-    ! We could have cases where triplet (q1, R*q2, R*q3) and (q1, R*q3, R*q2) are equivalent
-    ! Since we are using permutation symmetry, we have to remove one of them to avoid double counting
-    ! First we count if we have triplet equivalent by permutation, by comparing with all other triplet
-    ctr = 0
-    do j=1, n
-        ctr2 = 0
-        do k=j, n
-            if (k .eq. j) cycle
-            if (tmp_triplet(1, j) .eq. tmp_triplet(2, k)) then
-                ctr2 = ctr2 + 1
+        ctr = 0
+        do j=1, n
+            ctr2 = 0
+            do k=j, n
+                if (k .eq. j) cycle
+                if (all(newqp_sort(:, j) .eq. newqp_sort(:, k))) ctr2 = ctr2 + 1
+            end do
+            ! If ctr2 is 0, it means that this guy is unique by permutation
+            if (ctr2 .eq. 0) ctr = ctr + 1
+        end do
+        allocate(red_triplet(2, ctr))
+        ctr = 0
+        do j=1, n
+            ctr2 = 0
+            do k=j, n
+                if (k .eq. j) cycle
+                if (all(newqp_sort(:, j) .eq. newqp_sort(:, k))) ctr2 = ctr2 + 1
+            end do
+            ! If ctr2 is 0, it means that this guy is unique by permutation
+            if (ctr2 .eq. 0) then
+                ctr = ctr + 1
+                red_triplet(1, ctr) = newqp(1, j)
+                red_triplet(2, ctr) = newqp(2, j)
             end if
         end do
-        ! If ctr2 is 0, it means that this guy is unique by permutation
-        if (ctr2 .eq. 0) ctr = ctr + 1
-    end do
+    end block sort_reducible
 
-    ! Now we can create the list of equivalent triplet with permutation removed
-    allocate(red_triplet(2, ctr))
-    ctr = 1
-    do j=1, n
-        ctr2 = 0
-        do k=j, n
-            if (k .eq. j) cycle
-            if (tmp_triplet(1, j) .eq. tmp_triplet(2, k)) then
-                ctr2 = ctr2 + 1
-            end if
-        end do
-        ! If ctr2 is 0, it means that this guy is unique by permutation
-        if (ctr2 .eq. 0) then
-            red_triplet(1, ctr) = tmp_triplet(1, j)
-            red_triplet(2, ctr) = tmp_triplet(2, j)
-            ctr = ctr + 1
-        end if
-    end do
-    deallocate(tmp_triplet)
-    deallocate(newqp)
-
-    if (size(red_triplet, 2) .ne. mult) then
-        call lo_stop_gracefully( &
-            ['The multiplicity and the number of reduced triplet do not agree.       ', &
-             'Check that your q-grid respect the space group symmetry of your system.'], &
-             lo_exitcode_param, __FILE__, __LINE__, mw%comm)
-    end if
+    call mem%deallocate(newqp, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(newqp_sort, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
