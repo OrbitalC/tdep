@@ -1,5 +1,4 @@
 
-
 subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
                                       g0, integrationtype, smearing, mw, mem)
     !> The local point
@@ -39,35 +38,34 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, thres, &
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
-    do q2=1, qp%n_full_point
-        prefactor = isotope_prefactor * qp%ap(q2)%integration_weight
-        do b2=1, dr%n_mode
+    do q2 = 1, qp%n_full_point
+        prefactor = isotope_prefactor*qp%ap(q2)%integration_weight
+        do b2 = 1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
             select case (integrationtype)
             case (1)
-                sigma = lo_frequency_THz_to_Hartree * smearing
+                sigma = lo_frequency_THz_to_Hartree*smearing
             case (2)
                 sigma = sqrt(sr%sigsq(q1, b1) + &
                              sr%sigsq(qp%ap(q2)%irreducible_index, b2))
             end select
 
-            if (abs(om1 - om2) .lt. thres * sigma) then
-                i = (q2 - 1) * dr%n_mode + b2
+            if (abs(om1 - om2) .lt. thres*sigma) then
+                i = (q2 - 1)*dr%n_mode + b2
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
 
-                psisq = isotope_scattering_strength(uc, egviso) * prefactor
+                psisq = isotope_scattering_strength(uc, egviso)*prefactor
 
-                f0 = psisq * om1 * om2 * lo_gauss(om1, om2, sigma)
+                f0 = psisq*om1*om2*lo_gauss(om1, om2, sigma)
                 g0 = g0 + f0
-                sr%Xi(il, i) = sr%Xi(il, i) + f0 * om2 / om1
+                sr%Xi(il, i) = sr%Xi(il, i) + f0*om2/om1
             end if
         end do
     end do
 end subroutine
-
 
 real(r8) function isotope_scattering_strength(uc, egv)
     type(lo_crystalstructure), intent(in) :: uc

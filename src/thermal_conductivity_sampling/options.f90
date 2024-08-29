@@ -71,11 +71,11 @@ subroutine parse(opts)
                  required=.false., act='store', def='2', choices='1,2', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
-                 help='Not consider third order contributions to the scattering.',  &
+                 help='Not consider third order contributions to the scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--fourthorder', &
-                 help='Consider four-phonon contributions to the scattering.',  &
+                 help='Consider four-phonon contributions to the scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_qpoint_grid
@@ -189,12 +189,12 @@ subroutine parse(opts)
 
     ! Set automatic values for Monte-Carlo grids
     if (opts%thirdorder) then
-        do i=1, 3
+        do i = 1, 3
             if (opts%qg3ph(i) .lt. 0 .or. opts%qg3ph(i) .gt. opts%qgrid(i)) opts%qg3ph(i) = opts%qgrid(i)
         end do
     end if
     if (opts%fourthorder) then
-        do i=1, 3
+        do i = 1, 3
             if (opts%qg4ph(i) .lt. 0 .or. opts%qg4ph(i) .gt. opts%qgrid(i)) opts%qg4ph(i) = opts%qgrid(i)
         end do
     end if

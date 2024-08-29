@@ -24,9 +24,9 @@ implicit none
 private
 public :: lo_scattering_rates
 
-real(r8), parameter :: isotope_prefactor = lo_pi / 4.0_r8
-real(r8), parameter :: threephonon_prefactor = lo_pi / 16.0_r8
-real(r8), parameter :: fourphonon_prefactor = lo_pi / 96.0_r8
+real(r8), parameter :: isotope_prefactor = lo_pi/4.0_r8
+real(r8), parameter :: threephonon_prefactor = lo_pi/16.0_r8
+real(r8), parameter :: fourphonon_prefactor = lo_pi/96.0_r8
 
 ! Container for scattering rates
 type lo_scattering_rates
@@ -39,13 +39,13 @@ type lo_scattering_rates
     !> The scattering matrix
     real(r8), dimension(:, :), allocatable :: Xi
 
-    contains
-        !> Generate the scattering amplitudes
-        procedure :: generate
-        !> destroy the scattering amplitues
-        procedure :: destroy => sr_destroy
-        !> Measure size in memory, in bytes
-        procedure :: size_in_mem => sr_size_in_mem
+contains
+    !> Generate the scattering amplitudes
+    procedure :: generate
+    !> destroy the scattering amplitues
+    procedure :: destroy => sr_destroy
+    !> Measure size in memory, in bytes
+    procedure :: size_in_mem => sr_size_in_mem
 end type
 
 contains
@@ -83,7 +83,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         integer :: q1, b1, il, j, nlocal_point, ctr
 
         ! grid dimensions
-        select type(qp)
+        select type (qp)
         class is (lo_fft_mesh)
             dims = qp%griddensity
         class default
@@ -93,7 +93,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         ! Initialize the random number generator
         call rng%init(iseed=mw%r, rseed=walltime())
 
-        if (mw%talk) write(*, *) '... creating Monte-Carlo grid'
+        if (mw%talk) write (*, *) '... creating Monte-Carlo grid'
         ! Initialize the monte-carlo grid
         if (opts%thirdorder) then
             call mcg3%initialize(dims, opts%qg3ph)
@@ -103,22 +103,22 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end if
 
         ! We can start some precomputation
-        allocate(sr%be(qp%n_irr_point, dr%n_mode))
-        allocate(sr%sigsq(qp%n_irr_point, dr%n_mode))
+        allocate (sr%be(qp%n_irr_point, dr%n_mode))
+        allocate (sr%sigsq(qp%n_irr_point, dr%n_mode))
         sr%be = 0.0_r8
         sr%sigsq = 0.0_r8
-        do q1=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
 
                 sr%sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), opts%sigma)**2
             end do
         end do
 
-        if (mw%talk) write(*, *) '... distributing q-point/modes on MPI ranks'
+        if (mw%talk) write (*, *) '... distributing q-point/modes on MPI ranks'
         ctr = 0
         nlocal_point = 0
-        do q1 =1, qp%n_irr_point
+        do q1 = 1, qp%n_irr_point
             do b1 = 1, dr%n_mode
                 ! We skip the acoustic mode at Gamma
                 if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
@@ -132,9 +132,9 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
 
         ! We can allocate all we need
         sr%nlocal_point = nlocal_point
-        allocate(sr%q1(nlocal_point))
-        allocate(sr%b1(nlocal_point))
-        allocate(sr%Xi(nlocal_point, qp%n_full_point * dr%n_mode))
+        allocate (sr%q1(nlocal_point))
+        allocate (sr%b1(nlocal_point))
+        allocate (sr%Xi(nlocal_point, qp%n_full_point*dr%n_mode))
         sr%q1 = -lo_hugeint
         sr%b1 = -lo_hugeint
         sr%Xi = 0.0_r8
@@ -142,8 +142,8 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         ! Let's attribute the q1/b1 indices to the ranks
         il = 0
         ctr = 0
-        do q1=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 ! We skip the acoustic mode at Gamma
                 if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
                 ctr = ctr + 1
@@ -155,7 +155,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
                 sr%b1(il) = b1
             end do
         end do
-        if (mw%talk) write(*, *) '... everything is ready, starting scattering computation'
+        if (mw%talk) write (*, *) '... everything is ready, starting scattering computation'
     end block init
 
     scatt: block
@@ -166,30 +166,32 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         !> Some integers for the loops
         integer :: il, j, q1, b1, b2
 
+        integer :: tmp
+
         call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         buf_lw = 0.0_r8
 
         t0 = walltime()
         if (mw%talk) call lo_progressbar_init()
-        do il=1, sr%nlocal_point
+        do il = 1, sr%nlocal_point
             buf = 0.0_r8
             if (opts%isotopescattering) then
                 call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, opts%thres, buf, &
-                    opts%integrationtype, opts%sigma, mw, mem)
+                                                opts%integrationtype, opts%sigma, mw, mem)
             end if
             if (opts%thirdorder) then
                 call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, &
-                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
+                                                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
             end if
             if (opts%fourthorder) then
                 call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, &
-                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
+                                                   opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
             end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
                 velnorm = norm2(dr%iq(sr%q1(il))%vel(:, sr%b1(il)))
                 if (velnorm .gt. lo_phonongroupveltol) then
-                    buf = buf + velnorm / opts%mfp_max
+                    buf = buf + velnorm/opts%mfp_max
                 end if
             end if
             ! Now we can update the linewidth for this mode
@@ -205,17 +207,17 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         call mw%allreduce('sum', buf_lw)
 
         ! Distribute it after fixing the degeneracies
-        do q1=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
                 ! First we fix the degeneracy
                 f0 = 0.0_r8
-                do j=1, dr%iq(q1)%degeneracy(b1)
+                do j = 1, dr%iq(q1)%degeneracy(b1)
                     b2 = dr%iq(q1)%degenmode(j, b1)
                     f0 = f0 + buf_lw(q1, b2)
                 end do
-                f0 = f0 / real(dr%iq(q1)%degeneracy(b1), r8)
-                do j=1, dr%iq(q1)%degeneracy(b1)
+                f0 = f0/real(dr%iq(q1)%degeneracy(b1), r8)
+                do j = 1, dr%iq(q1)%degeneracy(b1)
                     b2 = dr%iq(q1)%degenmode(j, b1)
                     buf_lw(q1, b2) = f0
                 end do
@@ -236,20 +238,20 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         !> Integer for do loops and so on
         integer :: il, jl, q1, j, k, q2, b2, q2p, n
 
-        if (mw%talk) write(*, *) '... symmetrizing scattering matrix'
+        if (mw%talk) write (*, *) '... symmetrizing scattering matrix'
 
         ! We use the relation Xi_{R*q, R*q'} = Xi_{q, q'''} to enforce the symmetry of Xi
         ! TODO actually use this symmetry to reduce the number of scattering to compute
         call mem%allocate(buf, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        do il=1, sr%nlocal_point
+        do il = 1, sr%nlocal_point
             q1 = sr%q1(il)
-            do q2=1, qp%n_full_point
-                do j=1, qp%ip(q1)%n_invariant_operation
+            do q2 = 1, qp%n_full_point
+                do j = 1, qp%ip(q1)%n_invariant_operation
                     k = qp%ip(q1)%invariant_operation(j)
                     buf = 0.0_r8
                     n = 0
                     ! Here, we generate q''=R*q from the symmetry that leaves q invariant
-                    select type(qp); type is(lo_fft_mesh)
+                    select type (qp); type is (lo_fft_mesh)
                         qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
                         qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
                         if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
@@ -258,26 +260,26 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
                     end select
                     n = n + 1
                     ! We accumulate the values for each bands
-                    do b2=1, dr%n_mode
-                        jl = (q2p - 1) * dr%n_mode + b2
+                    do b2 = 1, dr%n_mode
+                        jl = (q2p - 1)*dr%n_mode + b2
                         buf(b2) = buf(b2) + sr%Xi(il, jl)
                     end do
                 end do
                 if (n .eq. 0) cycle
-                buf = buf / real(n, r8)
+                buf = buf/real(n, r8)
                 ! And now we distribute
-                do j=1, qp%ip(q1)%n_invariant_operation
+                do j = 1, qp%ip(q1)%n_invariant_operation
                     k = qp%ip(q1)%invariant_operation(j)
                     ! Here, we generate q''=R*q from the symmetry that leaves q invariant
-                    select type(qp); type is(lo_fft_mesh)
+                    select type (qp); type is (lo_fft_mesh)
                         qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
                         qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
                         if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
                         gi = qp%index_from_coordinate(qv2p)
                         q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
                     end select
-                    do b2=1, dr%n_mode
-                        jl = (q2p - 1) * dr%n_mode + b2
+                    do b2 = 1, dr%n_mode
+                        jl = (q2p - 1)*dr%n_mode + b2
                         sr%Xi(il, jl) = buf(b2)
                     end do
                 end do
@@ -297,11 +299,11 @@ subroutine sr_destroy(sr)
 
     integer :: il
 
-    if (allocated(sr%Xi)) deallocate(sr%Xi)
-    if (allocated(sr%q1)) deallocate(sr%q1)
-    if (allocated(sr%b1)) deallocate(sr%b1)
-    if (allocated(sr%be)) deallocate(sr%be)
-    if (allocated(sr%sigsq)) deallocate(sr%sigsq)
+    if (allocated(sr%Xi)) deallocate (sr%Xi)
+    if (allocated(sr%q1)) deallocate (sr%q1)
+    if (allocated(sr%b1)) deallocate (sr%b1)
+    if (allocated(sr%be)) deallocate (sr%be)
+    if (allocated(sr%sigsq)) deallocate (sr%sigsq)
     sr%nlocal_point = -lo_hugeint
 end subroutine
 
@@ -315,10 +317,10 @@ function sr_size_in_mem(sr) result(mem)
     integer :: il
 
     mem = storage_size(sr)
-    if (allocated(sr%q1)) mem = mem + storage_size(sr%q1) * size(sr%q1)
-    if (allocated(sr%b1)) mem = mem + storage_size(sr%b1) * size(sr%b1)
-    if (allocated(sr%be)) mem = mem + storage_size(sr%be) * size(sr%be)
-    if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi) * size(sr%Xi)
-    mem = mem / 8
+    if (allocated(sr%q1)) mem = mem + storage_size(sr%q1)*size(sr%q1)
+    if (allocated(sr%b1)) mem = mem + storage_size(sr%b1)*size(sr%b1)
+    if (allocated(sr%be)) mem = mem + storage_size(sr%be)*size(sr%be)
+    if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi)*size(sr%Xi)
+    mem = mem/8
 end function
 end module

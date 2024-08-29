@@ -35,7 +35,6 @@ type(lo_scattering_rates) :: sr
 ! timers
 real(r8) :: timer_init, timer_scatt, timer_kappa, tt0
 
-
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
 initharmonic: block
@@ -52,29 +51,29 @@ initharmonic: block
     call mem%init()
 
     if (mw%talk) then
-        write(*, *) 'Recap of the parameters governing the calculation'
-        write(*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
-        write(*, '(1X,A40,L3)') 'Thirdorder scattering                   ', opts%thirdorder
-        write(*, '(1X,A40,L3)') 'Fourthorder scattering                  ', opts%fourthorder
-        write(*, '(1X,A40,L3)') 'Isotope scattering                      ', opts%isotopescattering
-        write(*, '(1X,A40,I4,I4,I4)') 'full q-point grid                       ', opts%qgrid
-        write(*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 3rd order q-point grid      ', opts%qg3ph
-        write(*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 4th order q-point grid      ', opts%qg4ph
-        write(*, '(1X,A40,I5)') 'Max number of iteration                 ', opts%scfiterations
-        write(*, '(1X,A40,E20.12)') 'Max mean free path (in m)               ', opts%mfp_max / lo_m_to_Bohr
-        write(*, '(1X,A40,E20.12)') 'Tolerance for the iterative BTE         ', opts%btetol
+        write (*, *) 'Recap of the parameters governing the calculation'
+        write (*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
+        write (*, '(1X,A40,L3)') 'Thirdorder scattering                   ', opts%thirdorder
+        write (*, '(1X,A40,L3)') 'Fourthorder scattering                  ', opts%fourthorder
+        write (*, '(1X,A40,L3)') 'Isotope scattering                      ', opts%isotopescattering
+        write (*, '(1X,A40,I4,I4,I4)') 'full q-point grid                       ', opts%qgrid
+        write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 3rd order q-point grid      ', opts%qg3ph
+        write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 4th order q-point grid      ', opts%qg4ph
+        write (*, '(1X,A40,I5)') 'Max number of iteration                 ', opts%scfiterations
+        write (*, '(1X,A40,E20.12)') 'Max mean free path (in m)               ', opts%mfp_max/lo_m_to_Bohr
+        write (*, '(1X,A40,E20.12)') 'Tolerance for the iterative BTE         ', opts%btetol
         select case (opts%integrationtype)
-        case(1)
-            write(*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
-            write(*, '(1X,A40,E20.12)') 'Broadening parameter                    ', opts%sigma
-        case(2)
-            write(*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
+        case (1)
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
+            write (*, '(1X,A40,E20.12)') 'Broadening parameter                    ', opts%sigma
+        case (2)
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
         end select
-        write(*, '(1X,A40,I4)') 'Number of MPI ranks                     ', mw%n
-        write(*, *) ''
+        write (*, '(1X,A40,I4)') 'Number of MPI ranks                     ', mw%n
+        write (*, *) ''
     end if
 
-    if (mw%talk) write(*, *) 'Initialize calculation'
+    if (mw%talk) write (*, *) 'Initialize calculation'
     ! There is a bunch of stuff that all ranks need, first the unit cell:
     call uc%readfromfile('infile.ucposcar', verbosity=opts%verbosity)
     call uc%classify('wedge', timereversal=opts%timereversal)
@@ -118,13 +117,13 @@ initharmonic: block
         if (mw%talk) write (*, *) '... read fourth order forceconstant'
     end if
 
-    if (mw%talk) write(*, *) '... generating q-point mesh'
+    if (mw%talk) write (*, *) '... generating q-point mesh'
     ! Get q-point mesh
     call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=opts%timereversal, &
                            headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity, nosym=.not. opts%qpsymmetry)
 
     ! Get frequencies in the whole BZ
-    if (mw%talk) write(*, *) '... generating harmonic properties on the q-point mesh'
+    if (mw%talk) write (*, *) '... generating harmonic properties on the q-point mesh'
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
     ! Also the phonon DOS, for diagnostics
     call pd%generate(dr, qp, uc, mw, mem, verbosity=opts%verbosity, &
@@ -154,7 +153,7 @@ initharmonic: block
         dr%iq(q1)%mfp = 0.0_r8
         dr%iq(q1)%scalar_mfp = 0.0_r8
 
-        allocate(dr%iq(q1)%kappa(3, 3, dr%n_mode))
+        allocate (dr%iq(q1)%kappa(3, 3, dr%n_mode))
         dr%iq(q1)%kappa = 0.0_r8
     end do
     do q1 = 1, qp%n_full_point
@@ -164,7 +163,7 @@ initharmonic: block
 
     ! now I have all harmonic things, stop the init timer
     timer_init = walltime() - timer_init
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_init, ' s'
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_init, ' s'
 end block initharmonic
 
 scatters: block
@@ -177,7 +176,7 @@ scatters: block
     call sr%generate(qp, dr, uc, fct, fcf, opts, mw, mem)
     timer_scatt = walltime() - timer_scatt
 
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
 end block scatters
 
 kappa: block
@@ -199,27 +198,31 @@ kappa: block
     ! Scattering rates
     t0 = walltime()
 
+    if (mw%talk) write (*, *) ''
+    if (mw%talk) write (*, *) 'Thermal conductivity calculation'
+
     call compute_qs(dr, qp, opts%temperature)
+    if (mw%talk) write (*, *) '... computing kappa in the single mode approximation'
     call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
+    if (mw%talk) write (*, *) '... computing off diagonal coherent contribution'
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
     if (opts%scfiterations .gt. 0) then
         if (mw%talk) then
-            write(*, *) ''
-            write(*, *) 'Solving iterative BTE'
+            write (*, *) '... solving iterative BTE'
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
-                       'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
+                'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
         call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, mw, mem)
     end if
     call get_kappa(dr, qp, uc, opts%temperature, kappa_bte)
-    if (mw%talk) write(*, *) ''
-    if (mw%talk) write(*, *) '... symmetrizing the thermal conductivity tensors'
+    if (mw%talk) write (*, *) ''
+    if (mw%talk) write (*, *) '... symmetrizing the thermal conductivity tensors'
     call symmetrize_kappa(kappa_bte, uc)
     call symmetrize_kappa(kappa_offdiag, uc)
     call symmetrize_kappa(kappa_sma, uc)
     if (mw%talk) then
         ! First we write in the standard output
-        u=open_file('out', 'outfile.thermal_conductivity_sampling')
+        u = open_file('out', 'outfile.thermal_conductivity_sampling')
         write (u, '(A2,A5,15X,A)') '# ', 'Unit:', 'W/m/K'
         write (u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
 
@@ -267,7 +270,7 @@ kappa: block
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
         write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
-        close(u)
+        close (u)
     end if
 
     timer_kappa = walltime() - timer_kappa
@@ -281,15 +284,15 @@ finalize_and_write: block
     ! sum up the total time
     if (mw%talk) then
         tt0 = walltime() - tt0
-        write(*, *) ''
-        write(*, *) '... dumping auxiliary data to files'
+        write (*, *) ''
+        write (*, *) '... dumping auxiliary data to files'
         call dr%write_to_hdf5(qp, uc, 'outfile.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
 
-        write(*, *) ''
-        write(*, '(A61,A)') 'Scattering rates can be found in                             ', 'outfile.grid_thermal_conductivity_sampling.hdf5'
-        write(*, '(A61,A)') 'Thermal conductivity tensor can be found in                  ', 'outfile.thermal_conductivity_sampling'
+        write (*, *) ''
+        write (*, '(A61,A)') 'Scattering rates can be found in                             ', 'outfile.grid_thermal_conductivity_sampling.hdf5'
+        write (*, '(A61,A)') 'Thermal conductivity tensor can be found in                  ', 'outfile.thermal_conductivity_sampling'
 
-    ! Print timings
+        ! Print timings
         write (*, *) ''
         write (*, '(1X,A21)') 'Suggested citations :'
         write (*, '(1X,A41,A56)') 'Software : ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'

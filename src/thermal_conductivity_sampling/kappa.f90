@@ -25,7 +25,6 @@ public :: compute_qs
 public :: symmetrize_kappa
 contains
 
-
 ! Compute the QS, mfp and so on from the linewidths
 subroutine compute_qs(dr, qp, temperature)
     !> dispersions
@@ -38,23 +37,22 @@ subroutine compute_qs(dr, qp, temperature)
     real(r8) :: buf, velnorm, lw
     integer :: q1, b1
 
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
+    do q1 = 1, qp%n_irr_point
+        do b1 = 1, dr%n_mode
             if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
 
             lw = dr%iq(q1)%linewidth(b1)
-            dr%iq(q1)%qs(b1) = 2.0_r8 * lw
+            dr%iq(q1)%qs(b1) = 2.0_r8*lw
             velnorm = norm2(dr%iq(q1)%vel(:, b1))
             if (velnorm .gt. lo_phonongroupveltol) then
-                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1) / dr%iq(q1)%qs(b1)
-                dr%iq(q1)%scalar_mfp(b1) = velnorm / dr%iq(q1)%qs(b1)
+                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1)/dr%iq(q1)%qs(b1)
+                dr%iq(q1)%scalar_mfp(b1) = velnorm/dr%iq(q1)%qs(b1)
                 dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
                 dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
             end if
         end do
     end do
 end subroutine
-
 
 !> Calculate the thermal conductivity
 subroutine get_kappa(dr, qp, uc, temperature, kappa)
@@ -70,35 +68,33 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     real(r8), dimension(3, 3), intent(out) :: kappa
 
     real(r8), dimension(3) :: v0, v1
-    real(r8) :: f0, om1
+    real(r8) :: om1
     integer :: j, k
 
     integer :: q1, b1
     real(r8), dimension(3, 3) :: v2, buf
 
     kappa = 0.0_r8
-    do q1=1, qp%n_irr_point
+    do q1 = 1, qp%n_irr_point
         dr%iq(q1)%kappa = 0.0_r8
-        do b1=1, dr%n_mode
+        do b1 = 1, dr%n_mode
             om1 = dr%iq(q1)%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
 
             ! To ensure the symmetry, we average over the little group of each irreducible q-point
             v2 = 0.0_r8
-            do j=1, uc%sym%n
+            do j = 1, uc%sym%n
                 v0 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%Fn(:, b1), reciprocal=.true.)
                 v1 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%vel(:, b1), reciprocal=.true.)
-                v2 = v2 + lo_outerproduct(v0, v1) / uc%sym%n
+                v2 = v2 + lo_outerproduct(v0, v1)/uc%sym%n
             end do
-            buf = lo_harmonic_oscillator_cv(temperature, om1) * v2 / uc%volume
+            buf = lo_harmonic_oscillator_cv(temperature, om1)*v2/uc%volume
             dr%iq(q1)%kappa(:, :, b1) = buf
-            kappa = kappa + buf * qp%ip(q1)%integration_weight
+            kappa = kappa + buf*qp%ip(q1)%integration_weight
         end do
     end do
-    f0 = sum(abs(kappa))
-    kappa = lo_chop(kappa, f0*1e-6_r8)
+    kappa = lo_chop(kappa, sum(abs(kappa))*1e-6_r8)
 end subroutine
-
 
 subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag)
     !> dispersions
@@ -118,10 +114,12 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
     !> thermal conductivity tensor
     real(r8), dimension(3, 3), intent(out) :: kappa_offdiag
 
+    !> The off diagonal group velocity
     real(r8), dimension(:, :, :), allocatable :: buf_vel
+    !> The off diagonal group velocity, squared
     real(r8), dimension(:, :, :, :), allocatable :: buf_velsq
-    real(r8) :: pref, f0, tau, om1, om2, n1, n2, tau1, tau2
-    integer :: iq, jmode, kmode
+    !> The qpoint
+    integer :: iq
 
     call mem%allocate(buf_vel, [3, dr%n_mode, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(buf_velsq, [3, 3, dr%n_mode, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -132,9 +130,6 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
         if (mod(iq, mw%n) .ne. mw%r) cycle
         buf_vel = 0.0_r8
         buf_velsq = 0.0_r8
-
-       !pref = 0.5_r8/(uc%volume*lo_kb_hartree*temperature**2)*qp%ip(iq)%integration_weight
-        pref = qp%ip(iq)%integration_weight / uc%volume
 
         ! Calculate the off-diagonal group velocity.
         groupvel: block
@@ -268,38 +263,46 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
         end block groupvel
 
         ! Now we can compute the off diagonal contribution
-        do jmode = 1, dr%n_mode
-            ! Skip gamma for acoustic branches
-            if (dr%iq(iq)%omega(jmode) .lt. lo_freqtol) cycle
-            om1 = dr%iq(iq)%omega(jmode)
-            tau1 = dr%iq(iq)%linewidth(jmode)
-            do kmode = 1, dr%n_mode
-                ! We only compute the off diagonal contribution
-                if (jmode .eq. kmode) cycle  ! We only want the off diagonal contribution
+        offdiag: block
+            !> prefactor and buffers
+            real(r8) :: pref, f0, tau, om1, om2, tau1, tau2
+            !> Some integers for do loop on so on
+            integer :: jmode, kmode
+
+            pref = qp%ip(iq)%integration_weight/uc%volume
+
+            do jmode = 1, dr%n_mode
                 ! Skip gamma for acoustic branches
-                if (dr%iq(iq)%omega(kmode) .lt. lo_freqtol) cycle
+                if (dr%iq(iq)%omega(jmode) .lt. lo_freqtol) cycle
+                om1 = dr%iq(iq)%omega(jmode)
+                tau1 = dr%iq(iq)%linewidth(jmode)
+                do kmode = 1, dr%n_mode
+                    ! We only compute the off diagonal contribution
+                    if (jmode .eq. kmode) cycle  ! We only want the off diagonal contribution
+                    ! Skip gamma for acoustic branches
+                    if (dr%iq(iq)%omega(kmode) .lt. lo_freqtol) cycle
 
-                om2 = dr%iq(iq)%omega(kmode)
-                tau2 = dr%iq(iq)%linewidth(kmode)
+                    om2 = dr%iq(iq)%omega(kmode)
+                    tau2 = dr%iq(iq)%linewidth(kmode)
 
-                ! This is consistent with the paper, but a bit different from QHGK
-                ! This probably comes from the fact that we don't work with creation/annihilation but
-                ! directly with displacement/momentup operator
-                f0 = 0.5_r8 * (lo_harmonic_oscillator_cv(temperature, om1) + &
-                               lo_harmonic_oscillator_cv(temperature, om2))
+                    ! This is consistent with the paper, but a bit different from QHGK
+                    ! This probably comes from the fact that we don't work with creation/annihilation but
+                    ! directly with displacement/momentup operator
+                    f0 = 0.5_r8*(lo_harmonic_oscillator_cv(temperature, om1) + &
+                                 lo_harmonic_oscillator_cv(temperature, om2))
 
-                tau = (tau1 + tau2) / ((tau1 + tau2)**2 + (om1 - om2)**2)
-                kappa_offdiag(:, :) = kappa_offdiag(:, :) + buf_velsq(:, :, jmode, kmode) * tau * f0 * pref
-            end do ! k mode
-        end do ! j mode
+                    tau = (tau1 + tau2)/((tau1 + tau2)**2 + (om1 - om2)**2)
+                    kappa_offdiag(:, :) = kappa_offdiag(:, :) + buf_velsq(:, :, jmode, kmode)*tau*f0*pref
+                end do ! k mode
+            end do ! j mode
+        end block offdiag
     end do ! i qpt
     call mem%deallocate(buf_vel, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(buf_velsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
     call mw%allreduce('sum', kappa_offdiag)
 
-    f0 = sum(abs(kappa_offdiag))
-    kappa_offdiag = lo_chop(kappa_offdiag, f0*1E-6_r8)
+    kappa_offdiag = lo_chop(kappa_offdiag, sum(abs(kappa_offdiag))*1E-6_r8)
 
 contains
     ! Consistent index flattening? Impossibru to get consistent.
@@ -325,11 +328,11 @@ subroutine symmetrize_kappa(kappa, uc)
     integer :: iop
 
     tmp = 0.0_r8
-    do iop=1, uc%sym%n
+    do iop = 1, uc%sym%n
         tmp = tmp + lo_operate_on_secondorder_tensor(uc%sym%op(iop), kappa)
     end do
 
-    kappa = tmp / uc%sym%n
+    kappa = tmp/uc%sym%n
     tmp = sum(abs(kappa))
     kappa = lo_chop(kappa, tmp*1e-6_r8)
 end subroutine
@@ -367,7 +370,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
         mixingparameter = 0.95_r8
         call mem%allocate(Fnb, [3, dr%n_mode, qp%n_irr_point], persistent=.false., &
                           scalable=.false., file=__FILE__, line=__LINE__)
-        call mem%allocate(Fbb, [3, dr%n_mode * qp%n_full_point], persistent=.false., &
+        call mem%allocate(Fbb, [3, dr%n_mode*qp%n_full_point], persistent=.false., &
                           scalable=.false., file=__FILE__, line=__LINE__)
         call mem%allocate(buf, [3, sr%nlocal_point], persistent=.false., &
                           scalable=.false., file=__FILE__, line=__LINE__)
@@ -393,7 +396,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
                 iop = qp%ap(iq)%operation_from_irreducible
                 jq = qp%ap(iq)%irreducible_index
                 do b1 = 1, dr%n_mode
-                    i2 = (iq - 1) * dr%n_mode + b1
+                    i2 = (iq - 1)*dr%n_mode + b1
                     if (iop .gt. 0) then
                         v = lo_operate_on_vector(uc%sym%op(iop), dr%iq(jq)%Fn(:, b1), reciprocal=.true.)
                         Fbb(:, i2) = v
@@ -411,14 +414,14 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
             integer :: il, b1, q1, a
 
             ! We use BLAS for this, and we have to do it for each cartesian direction
-            do a=1, 3
+            do a = 1, 3
                 call lo_gemv(sr%Xi, Fbb(a, :), buf(a, :))
             end do
             ! And now we distribute the results on the irreducible qpoints
-            do il=1, sr%nlocal_point
+            do il = 1, sr%nlocal_point
                 q1 = sr%q1(il)
                 b1 = sr%b1(il)
-                Fnb(:, b1, q1) = -buf(:, il) / dr%iq(q1)%qs(b1)
+                Fnb(:, b1, q1) = -buf(:, il)/dr%iq(q1)%qs(b1)
             end do
             call mw%allreduce('sum', Fnb)
         end block applyXi
@@ -427,7 +430,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
         distributeF: block
             real(r8), dimension(3) :: v0
             integer :: q1, b1, b2, j
-            do q1=1, qp%n_irr_point
+            do q1 = 1, qp%n_irr_point
                 do b1 = 1, dr%n_mode
                     v0 = 0.0_r8
                     do j = 1, dr%iq(q1)%degeneracy(b1)
