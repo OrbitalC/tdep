@@ -133,14 +133,14 @@ selfenergy: block
     call ls%compute(qp, dr, uc, fct, fcf, opts%temperature, opts%isotopescattering, &
                     opts%thirdorder, opts%fourthorder, opts%qg3ph, opts%qg4ph, mw, mem)
     timer_se = walltime() - timer_se
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_se, ' s'
 end block selfenergy
 
 ! Thermal conductivity
 kappa: block
     real(r8), dimension(3, 3) :: m0
 
-    if (mw%talk) write(*, *) ''
+    if (mw%talk) write (*, *) ''
     timer_tc = walltime()
 
     call tc%compute_thermal_conductivity(qp, dr, ls, uc, fc, 1000, opts%temperature, mw, mem)
@@ -165,7 +165,7 @@ kappa: block
         write (*, "(1X,A26)") 'Total thermal conductivity'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
         write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
-        write(*, *) ''
+        write (*, *) ''
         write (*, *) 'Green-Kubo with memory effects'
         m0 = tc%kappa_gk*lo_kappa_au_to_SI
         write (*, "(1X,A25)") 'Single mode approximation'
@@ -182,17 +182,17 @@ kappa: block
     end if
 
     timer_tc = walltime() - timer_tc
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_tc, ' s'
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_tc, ' s'
 end block kappa
 
 ! Density of states
 dos: block
     timer_dos = walltime()
-    if (mw%talk) write(*, *) ''
+    if (mw%talk) write (*, *) ''
 
     call compute_density_of_state(qp, dr, uc, ls, opts%dospoints, pd, mw, mem)
     timer_dos = walltime() - timer_dos
-    if (mw%talk) write(*, "(1X,A,F12.3,A)") '... done in ', timer_dos, ' s'
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_dos, ' s'
 end block dos
 
 finalize_and_write: block
@@ -204,8 +204,8 @@ finalize_and_write: block
     ! This part is only on main rank
     if (mw%talk) then
         tt0 = walltime() - tt0
-        write(*, *) ''
-        write(*, *) '... dumping auxiliary data to files'
+        write (*, *) ''
+        write (*, *) '... dumping auxiliary data to files'
 
         ! Dump the self energy
         filename = 'outfile.selfenergy.hdf5'
@@ -238,7 +238,7 @@ finalize_and_write: block
         write (*, "(A,F12.3,A,F7.3,A)") '    self-energy computation:', timer_se, ' s, ', real(timer_se*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '       thermal conductivity:', timer_tc, ' s, ', real(timer_tc*100/tt0), '%'
         write (*, "(A,F12.3,A,F7.3,A)") '          density of states:', timer_dos, ' s, ', real(timer_dos*100/tt0), '%'
-        write (*, "(A,F12.3,A)")        '                      total:', tt0, ' seconds'
+        write (*, "(A,F12.3,A)") '                      total:', tt0, ' seconds'
     end if
 end block finalize_and_write
 

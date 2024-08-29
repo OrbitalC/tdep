@@ -62,11 +62,11 @@ subroutine compute_density_of_state(qp, dr, uc, ls, nf, pd, mw, mem)
         integer :: q1, b1, ctr, iat
         real(r8) :: t0
 
-        allocate(sf(pd%n_dos_point))
-        allocate(smeared_sf(pd%n_dos_point))
-        allocate(buf(pd%n_dos_point))
-        allocate(buf_site(pd%n_dos_point, uc%na))
-        allocate(buf_mode(pd%n_dos_point, dr%n_mode))
+        allocate (sf(pd%n_dos_point))
+        allocate (smeared_sf(pd%n_dos_point))
+        allocate (buf(pd%n_dos_point))
+        allocate (buf_site(pd%n_dos_point, uc%na))
+        allocate (buf_mode(pd%n_dos_point, dr%n_mode))
         buf = 0.0_r8
         buf_site = 0.0_r8
         buf_mode = 0.0_r8
@@ -76,8 +76,8 @@ subroutine compute_density_of_state(qp, dr, uc, ls, nf, pd, mw, mem)
         if (mw%talk) call lo_progressbar_init()
 
         ctr = 0
-        do q1=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 om1 = dr%iq(q1)%omega(b1)
                 if (om1 .lt. lo_freqtol) cycle
 
@@ -95,14 +95,14 @@ subroutine compute_density_of_state(qp, dr, uc, ls, nf, pd, mw, mem)
                 ! Normalize the smeared spectral function
                 f0 = lo_trapezoid_integration(pd%omega, smeared_sf)
                 ! Add the integration weight
-                sf = smeared_sf * qp%ip(q1)%integration_weight / f0
+                sf = smeared_sf*qp%ip(q1)%integration_weight/f0
                 ! Distribute in every things
                 buf = buf + sf
                 buf_mode(:, b1) = buf_mode(:, b1) + sf
-                do iat=1, uc%na
-                    cv0 = dr%iq(q1)%egv((iat - 1) * 3 + 1:iat * 3, b1)
+                do iat = 1, uc%na
+                    cv0 = dr%iq(q1)%egv((iat - 1)*3 + 1:iat*3, b1)
                     siteproj = abs(dot_product(cv0, conjg(cv0)))
-                    buf_site(:, iat) = buf_site(:, iat) + sf * siteproj
+                    buf_site(:, iat) = buf_site(:, iat) + sf*siteproj
                 end do
             end do
             if (mw%talk) call lo_progressbar(' ... computing the dos', q1, qp%n_irr_point, walltime() - t0)
@@ -114,42 +114,42 @@ subroutine compute_density_of_state(qp, dr, uc, ls, nf, pd, mw, mem)
         pd%pdos_mode = buf_mode
         pd%pdos_site = buf_site
 
-        deallocate(sf)
-        deallocate(buf)
-        deallocate(buf_site)
-        deallocate(buf_mode)
+        deallocate (sf)
+        deallocate (buf)
+        deallocate (buf_site)
+        deallocate (buf_mode)
     end block evaluate
 
-    contains
-        subroutine smear_spectralfunction(eaxis, sf, sigma, smeared_sf)
-            !> The energy axis
-            real(r8), dimension(:), intent(in) :: eaxis
-            !> The raw spectral function
-            real(r8), dimension(:), intent(in) :: sf
-            !> The smearing width
-            real(r8), intent(in) :: sigma
-            !> The smeared spectral function
-            real(r8), dimension(:), intent(out) :: smeared_sf
+contains
+    subroutine smear_spectralfunction(eaxis, sf, sigma, smeared_sf)
+        !> The energy axis
+        real(r8), dimension(:), intent(in) :: eaxis
+        !> The raw spectral function
+        real(r8), dimension(:), intent(in) :: sf
+        !> The smearing width
+        real(r8), intent(in) :: sigma
+        !> The smeared spectral function
+        real(r8), dimension(:), intent(out) :: smeared_sf
 
-            !> some buffers
-            real(r8) :: dx
-            !> Some integer for loops
-            integer :: n, nstep, i, j, a1, a2
+        !> some buffers
+        real(r8) :: dx
+        !> Some integer for loops
+        integer :: n, nstep, i, j, a1, a2
 
-            n = size(eaxis, 1)
-            dx = eaxis(2) - eaxis(1)
-            ! sigma = 1e-4_r8
-            nstep = ceiling(6.0_r8 * sigma / dx)
+        n = size(eaxis, 1)
+        dx = eaxis(2) - eaxis(1)
+        ! sigma = 1e-4_r8
+        nstep = ceiling(6.0_r8*sigma/dx)
 
-            smeared_sf = 0.0_r8
-            do i=1, n
-                a1 = max(1, i-nstep)
-                a2 = min(n, i+nstep)
-                do j=a1, a2
-                    smeared_sf(i) = smeared_sf(i) + sf(j) * lo_gauss(eaxis(i), eaxis(j), sigma)
-                end do
+        smeared_sf = 0.0_r8
+        do i = 1, n
+            a1 = max(1, i - nstep)
+            a2 = min(n, i + nstep)
+            do j = a1, a2
+                smeared_sf(i) = smeared_sf(i) + sf(j)*lo_gauss(eaxis(i), eaxis(j), sigma)
             end do
+        end do
 
-        end subroutine
+    end subroutine
 end subroutine
 end module

@@ -93,11 +93,11 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, st
     integer :: n, q1, b1
 
     ! Let's grab the harmonic frequencies
-    allocate(ls%harm_freq(dr%n_mode, qp%n_irr_point))
+    allocate (ls%harm_freq(dr%n_mode, qp%n_irr_point))
     ls%harm_freq = 0.0_r8
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
-            if(dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+    do q1 = 1, qp%n_irr_point
+        do b1 = 1, dr%n_mode
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
             ls%harm_freq(b1, q1) = dr%iq(q1)%omega(b1)
         end do
     end do
@@ -106,9 +106,9 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, st
 
     ! First, let's allocate everything
     ls%nbasis = nbasis
-    allocate(ls%im_weight(ls%nbasis, dr%n_mode, qp%n_irr_point))
-    allocate(ls%omega_n(ls%nbasis))
-    allocate(ls%re_static(dr%n_mode, qp%n_irr_point))
+    allocate (ls%im_weight(ls%nbasis, dr%n_mode, qp%n_irr_point))
+    allocate (ls%omega_n(ls%nbasis))
+    allocate (ls%re_static(dr%n_mode, qp%n_irr_point))
     ls%im_weight = 0.0_r8
     ls%omega_n = 0.0_r8
     ls%re_static = 0.0_r8
@@ -116,23 +116,22 @@ subroutine initialize_selfenergy(ls, qp, dr, nbasis, thirdorder, fourthorder, st
     ! Now, let's decide on a maximum frequency, this depends on the processes that we compute
     omega_max = -lo_huge
     omega_max(1) = dr%omega_max
-    if (thirdorder) omega_max(2) = 2 * dr%omega_max
-    if (fourthorder) omega_max(3) = 3 * dr%omega_max
+    if (thirdorder) omega_max(2) = 2*dr%omega_max
+    if (fourthorder) omega_max(3) = 3*dr%omega_max
     ! We add a bit for extra care, but shouldn't matter
-    ls%omega_max = maxval(omega_max) + maxval(dr%default_smearing) * 3.0_r8
+    ls%omega_max = maxval(omega_max) + maxval(dr%default_smearing)*3.0_r8
 
     ! Ok, now we can get our basis functions
-    delta = ls%omega_max / real(ls%nbasis, r8)
+    delta = ls%omega_max/real(ls%nbasis, r8)
     f0 = 0.0_r8
-    do n=1, ls%nbasis
+    do n = 1, ls%nbasis
         f0 = f0 + delta
         ls%omega_n(n) = f0
     end do
     ! This allows to have a smooth fitting
-    ls%width = 2.0_r8 * delta
+    ls%width = 2.0_r8*delta
     ! Done, we are good to go
 end subroutine
-
 
 !> Compute and fit the self-energy on a basis set of lorentzian
 subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, thirdorder, fourthorder, qg3, qg4, mw, mem)
@@ -166,11 +165,11 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     type(lo_mem_helper), intent(inout) :: mem
 
     !> Prefactor for the isotope scattering
-    real(r8), parameter :: prefactor_iso = lo_pi / 4.0_r8
+    real(r8), parameter :: prefactor_iso = lo_pi/4.0_r8
     !> Prefactor for the threephonon scattering
-    real(r8), parameter :: prefactor_3ph = lo_pi / 16.0_r8
+    real(r8), parameter :: prefactor_3ph = lo_pi/16.0_r8
     !> Prefactor for the fourphonon scattering
-    real(r8), parameter :: prefactor_4ph = lo_pi / 96.0_r8
+    real(r8), parameter :: prefactor_4ph = lo_pi/96.0_r8
 
     !> The random number generator
     type(lo_mersennetwister) :: rng
@@ -215,12 +214,12 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     !> is the triplet/quartet reducible ?
     logical :: isred
     !> What is the multiplicity of the irreducible triplet/quartet
-    real(r8) :: mult
+    real(r8) :: mult, mult1, mult2, mult3, mult4
     !> timing
     real(r8) :: t0
 
     ! grid dimensions
-    select type(qp)
+    select type (qp)
     class is (lo_fft_mesh)
         dims = qp%griddensity
     class default
@@ -246,25 +245,25 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     end if
 
     ! Let's precompute the Bose-Einstein distribution since this will be used all over
-    allocate(bose_einstein(qp%n_irr_point, dr%n_mode))
-    allocate(sigmasquare(qp%n_irr_point, dr%n_mode))
-    do q1=1, qp%n_irr_point
-        do b1=1, dr%n_mode
+    allocate (bose_einstein(qp%n_irr_point, dr%n_mode))
+    allocate (sigmasquare(qp%n_irr_point, dr%n_mode))
+    do q1 = 1, qp%n_irr_point
+        do b1 = 1, dr%n_mode
             bose_einstein(q1, b1) = lo_planck(temperature, dr%iq(q1)%omega(b1))
             sigmasquare(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2
         end do
     end do
 
     ! Let's prepare the non-negative least-squares
-    allocate(A_inequal(ls%nbasis, ls%nbasis))
-    allocate(amat(ls%nbasis, ls%nbasis))
-    allocate(Q(ls%nbasis, ls%nbasis))
-    allocate(B_inequal(ls%nbasis))
-    allocate(ymat(ls%nbasis))
-    allocate(sol(ls%nbasis))
-    allocate(c(ls%nbasis))
-    allocate(A_equal(1, 1))
-    allocate(B_equal(1))
+    allocate (A_inequal(ls%nbasis, ls%nbasis))
+    allocate (amat(ls%nbasis, ls%nbasis))
+    allocate (Q(ls%nbasis, ls%nbasis))
+    allocate (B_inequal(ls%nbasis))
+    allocate (ymat(ls%nbasis))
+    allocate (sol(ls%nbasis))
+    allocate (c(ls%nbasis))
+    allocate (A_equal(1, 1))
+    allocate (B_equal(1))
 
     ! Set the matrices for the non-negative least-squares
     ! The inequal thing is what makes it non-negative
@@ -272,17 +271,17 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     A_inequal = 0.0_r8
     B_inequal = 0.0_r8
     B_equal = 0.0_r8
-    do n=1, ls%nbasis
+    do n = 1, ls%nbasis
         A_inequal(n, n) = 1
     end do
 
     amat = 0.0_r8
     ! Prefill the feature matrix for the non-negative least-squares
-    do n=1, ls%nbasis
-        do m=1, ls%nbasis
-            amat(n, m) =  modified_lorentzian(ls%omega_n(n), &
-                                              ls%omega_n(m), &
-                                              ls%width)
+    do n = 1, ls%nbasis
+        do m = 1, ls%nbasis
+            amat(n, m) = modified_lorentzian(ls%omega_n(n), &
+                                             ls%omega_n(m), &
+                                             ls%width)
         end do
     end do
     ! We can also precompute Q=A^T * A, it's the same for all irreducible qpoint and mode
@@ -296,8 +295,8 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
     if (mw%talk) call lo_progressbar_init()
 
     ctr = 0
-    do q1=1, qp%n_irr_point
-    do b1=1, dr%n_mode
+    do q1 = 1, qp%n_irr_point
+    do b1 = 1, dr%n_mode
         om1 = dr%iq(q1)%omega(b1)
         if (om1 .lt. lo_freqtol) cycle
 
@@ -306,23 +305,23 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         if (mod(ctr, mw%n) .ne. mw%r) cycle
 
         ! Define some thing for the mode we are working on
-        egv1 = dr%iq(q1)%egv(:, b1) / sqrt(om1)
+        egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
         egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
         ! Initialize the matrix for the non-negative least-square fit
         ymat = 0.0_r8
         ! First, we take care of the isotope
         if (isotope) then
-            do q2=1, qp%n_full_point
-            do b2=1, dr%n_mode
+            do q2 = 1, qp%n_full_point
+            do b2 = 1, dr%n_mode
                 om2 = dr%aq(q2)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
 
                 egviso(:, 2) = dr%aq(q2)%egv(:, b2)
-                psisq = isotope_scattering_strength(uc, egviso) * prefactor_iso * qp%ap(q2)%integration_weight
+                psisq = isotope_scattering_strength(uc, egviso)*prefactor_iso*qp%ap(q2)%integration_weight
                 sigma = sqrt(sigmasquare(qp%ap(q2)%irreducible_index, b2))
-                do n=1, ls%nbasis
-                    ymat(n) = ymat(n) + psisq * lo_gauss(ls%omega_n(n), om2, sigma) * om1 * om2
+                do n = 1, ls%nbasis
+                    ymat(n) = ymat(n) + psisq*lo_gauss(ls%omega_n(n), om2, sigma)*om1*om2
                 end do
             end do
             end do
@@ -330,7 +329,7 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         ! Now, let's go for the threephonon
         if (thirdorder) then
             call mcg3%generate_grid(qgridfull1, rng)
-            do qi=1, mcg3%npoints
+            do qi = 1, mcg3%npoints
                 q2 = qgridfull1(qi)
                 q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
                 if (q3 .lt. q2) cycle ! This is for the permutation symmetry
@@ -344,24 +343,24 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 qv3 = qp%ap(q3)%r
                 call pretransform_phi3(fct, qv2, qv3, ptf3)
 
-                prefactor = prefactor_3ph * mcg3%weight * mult
-                do b2=1, dr%n_mode
+                prefactor = prefactor_3ph*mcg3%weight*mult
+                do b2 = 1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
                     ! We already get some harmonic values for this mode
-                    egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+                    egv2 = dr%aq(q2)%egv(:, b2)/sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
 
                     ! Projection of the IFC on this mode
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
-                    do b3=1, dr%n_mode
+                    do b3 = 1, dr%n_mode
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
                         ! We already get some harmonic values for this mode
-                        egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                        egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
 
                         sigma = sqrt(sigmasquare(q1, b1) + &
@@ -375,19 +374,18 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                         ! And finally, we can compute the matrix element
                         c0 = dot_product(evp2, ptf3)
-                        psisq = abs(c0*conjg(c0)) * prefactor
+                        psisq = abs(c0*conjg(c0))*prefactor
 
                         plf1 = n2 + n3 + 1.0_r8
                         plf2 = n2 - n3
-                        do n=1, ls%nbasis
-                            ! The 2.0 comes from the permutation symmetry of the third order IFC
+                        do n = 1, ls%nbasis
                             ! The first term is invariant with permutation, so no thinking needed
                             ! For the second term, it's actually BOTH processes (+ and -) that
                             ! are invariant. Subtle.
-                            ymat(n) = ymat(n) + psisq * plf1 * lo_gauss(ls%omega_n(n), om2 + om3, sigma) * 2.0_r8
-                            ymat(n) = ymat(n) - psisq * plf1 * lo_gauss(ls%omega_n(n),-om2 - om3, sigma) * 2.0_r8
-                            ymat(n) = ymat(n) + psisq * plf2 * lo_gauss(ls%omega_n(n),-om2 + om3, sigma) * 2.0_r8
-                            ymat(n) = ymat(n) - psisq * plf2 * lo_gauss(ls%omega_n(n), om2 - om3, sigma) * 2.0_r8
+                            ymat(n) = ymat(n) + psisq*plf1*lo_gauss(ls%omega_n(n), om2 + om3, sigma)
+                            ymat(n) = ymat(n) - psisq*plf1*lo_gauss(ls%omega_n(n), -om2 - om3, sigma)
+                            ymat(n) = ymat(n) + psisq*plf2*lo_gauss(ls%omega_n(n), -om2 + om3, sigma)
+                            ymat(n) = ymat(n) - psisq*plf2*lo_gauss(ls%omega_n(n), om2 - om3, sigma)
                         end do
                     end do
                 end do
@@ -398,15 +396,15 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
             ! First, we generate the reduce monte-carlo grid
             call mcg4%generate_grid(qgridfull1, rng)
             call mcg4%generate_grid(qgridfull2, rng)
-            do qi=1, mcg4%npoints
-            do qj=1, mcg4%npoints
+            do qi = 1, mcg4%npoints
+            do qj = 1, mcg4%npoints
                 q2 = qgridfull1(qi)
                 q3 = qgridfull2(qj)
                 if (q3 .lt. q2) cycle  ! This is for permutation
                 q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, dims)
                 if (q4 .lt. q3) cycle  ! This is for permutation
 
-                 ! Here we check if the quartet can be reduced by symmetry
+                ! Here we check if the quartet can be reduced by symmetry
                 call quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
                 if (isred) cycle
 
@@ -416,13 +414,13 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                 qv4 = qp%ap(q4)%r
                 call fcf%pretransform(qv2, qv3, qv4, ptf4)
 
-                prefactor = prefactor_4ph * mcg4%weight**2 * mult
-                do b2=1, dr%n_mode
+                prefactor = prefactor_4ph*mcg4%weight**2*mult
+                do b2 = 1, dr%n_mode
                     om2 = dr%aq(q2)%omega(b2)
                     if (om2 .lt. lo_freqtol) cycle
 
                     ! We already get some harmonic values for this mode
-                    egv2 = dr%aq(q2)%egv(:, b2) / sqrt(om2)
+                    egv2 = dr%aq(q2)%egv(:, b2)/sqrt(om2)
                     n2 = bose_einstein(qp%ap(q2)%irreducible_index, b2)
                     n2p = n2 + 1.0_r8
 
@@ -430,12 +428,12 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                     evp1 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, &
                                evp1, dr%n_mode)
-                    do b3=1, dr%n_mode
+                    do b3 = 1, dr%n_mode
                         om3 = dr%aq(q3)%omega(b3)
                         if (om3 .lt. lo_freqtol) cycle
 
                         ! We already get some harmonic values for this mode
-                        egv3 = dr%aq(q3)%egv(:, b3) / sqrt(om3)
+                        egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
                         n3 = bose_einstein(qp%ap(q3)%irreducible_index, b3)
                         n3p = n3 + 1.0_r8
 
@@ -443,12 +441,12 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
                         evp2 = 0.0_r8
                         call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, &
                                    evp2, dr%n_mode)
-                        do b4=1, dr%n_mode
+                        do b4 = 1, dr%n_mode
                             om4 = dr%aq(q4)%omega(b4)
                             if (om4 .lt. lo_freqtol) cycle
 
                             ! We already get some harmonic values for this mode
-                            egv4 = dr%aq(q4)%egv(:, b4) / sqrt(om4)
+                            egv4 = dr%aq(q4)%egv(:, b4)/sqrt(om4)
                             n4 = bose_einstein(qp%ap(q4)%irreducible_index, b4)
                             n4p = n4 + 1.0_r8
 
@@ -466,32 +464,52 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
 
                             ! And finally, we can compute the matrix element
                             c0 = dot_product(evp3, ptf4)
-                            psisq = abs(c0*conjg(c0)) * prefactor
+                            psisq = abs(c0*conjg(c0))*prefactor
 
                             ! Some prefactors for the scattering
-                            plf1 = n2p * n3p * n4p - n2 * n3 * n4
-                            plf2 = 3.0_r8 * n2 * n3p * n4p - n2p * n3 * n4
-                            plf3 = 3.0_r8 * n3 * n2p * n4p - n3p * n2 * n4
-                            plf4 = 3.0_r8 * n4 * n3p * n2p - n4p * n3 * n2
+                            plf1 = n2p*n3p*n4p - n2*n3*n4
+                            plf2 = 3.0_r8*n2*n3p*n4p - n2p*n3*n4
+                            plf3 = 3.0_r8*n3*n2p*n4p - n3p*n2*n4
+                            plf4 = 3.0_r8*n4*n3p*n2p - n4p*n3*n2
 
-                            do n=1, ls%nbasis
+                            ! Take care of invariances caused by permutation
+                            if (q2 .eq. q3 .and. q3 .eq. q4) then
+                                mult1 = 1.0_r8
+                                mult2 = 1.0_r8
+                                mult3 = 1.0_r8
+                                mult4 = 1.0_r8
+                            else if ((q2 .ne. q3 .and. q3 .eq. q4) .or. &
+                                     (q3 .ne. q2 .and. q2 .eq. q4) .or. &
+                                     (q4 .ne. q2 .and. q2 .eq. q3)) then
+                                mult1 = 3.0_r8
+                                mult2 = 1.0_r8
+                                mult3 = 1.0_r8
+                                mult4 = 1.0_r8
+                            else
+                                mult1 = 6.0_r8
+                                mult2 = 2.0_r8
+                                mult3 = 2.0_r8
+                                mult4 = 2.0_r8
+                            end if
+
+                            do n = 1, ls%nbasis
                                 ! For the first part, every permutation are symmetric, hence the 6.0_r8 factor
-                                ymat(n) = ymat(n) + 6.0_r8 * psisq * plf1 * lo_gauss(ls%omega_n(n), om2 + om3 + om4, sigma)
-                                ymat(n) = ymat(n) - 6.0_r8 * psisq * plf1 * lo_gauss(ls%omega_n(n),-om2 - om3 - om4, sigma)
+                                ymat(n) = ymat(n) + mult1*psisq*plf1*lo_gauss(ls%omega_n(n), om2 + om3 + om4, sigma)
+                                ymat(n) = ymat(n) - mult1*psisq*plf1*lo_gauss(ls%omega_n(n), -om2 - om3 - om4, sigma)
 
                                 ! So here we have to get everything according to multiplicity
                                 ! Since the equation is symmetric with permutation of index 3 and 4, we have to be careful with prefactor
                                 ! What we do is apply permutation 2<->3 and 2<->4 and then multiply by 2.0_r8
                                 ! This takes into account the application of 3<->4 that would come afterwards
                                 ! But first, the identity permuation
-                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf2 * lo_gauss(ls%omega_n(n),-om2 + om3 + om4, sigma)
-                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf2 * lo_gauss(ls%omega_n(n), om2 - om3 - om4, sigma)
+                                ymat(n) = ymat(n) + mult2*psisq*plf2*lo_gauss(ls%omega_n(n), -om2 + om3 + om4, sigma)
+                                ymat(n) = ymat(n) - mult2*psisq*plf2*lo_gauss(ls%omega_n(n), om2 - om3 - om4, sigma)
                                 ! Then 2<->3
-                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n),-om3 + om2 + om4, sigma)
-                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf3 * lo_gauss(ls%omega_n(n), om3 - om2 - om4, sigma)
+                                ymat(n) = ymat(n) + mult3*psisq*plf3*lo_gauss(ls%omega_n(n), -om3 + om2 + om4, sigma)
+                                ymat(n) = ymat(n) - mult3*psisq*plf3*lo_gauss(ls%omega_n(n), om3 - om2 - om4, sigma)
                                 ! And finally 2<->4
-                                ymat(n) = ymat(n) + 2.0_r8 * psisq * plf4 * lo_gauss(ls%omega_n(n),-om4 + om3 + om2, sigma)
-                                ymat(n) = ymat(n) - 2.0_r8 * psisq * plf4 * lo_gauss(ls%omega_n(n), om4 - om3 - om2, sigma)
+                                ymat(n) = ymat(n) + mult4*psisq*plf4*lo_gauss(ls%omega_n(n), -om4 + om3 + om2, sigma)
+                                ymat(n) = ymat(n) - mult4*psisq*plf4*lo_gauss(ls%omega_n(n), om4 - om3 - om2, sigma)
                             end do
                         end do
                     end do
@@ -506,16 +524,16 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         ! With this and the inequality constraints, the quadratic programing is equivalent to a non-negative lsq
         call lo_solve_quadratic_program(Q, c, sol, A_equal, A_inequal, B_equal, B_inequal, 0, ls%nbasis, 0, 1e-13_r8)
         ! I want my zeros to be zeros
-        do n=1, ls%nbasis
+        do n = 1, ls%nbasis
             if (sol(n) .lt. 1e-13_r8) sol(n) = 0.0_r8
         end do
         ls%im_weight(:, b1, q1) = sol(:)
         if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', ctr, &
-                                         dr%n_mode * qp%n_irr_point, walltime() - t0)
+                                         dr%n_mode*qp%n_irr_point, walltime() - t0)
     end do
     end do
-    if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', dr%n_mode * qp%n_irr_point, &
-                                     dr%n_mode * qp%n_irr_point, walltime() - t0)
+    if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', dr%n_mode*qp%n_irr_point, &
+                                     dr%n_mode*qp%n_irr_point, walltime() - t0)
     call mw%allreduce('sum', ls%im_weight)
 
     ! Let's fix the degeneracies
@@ -524,17 +542,17 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         real(r8), dimension(ls%nbasis) :: buf
         integer :: q1, b1, j
 
-        do q1=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do q1 = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
 
                 buf = 0.0_r8
-                do j=1, dr%iq(q1)%degeneracy(b1)
+                do j = 1, dr%iq(q1)%degeneracy(b1)
                     b2 = dr%iq(q1)%degenmode(j, b1)
                     buf = buf + ls%im_weight(:, b2, q1)
                 end do
-                buf = buf / real(dr%iq(q1)%degeneracy(b1), r8)
-                do j=1, dr%iq(q1)%degeneracy(b1)
+                buf = buf/real(dr%iq(q1)%degeneracy(b1), r8)
+                do j = 1, dr%iq(q1)%degeneracy(b1)
                     b2 = dr%iq(q1)%degenmode(j, b1)
                     ls%im_weight(:, b2, q1) = buf
                 end do
@@ -548,15 +566,14 @@ subroutine compute_selfenergy(ls, qp, dr, uc, fct, fcf, temperature, isotope, th
         real(r8), dimension(ls%nbasis) :: buf
         integer :: iq, b1, j
 
-        do iq=1, qp%n_irr_point
-            do b1=1, dr%n_mode
+        do iq = 1, qp%n_irr_point
+            do b1 = 1, dr%n_mode
                 ls%re_static(b1, iq) = ls%evaluate_real_selfenergy_onepoint(iq, b1, 0.0_r8)
             end do
         end do
     end block realstatic
     ! And voila, we have our imaginary self-energy. Now we just have to find what to do with it
 end subroutine
-
 
 !> Write the self energy type to hdf5
 subroutine write_selfenergy_to_hdf5(ls, input_id)
@@ -587,9 +604,9 @@ subroutine destroy_selfenergy(ls)
     !> helper container
     class(lo_selfenergy), intent(inout) :: ls
 
-    if (allocated(ls%omega_n)) deallocate(ls%omega_n)
-    if (allocated(ls%im_weight)) deallocate(ls%im_weight)
-    if (allocated(ls%harm_freq)) deallocate(ls%harm_freq)
+    if (allocated(ls%omega_n)) deallocate (ls%omega_n)
+    if (allocated(ls%im_weight)) deallocate (ls%im_weight)
+    if (allocated(ls%harm_freq)) deallocate (ls%harm_freq)
     ls%nbasis = -lo_hugeint
     ls%width = -lo_huge
     ls%omega_max = -lo_huge
@@ -617,12 +634,12 @@ subroutine evaluate_selfenergy(ls, q1, b1, eaxis, se_imag, se_real)
     nfreq = size(eaxis, 1)
     se_imag = 0.0_r8
     se_real = 0.0_r8
-    do i=1, nfreq
-    do n=1, ls%nbasis
+    do i = 1, nfreq
+    do n = 1, ls%nbasis
         f0 = modified_lorentzian(eaxis(i), ls%omega_n(n), ls%width)
-        se_imag(i) = se_imag(i) + f0 * ls%im_weight(n, b1, q1)
+        se_imag(i) = se_imag(i) + f0*ls%im_weight(n, b1, q1)
         f0 = realpart_modified_lorentzian(eaxis(i), ls%omega_n(n), ls%width)
-        se_real(i) = se_real(i) + f0 * ls%im_weight(n, b1, q1)
+        se_real(i) = se_real(i) + f0*ls%im_weight(n, b1, q1)
     end do
     end do
 end subroutine
@@ -642,8 +659,8 @@ function evaluate_imag_selfenergy_onepoint(ls, q1, b1, a) result(res)
     integer :: n
 
     res = 0.0_r8
-    do n=1, ls%nbasis
-        res = res + ls%im_weight(n, b1, q1) * modified_lorentzian(a, ls%omega_n(n), ls%width)
+    do n = 1, ls%nbasis
+        res = res + ls%im_weight(n, b1, q1)*modified_lorentzian(a, ls%omega_n(n), ls%width)
     end do
 end function
 
@@ -662,8 +679,8 @@ function evaluate_real_selfenergy_onepoint(ls, q1, b1, a) result(res)
     integer :: n
 
     res = 0.0_r8
-    do n=1, ls%nbasis
-        res = res + ls%im_weight(n, b1, q1) * realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
+    do n = 1, ls%nbasis
+        res = res + ls%im_weight(n, b1, q1)*realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
     end do
 end function
 
@@ -680,7 +697,7 @@ subroutine evaluate_spectralfunction(ls, q1, b1, eaxis, sf)
     real(r8), dimension(:), intent(out) :: sf
 
     !> Inverse of pi, we don't want to calculate it everytime
-    real(r8), parameter :: invpi=0.318309886183791_r8
+    real(r8), parameter :: invpi = 0.318309886183791_r8
     !> The real and imaginary part of the spectral function
     real(r8), dimension(:), allocatable :: se_imag, se_real
     !> Some buffer
@@ -691,22 +708,22 @@ subroutine evaluate_spectralfunction(ls, q1, b1, eaxis, sf)
     integer :: nfreq
 
     nfreq = size(eaxis, 1)
-    allocate(se_imag(nfreq))
-    allocate(se_real(nfreq))
-    allocate(f0(nfreq))
-    allocate(f1(nfreq))
+    allocate (se_imag(nfreq))
+    allocate (se_real(nfreq))
+    allocate (f0(nfreq))
+    allocate (f1(nfreq))
 
     om1 = ls%harm_freq(b1, q1)
 
     call ls%evaluate_selfenergy(q1, b1, eaxis, se_imag, se_real)
-    f0 = eaxis**2 - om1**2 - 2.0_r8 * om1 * se_real
-    f1 = 2.0_r8 * om1 * se_imag
-    sf = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
+    f0 = eaxis**2 - om1**2 - 2.0_r8*om1*se_real
+    f1 = 2.0_r8*om1*se_imag
+    sf = 4.0_r8*om1**2*se_imag/(f0**2 + f1**2)*invpi
 
-    deallocate(se_imag)
-    deallocate(se_real)
-    deallocate(f0)
-    deallocate(f1)
+    deallocate (se_imag)
+    deallocate (se_real)
+    deallocate (f0)
+    deallocate (f1)
 end subroutine
 
 function evaluate_spectralfunction_onepoint(ls, q1, b1, a) result(res)
@@ -722,7 +739,7 @@ function evaluate_spectralfunction_onepoint(ls, q1, b1, a) result(res)
     real(r8)  :: res
 
     !> Inverse of pi, we don't want to calculate it everytime
-    real(r8), parameter :: invpi=0.318309886183791_r8
+    real(r8), parameter :: invpi = 0.318309886183791_r8
     !> Some buffer values
     real(r8) :: se_imag, se_real, f0, f1, om1
     !> Integer for the do loop
@@ -732,16 +749,16 @@ function evaluate_spectralfunction_onepoint(ls, q1, b1, a) result(res)
 
     se_imag = 0.0_r8
     se_real = 0.0_r8
-    do n=1, ls%nbasis
+    do n = 1, ls%nbasis
         f0 = modified_lorentzian(a, ls%omega_n(n), ls%width)
-        se_imag = se_imag + f0 * ls%im_weight(n, b1, q1)
+        se_imag = se_imag + f0*ls%im_weight(n, b1, q1)
         f0 = realpart_modified_lorentzian(a, ls%omega_n(n), ls%width)
-        se_real = se_real + f0 * ls%im_weight(n, b1, q1)
+        se_real = se_real + f0*ls%im_weight(n, b1, q1)
     end do
     if (.not. ls%stochastic) se_real = se_real - ls%re_static(b1, q1)
-    f0 = a**2 - om1**2 - 2.0_r8 * om1 * se_real
-    f1 = 2.0_r8 * om1 * se_imag
-    res = 4.0_r8 * om1**2 * se_imag / (f0**2 + f1**2) * invpi
+    f0 = a**2 - om1**2 - 2.0_r8*om1*se_real
+    f1 = 2.0_r8*om1*se_imag
+    res = 4.0_r8*om1**2*se_imag/(f0**2 + f1**2)*invpi
 end function
 
 real(r8) function isotope_scattering_strength(uc, egv)
@@ -813,7 +830,7 @@ subroutine pretransform_phi3(fct, q2, q3, ptf)
 end subroutine
 
 !> A modified lorentzian function, with the property L(0) = 0
-function modified_lorentzian(x, mu, sigma) result (l)
+function modified_lorentzian(x, mu, sigma) result(l)
     !> point to evaluate
     real(r8), intent(in) :: x
     !> mean
@@ -823,16 +840,15 @@ function modified_lorentzian(x, mu, sigma) result (l)
     !> value
     real(r8) :: l
     !> Inverse of pi, we don't want to calculate it everytime
-    real(r8), parameter :: invpi=0.318309886183791_r8
+    real(r8), parameter :: invpi = 0.318309886183791_r8
     !> Some intermediate value
     real(r8) :: f0, f1, f2
 
-    f0 = x * mu * sigma
+    f0 = x*mu*sigma
     f1 = x**2 - mu**2
-    f2 = sigma * x
-    l= f0 / (f1**2 + f2**2) * invpi
+    f2 = sigma*x
+    l = f0/(f1**2 + f2**2)*invpi
 end function
-
 
 function realpart_modified_lorentzian(x, mu, sigma) result(l)
     !> point to evaluate
@@ -844,16 +860,15 @@ function realpart_modified_lorentzian(x, mu, sigma) result(l)
     !> value
     real(r8) :: l
     !> Inverse of pi, we don't want to calculate it everytime
-    real(r8), parameter :: invpi=0.318309886183791_r8
+    real(r8), parameter :: invpi = 0.318309886183791_r8
     !> Some intermediate value
     real(r8) :: f0, f1, f2
 
-    f0 = mu * x**2 - mu**3
+    f0 = mu*x**2 - mu**3
     f1 = x**2 - mu**2
-    f2 = sigma * x
-    l= f0 / (f1**2 + f2**2) * invpi
+    f2 = sigma*x
+    l = f0/(f1**2 + f2**2)*invpi
 end function
-
 
 subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     !> The qpoint mesh
@@ -883,10 +898,10 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
     mult = 0.0_r8
     isred = .false.
     ! Let's try all operations that leaves q1 invariant
-    do j=1, qp%ip(q1)%n_invariant_operation
+    do j = 1, qp%ip(q1)%n_invariant_operation
         k = qp%ip(q1)%invariant_operation(j)
         qpp = -lo_hugeint
-        select type(qp); type is(lo_fft_mesh)
+        select type (qp); type is (lo_fft_mesh)
             ! Rotate q2 and look if it's the on grid
             qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
             if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
@@ -903,19 +918,21 @@ subroutine triplet_is_irreducible(qp, uc, q1, q2, q3, isred, mult)
         end select
         if (minval(qpp) .gt. q2) then
             isred = .true.
-        ! Now we have to determine the weight
-        ! Two roads are possible
-        !      1. Get the ratio of number of red point that can give this reducible point
-        !      2. Look at the ratio between total number of operations and the ones
-        !         that leaves this irreducible triplet unchanged
-        ! The second road doesn't requires me to sum over all other qpoints, so I'll go with this one
+            ! Now we have to determine the weight
+            ! Two roads are possible
+            !      1. Get the ratio of number of red point that can give this reducible point
+            !      2. Look at the ratio between total number of operations and the ones
+            !         that leaves this irreducible triplet unchanged
+            ! The second road doesn't requires me to sum over all other qpoints, so I'll go with this one
         else if (minval(qpp) .eq. q2 .and. maxval(qpp) .eq. q3) then
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
-end subroutine
+    mult = real(qp%ip(q1)%n_invariant_operation, r8)/mult
 
+    ! We also take permutation invariance here
+    if (q2 .ne. q3) mult = mult*2.0_r8
+end subroutine
 
 subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     !> The qpoint mesh
@@ -946,9 +963,9 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
     isred = .false.
     mult = 0.0_r8
     ! Let's try all operations that leaves q1 invariant
-    do j=1, qp%ip(q1)%n_invariant_operation
+    do j = 1, qp%ip(q1)%n_invariant_operation
         k = qp%ip(q1)%invariant_operation(j)
-        select type(qp); type is(lo_fft_mesh)
+        select type (qp); type is (lo_fft_mesh)
             qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
             if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
             qv3p = lo_operate_on_vector(uc%sym%op(k), qv3, reciprocal=.true., fractional=.true.)
@@ -966,13 +983,13 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, mult)
         call lo_qsort(qpp)
         if (qpp(1) .gt. q2) then
             isred = .true.
-        ! For the weights, it's the same idea that for the triplet
-        ! I compute the number of operations that let the quartet invariant
-        ! And take the ratio between the little group of q1 and this number
+            ! For the weights, it's the same idea that for the triplet
+            ! I compute the number of operations that let the quartet invariant
+            ! And take the ratio between the little group of q1 and this number
         else if (qpp(1) .eq. q2 .and. qpp(2) .eq. q3 .and. qpp(3) .eq. q4) then
             mult = mult + 1.0_r8
         end if
     end do
-    mult = qp%ip(q1)%n_invariant_operation * 1.0_r8 / mult
+    mult = qp%ip(q1)%n_invariant_operation*1.0_r8/mult
 end subroutine
 end module
