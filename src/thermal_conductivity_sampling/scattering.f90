@@ -155,7 +155,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
                 sr%b1(il) = b1
             end do
         end do
-        if (mw%talk) write(*, *) '... Everything is ready, starting scattering computation'
+        if (mw%talk) write(*, *) '... everything is ready, starting scattering computation'
     end block init
 
     scatt: block
@@ -225,6 +225,66 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         end do
         call mem%deallocate(buf_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     end block scatt
+
+    symmetrize_scatmat: block
+        !> To hold the q-point in reduced coordinates
+        real(r8), dimension(3) :: qv2, qv2p
+        !> To get the index of the new triplet on the fft_grid
+        integer, dimension(3) :: gi
+        !> Some buffer
+        real(r8), dimension(:), allocatable :: buf
+        !> Integer for do loops and so on
+        integer :: il, jl, q1, j, k, q2, b2, q2p, n
+
+        if (mw%talk) write(*, *) '... symmetrizing scattering matrix'
+
+        ! We use the relation Xi_{R*q, R*q'} = Xi_{q, q'''} to enforce the symmetry of Xi
+        ! TODO actually use this symmetry to reduce the number of scattering to compute
+        call mem%allocate(buf, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        do il=1, sr%nlocal_point
+            q1 = sr%q1(il)
+            do q2=1, qp%n_full_point
+                do j=1, qp%ip(q1)%n_invariant_operation
+                    k = qp%ip(q1)%invariant_operation(j)
+                    buf = 0.0_r8
+                    n = 0
+                    ! Here, we generate q''=R*q from the symmetry that leaves q invariant
+                    select type(qp); type is(lo_fft_mesh)
+                        qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+                        qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+                        if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+                        gi = qp%index_from_coordinate(qv2p)
+                        q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
+                    end select
+                    n = n + 1
+                    ! We accumulate the values for each bands
+                    do b2=1, dr%n_mode
+                        jl = (q2p - 1) * dr%n_mode + b2
+                        buf(b2) = buf(b2) + sr%Xi(il, jl)
+                    end do
+                end do
+                if (n .eq. 0) cycle
+                buf = buf / real(n, r8)
+                ! And now we distribute
+                do j=1, qp%ip(q1)%n_invariant_operation
+                    k = qp%ip(q1)%invariant_operation(j)
+                    ! Here, we generate q''=R*q from the symmetry that leaves q invariant
+                    select type(qp); type is(lo_fft_mesh)
+                        qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+                        qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+                        if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+                        gi = qp%index_from_coordinate(qv2p)
+                        q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
+                    end select
+                    do b2=1, dr%n_mode
+                        jl = (q2p - 1) * dr%n_mode + b2
+                        sr%Xi(il, jl) = buf(b2)
+                    end do
+                end do
+            end do
+        end do
+        call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    end block symmetrize_scatmat
 end subroutine
 
 #include "scattering_isotope.f90"

@@ -77,6 +77,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
 
     compute_loop: do qi=1, mcg%npoints
         q2 = qgridfull(qi)
+
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
         call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, red_triplet, mw, mem)
