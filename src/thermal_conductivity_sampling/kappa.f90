@@ -55,7 +55,7 @@ subroutine compute_qs(dr, qp, temperature)
 end subroutine
 
 !> Calculate the thermal conductivity
-subroutine get_kappa(dr, qp, uc, temperature, kappa)
+subroutine get_kappa(dr, qp, uc, temperature, classical, kappa)
     !> dispersions
     type(lo_phonon_dispersions), intent(inout) :: dr
     !> q-mesh
@@ -64,11 +64,13 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     type(lo_crystalstructure), intent(in) :: uc
     !> temperature
     real(r8), intent(in) :: temperature
+    !> Are we in the classical limit ?
+    logical, intent(in) :: classical
     !> thermal conductivity tensor
     real(r8), dimension(3, 3), intent(out) :: kappa
 
     real(r8), dimension(3) :: v0, v1
-    real(r8) :: om1
+    real(r8) :: om1, cv
     integer :: j, k
 
     integer :: q1, b1
@@ -81,6 +83,12 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
             om1 = dr%iq(q1)%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
 
+            if (classical) then
+                cv = lo_kb_hartree
+            else
+                cv = lo_harmonic_oscillator_cv(temperature, om1)
+            end if
+
             ! To ensure the symmetry, we average over the little group of each irreducible q-point
             v2 = 0.0_r8
             do j = 1, uc%sym%n
@@ -88,7 +96,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
                 v1 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%vel(:, b1), reciprocal=.true.)
                 v2 = v2 + lo_outerproduct(v0, v1)/uc%sym%n
             end do
-            buf = lo_harmonic_oscillator_cv(temperature, om1)*v2/uc%volume
+            buf = cv*v2/uc%volume
             dr%iq(q1)%kappa(:, :, b1) = buf
             kappa = kappa + buf*qp%ip(q1)%integration_weight
         end do
@@ -96,7 +104,7 @@ subroutine get_kappa(dr, qp, uc, temperature, kappa)
     kappa = lo_chop(kappa, sum(abs(kappa))*1e-6_r8)
 end subroutine
 
-subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag)
+subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, kappa_offdiag)
     !> dispersions
     type(lo_phonon_dispersions), intent(in) :: dr
     !> q-mesh
@@ -107,6 +115,8 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
     type(lo_forceconstant_secondorder), intent(inout) :: fc
     !> temperature
     real(r8), intent(in) :: temperature
+    !> Are we in the classical limit ?
+    logical, intent(in) :: classical
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
     !> mpi helper
@@ -288,8 +298,12 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, mem, mw, kappa_offdiag
                     ! This is consistent with the paper, but a bit different from QHGK
                     ! This probably comes from the fact that we don't work with creation/annihilation but
                     ! directly with displacement/momentup operator
-                    f0 = 0.5_r8*(lo_harmonic_oscillator_cv(temperature, om1) + &
-                                 lo_harmonic_oscillator_cv(temperature, om2))
+                    if (classical) then
+                        f0 = 0.5_r8*lo_kb_hartree
+                    else
+                        f0 = 0.5_r8*(lo_harmonic_oscillator_cv(temperature, om1) + &
+                                     lo_harmonic_oscillator_cv(temperature, om2))
+                    end if
 
                     tau = (tau1 + tau2)/((tau1 + tau2)**2 + (om1 - om2)**2)
                     kappa_offdiag(:, :) = kappa_offdiag(:, :) + buf_velsq(:, :, jmode, kmode)*tau*f0*pref
@@ -337,7 +351,7 @@ subroutine symmetrize_kappa(kappa, uc)
     kappa = lo_chop(kappa, tmp*1e-6_r8)
 end subroutine
 
-subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
+subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, classical, mw, mem)
     !> integration weights
     type(lo_scattering_rates), intent(inout) :: sr
     !> dispersions
@@ -352,6 +366,8 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
     integer, intent(in) :: niter
     !> Tolerance
     real(r8), intent(in) :: tol
+    !> Are we in the classical limit
+    logical, intent(in) :: classical
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -378,7 +394,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
         Fbb = 0.0_r8
         scfcheck = 0.0_r8
         ! Get the first kappa-value
-        call get_kappa(dr, qp, uc, temperature, kappa)
+        call get_kappa(dr, qp, uc, temperature, classical, kappa)
         m0 = kappa*lo_kappa_au_to_SI
         if (mw%talk) write (*, "(1X,I4,6(1X,F14.4))") 0, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
     end block init
@@ -478,7 +494,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, mw, mem)
             end if
 
             ! We are not converged if we made it here. Get the current kappa, to print to stdout.
-            call get_kappa(dr, qp, uc, temperature, kappa)
+            call get_kappa(dr, qp, uc, temperature, classical, kappa)
             m0 = kappa*lo_kappa_au_to_SI
             if (mw%r .eq. 0) write (*, "(1X,I4,6(1X,F14.4),2X,ES10.3)") &
                 iter, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), scfcheck(iter)

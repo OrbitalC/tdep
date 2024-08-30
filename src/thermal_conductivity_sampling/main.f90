@@ -56,6 +56,7 @@ initharmonic: block
         write (*, '(1X,A40,L3)') 'Thirdorder scattering                   ', opts%thirdorder
         write (*, '(1X,A40,L3)') 'Fourthorder scattering                  ', opts%fourthorder
         write (*, '(1X,A40,L3)') 'Isotope scattering                      ', opts%isotopescattering
+        write (*, '(1X,A40,L3)') 'Classical limit                         ', opts%classical
         write (*, '(1X,A40,I4,I4,I4)') 'full q-point grid                       ', opts%qgrid
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 3rd order q-point grid      ', opts%qg3ph
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 4th order q-point grid      ', opts%qg4ph
@@ -203,18 +204,18 @@ kappa: block
 
     call compute_qs(dr, qp, opts%temperature)
     if (mw%talk) write (*, *) '... computing kappa in the single mode approximation'
-    call get_kappa(dr, qp, uc, opts%temperature, kappa_sma)
+    call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_sma)
     if (mw%talk) write (*, *) '... computing off diagonal coherent contribution'
-    call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, mem, mw, kappa_offdiag)
+    call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, opts%classical, mem, mw, kappa_offdiag)
     if (opts%scfiterations .gt. 0) then
         if (mw%talk) then
             write (*, *) '... solving iterative BTE'
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
                 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
-        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, mw, mem)
+        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, opts%classical, mw, mem)
     end if
-    call get_kappa(dr, qp, uc, opts%temperature, kappa_bte)
+    call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_bte)
     if (mw%talk) write (*, *) ''
     if (mw%talk) write (*, *) '... symmetrizing the thermal conductivity tensors'
     call symmetrize_kappa(kappa_bte, uc)

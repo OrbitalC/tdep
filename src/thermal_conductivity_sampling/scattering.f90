@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
-                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree
+                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck, lo_return_unique
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -109,7 +109,11 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         sr%sigsq = 0.0_r8
         do q1 = 1, qp%n_irr_point
             do b1 = 1, dr%n_mode
-                sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
+                if (opts%classical) then
+                    sr%be(q1, b1) = lo_kb_hartree*opts%temperature/dr%iq(q1)%omega(b1)
+                else
+                    sr%be(q1, b1) = lo_planck(opts%temperature, dr%iq(q1)%omega(b1))
+                end if
 
                 sr%sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), opts%sigma)**2
             end do

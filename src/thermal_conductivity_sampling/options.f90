@@ -18,6 +18,7 @@ type lo_opts
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: btetol             !< tolerance for the iterative BTE
     integer :: scfiterations         !< Number of iteration for the Boltzmann equation
+    logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
@@ -105,6 +106,10 @@ subroutine parse(opts)
                  help='Do not consider isotope scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--classical', &
+                 help='Use the classical limit.', &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--scfiterations', &
                  help='Number of iterations for the iterative Boltzmann equation.', &
                  required=.false., act='store', def='200', error=lo_status)
@@ -170,6 +175,7 @@ subroutine parse(opts)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
     call cli%get(switch='--btetol', val=opts%btetol)
+    call cli%get(switch='--classical', val=opts%classical)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog
