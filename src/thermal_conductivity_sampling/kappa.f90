@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module kappa
 use konstanter, only: r8, lo_sqtol, lo_kb_hartree, lo_freqtol, lo_kappa_au_to_SI, &
-                      lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms
+                      lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms, lo_pi
 use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_harmonic_oscillator_cv
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
@@ -21,38 +21,8 @@ private
 public :: get_kappa
 public :: get_kappa_offdiag
 public :: iterative_bte
-public :: compute_qs
 public :: symmetrize_kappa
 contains
-
-! Compute the QS, mfp and so on from the linewidths
-subroutine compute_qs(dr, qp, temperature)
-    !> dispersions
-    type(lo_phonon_dispersions), intent(inout) :: dr
-    !> q-mesh
-    class(lo_qpoint_mesh), intent(in) :: qp
-    !> temperature
-    real(r8), intent(in) :: temperature
-
-    real(r8) :: buf, velnorm, lw
-    integer :: q1, b1
-
-    do q1 = 1, qp%n_irr_point
-        do b1 = 1, dr%n_mode
-            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-
-            lw = dr%iq(q1)%linewidth(b1)
-            dr%iq(q1)%qs(b1) = 2.0_r8*lw
-            velnorm = norm2(dr%iq(q1)%vel(:, b1))
-            if (velnorm .gt. lo_phonongroupveltol) then
-                dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1)/dr%iq(q1)%qs(b1)
-                dr%iq(q1)%scalar_mfp(b1) = velnorm/dr%iq(q1)%qs(b1)
-                dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
-                dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
-            end if
-        end do
-    end do
-end subroutine
 
 !> Calculate the thermal conductivity
 subroutine get_kappa(dr, qp, uc, temperature, classical, kappa)
@@ -71,7 +41,7 @@ subroutine get_kappa(dr, qp, uc, temperature, classical, kappa)
 
     real(r8), dimension(3) :: v0, v1
     real(r8) :: om1, cv
-    integer :: j, k
+    integer :: j
 
     integer :: q1, b1
     real(r8), dimension(3, 3) :: v2, buf
@@ -89,7 +59,7 @@ subroutine get_kappa(dr, qp, uc, temperature, classical, kappa)
                 cv = lo_harmonic_oscillator_cv(temperature, om1)
             end if
 
-            ! To ensure the symmetry, we average over the little group of each irreducible q-point
+            ! To ensure the symmetry, we average over the symmetry operation of the crystal
             v2 = 0.0_r8
             do j = 1, uc%sym%n
                 v0 = lo_operate_on_vector(uc%sym%op(j), dr%iq(q1)%Fn(:, b1), reciprocal=.true.)
@@ -296,13 +266,14 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
                     tau2 = dr%iq(iq)%linewidth(kmode)
 
                     ! This is consistent with the paper, but a bit different from QHGK
-                    ! This probably comes from the fact that we don't work with creation/annihilation but
+                    ! This comes from the fact that we don't work with creation/annihilation but
                     ! directly with displacement/momentup operator
                     if (classical) then
                         f0 = 0.5_r8*lo_kb_hartree
                     else
                         f0 = 0.5_r8*(lo_harmonic_oscillator_cv(temperature, om1) + &
                                      lo_harmonic_oscillator_cv(temperature, om2))
+                        !                   f0 = lo_harmonic_oscillator_cv(temperature, om1 + om2)
                     end if
 
                     tau = (tau1 + tau2)/((tau1 + tau2)**2 + (om1 - om2)**2)

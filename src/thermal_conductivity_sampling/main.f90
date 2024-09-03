@@ -1,7 +1,6 @@
 #include "precompilerdefinitions"
 program thermal_conductivity_sampling
-use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
-                      lo_huge, lo_m_to_Bohr
+use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, lo_m_to_Bohr
 use gottochblandat, only: walltime, tochar, open_file
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
@@ -11,39 +10,39 @@ use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
-use type_phonon_dos, only: lo_phonon_dos
-!
+use lo_timetracker, only: lo_timer
+
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, compute_qs, &
-                 symmetrize_kappa
+use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, symmetrize_kappa
 use scattering, only: lo_scattering_rates
 
 implicit none
+
 ! Standard from libolle
 type(lo_opts) :: opts
 type(lo_forceconstant_secondorder) :: fc
 type(lo_forceconstant_thirdorder) :: fct
 type(lo_forceconstant_fourthorder) :: fcf
 type(lo_phonon_dispersions) :: dr
-type(lo_phonon_dos) :: pd
 type(lo_crystalstructure) :: uc
 class(lo_qpoint_mesh), allocatable :: qp
 type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
+type(lo_timer) :: tmr_init, tmr_scat, tmr_kappa, tmr_tot
 ! The scattering rates
 type(lo_scattering_rates) :: sr
-! timers
-real(r8) :: timer_init, timer_scatt, timer_kappa, tt0
+real(r8) :: t0
 
 ! Set up all harmonic properties. That involves reading all the input file,
 ! creating grids, getting the harmonic properties on those grids.
 initharmonic: block
     integer :: i, j, q1
     ! Start MPI and timers
-    tt0 = walltime()
-    timer_init = tt0
-    timer_kappa = 0.0_r8
     call mw%init()
+    t0 = walltime()
+    ! Start the initialization timer
+    call tmr_tot%start()
+    call tmr_init%start()
     ! Get options
     call opts%parse()
     if (.not. mw%talk) opts%verbosity = -100
@@ -118,17 +117,18 @@ initharmonic: block
         if (mw%talk) write (*, *) '... read fourth order forceconstant'
     end if
 
+    call tmr_init%tock('read input files')
+
     if (mw%talk) write (*, *) '... generating q-point mesh'
     ! Get q-point mesh
     call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=opts%timereversal, &
                            headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity, nosym=.not. opts%qpsymmetry)
 
+    call tmr_init%tock('generated q-mesh')
+
     ! Get frequencies in the whole BZ
     if (mw%talk) write (*, *) '... generating harmonic properties on the q-point mesh'
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
-    ! Also the phonon DOS, for diagnostics
-    call pd%generate(dr, qp, uc, mw, mem, verbosity=opts%verbosity, &
-                     sigma=opts%sigma, n_dos_point=opts%mfppts*2, integrationtype=2)
 
     ! Make sure it's stable, no point in going further if it is unstable.
     if (dr%omega_min .lt. -lo_freqtol) then
@@ -161,23 +161,30 @@ initharmonic: block
         allocate (dr%aq(q1)%kappa(3, 3, dr%n_mode))
         dr%aq(q1)%kappa = 0.0_r8
     end do
+    call tmr_init%tock('harmonic dispersions')
+    call tmr_tot%tock('initialization')
 
     ! now I have all harmonic things, stop the init timer
-    timer_init = walltime() - timer_init
-    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_init, ' s'
+    t0 = walltime() - t0
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', t0, ' s'
+    call tmr_init%stop()
 end block initharmonic
 
 scatters: block
-
+    call tmr_scat%start()
     if (mw%talk) then
         write (*, *) ''
         write (*, *) 'Calculating scattering events'
     end if
-    timer_scatt = walltime()
-    call sr%generate(qp, dr, uc, fct, fcf, opts, mw, mem)
-    timer_scatt = walltime() - timer_scatt
 
-    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', timer_scatt, ' s'
+    t0 = walltime()
+    call sr%generate(qp, dr, uc, fct, fcf, opts, tmr_scat, mw, mem)
+    t0 = walltime() - t0
+
+    call tmr_scat%stop()
+    call tmr_tot%tock('scattering computation')
+
+    if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', t0, ' s'
 end block scatters
 
 kappa: block
@@ -185,9 +192,8 @@ kappa: block
     real(r8) :: t0
     integer :: i, u
 
-    timer_kappa = walltime()
-
-    ! space to store the actual thermal conductivity
+    call tmr_kappa%start()
+    t0 = walltime()
 
     ! I might get a silly tiny temperature, then things will break.
     if (opts%temperature .lt. lo_temperaturetol) then
@@ -196,24 +202,26 @@ kappa: block
         kappa_offdiag = 0.0_r8
     end if
 
-    ! Scattering rates
-    t0 = walltime()
-
     if (mw%talk) write (*, *) ''
     if (mw%talk) write (*, *) 'Thermal conductivity calculation'
 
-    call compute_qs(dr, qp, opts%temperature)
     if (mw%talk) write (*, *) '... computing kappa in the single mode approximation'
     call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_sma)
+    call tmr_kappa%tock('single mode approximation')
     if (mw%talk) write (*, *) '... computing off diagonal coherent contribution'
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, opts%classical, mem, mw, kappa_offdiag)
+    call tmr_kappa%tock('off-diagonal contribution')
     if (opts%scfiterations .gt. 0) then
         if (mw%talk) then
             write (*, *) '... solving iterative BTE'
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
                 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
+        t0 = walltime()
         call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, opts%classical, mw, mem)
+        t0 = walltime() - t0
+        if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', t0, ' s'
+        call tmr_kappa%tock('collective contribution')
     end if
     call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_bte)
     if (mw%talk) write (*, *) ''
@@ -221,14 +229,14 @@ kappa: block
     call symmetrize_kappa(kappa_bte, uc)
     call symmetrize_kappa(kappa_offdiag, uc)
     call symmetrize_kappa(kappa_sma, uc)
+    call tmr_kappa%tock('symmetrization')
+    call tmr_kappa%stop()
     if (mw%talk) then
         ! First we write in the standard output
         u = open_file('out', 'outfile.thermal_conductivity_sampling')
         write (u, '(A2,A5,15X,A)') '# ', 'Unit:', 'W/m/K'
         write (u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
 
-        write (*, *) ''
-        write (*, *) 'THERMAL CONDUCTIVITY'
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
         m0 = kappa_sma*lo_kappa_au_to_SI
@@ -273,8 +281,8 @@ kappa: block
 
         close (u)
     end if
-
-    timer_kappa = walltime() - timer_kappa
+    call tmr_tot%tock('thermal conductivity computation')
+    t0 = walltime() - t0
 end block kappa
 
 finalize_and_write: block
@@ -284,7 +292,6 @@ finalize_and_write: block
 
     ! sum up the total time
     if (mw%talk) then
-        tt0 = walltime() - tt0
         write (*, *) ''
         write (*, *) '... dumping auxiliary data to files'
         call dr%write_to_hdf5(qp, uc, 'outfile.grid_thermal_conductivity_sampling.hdf5', mem, opts%temperature)
@@ -302,20 +309,19 @@ finalize_and_write: block
         write (*, '(1X,A41,A49)') 'Algorithm : ', 'A. H. Romero et al., Phys Rev B 91, 214310 (2015)'
         write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
         write (*, '(1X,A41,A46)') 'Sampling method for scattering : ', 'Z. Guo et al., npj Comput Matter 10, 31 (2024)'
-
-        t0 = timer_init + timer_scatt + timer_kappa
-        write (*, *) ' '
-        write (*, *) 'Timings:'
-        write (*, "(A,F12.3,A,F7.3,A)") '            initialization:', timer_init, ' s, ', real(timer_init*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '    scattering computation:', timer_scatt, ' s, ', real(timer_scatt*100/tt0), '%'
-        write (*, "(A,F12.3,A,F7.3,A)") '                     kappa:', timer_kappa, ' s, ', real(timer_kappa*100/tt0), '%'
-        write (*, "(A,F12.3,A)") '                     total:', tt0, ' seconds'
     end if
+    call tmr_tot%tock('io')
+
+    call tmr_tot%stop()
+    if (mw%talk) write (*, *) ''
+    call tmr_init%dump(mw, 'Initialization timings:')
+    call tmr_scat%dump(mw, 'Scattering timings:')
+    call tmr_kappa%dump(mw, 'Thermal conductivity timings:')
+    call tmr_tot%dump(mw, 'Total timings:')
 end block finalize_and_write
 
 ! And we are done!
 call sr%destroy()
 call mpi_barrier(mw%comm, mw%error)
 call mpi_finalize(lo_status)
-
 end program

@@ -15,6 +15,7 @@ use type_symmetryoperation, only: lo_operate_on_vector
 use lo_randomnumbers, only: lo_mersennetwister
 use lo_fftgrid_helper, only: lo_montecarlo_grid, singlet_to_triplet, triplet_to_singlet, &
                              fft_third_grid_index, fft_fourth_grid_index
+use lo_timetracker, only: lo_timer
 
 use options, only: lo_opts
 
@@ -49,7 +50,7 @@ contains
 end type
 
 contains
-subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
+subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
     !> The scattering rate
     class(lo_scattering_rates), intent(out) :: sr
     !> The qpoint mesh
@@ -63,7 +64,9 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
     !> The fourth order force constants
     type(lo_forceconstant_fourthorder), intent(in) :: fcf
     !> The options
-    type(lo_opts) :: opts
+    type(lo_opts), intent(in) :: opts
+    !> Timer
+    type(lo_timer), intent(inout) :: tmr
     !> MPI helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -160,6 +163,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             end do
         end do
         if (mw%talk) write (*, *) '... everything is ready, starting scattering computation'
+        call tmr%tock('initialization')
     end block init
 
     scatt: block
@@ -182,14 +186,17 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             if (opts%isotopescattering) then
                 call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, opts%thres, buf, &
                                                 opts%integrationtype, opts%sigma, mw, mem)
+                call tmr%tock('isotope scattering')
             end if
             if (opts%thirdorder) then
                 call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, &
                                                     opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
+                call tmr%tock('threephonon scattering')
             end if
             if (opts%fourthorder) then
                 call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, &
                                                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
+                call tmr%tock('fourphonon scattering')
             end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
@@ -227,6 +234,16 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
                 end do
                 ! Now we can set the linewidth
                 dr%iq(q1)%linewidth(b1) = buf_lw(q1, b1)
+
+                ! While we are at it, we can set other things
+                dr%iq(q1)%qs(b1) = 2.0_r8*dr%iq(q1)%linewidth(b1)
+                velnorm = norm2(dr%iq(q1)%vel(:, b1))
+                if (velnorm .gt. lo_phonongroupveltol) then
+                    dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1)/dr%iq(q1)%qs(b1)
+                    dr%iq(q1)%scalar_mfp(b1) = velnorm/dr%iq(q1)%qs(b1)
+                    dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
+                    dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
+                end if
             end do
         end do
         call mem%deallocate(buf_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -242,6 +259,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
         !> Integer for do loops and so on
         integer :: il, jl, q1, j, k, q2, b2, q2p, n
 
+        call tmr%tick()
         if (mw%talk) write (*, *) '... symmetrizing scattering matrix'
 
         ! We use the relation Xi_{R*q, R*q'} = Xi_{q, q'''} to enforce the symmetry of Xi
@@ -290,6 +308,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, mw, mem)
             end do
         end do
         call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call tmr%tock('scattering matrix symmetrization')
     end block symmetrize_scatmat
 end subroutine
 

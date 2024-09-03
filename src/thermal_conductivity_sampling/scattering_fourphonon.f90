@@ -95,6 +95,26 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
         qv4 = qp%ap(q4)%r
         call fcf%pretransform(qv2, qv3, qv4, ptf)
 
+        ! We can already take care of the multiplicity caused by permutation
+        if (q2 .eq. q3 .and. q3 .eq. q4) then
+            mult1 = 1.0_r8
+            mult2 = 1.0_r8
+            mult3 = 1.0_r8
+            mult4 = 1.0_r8
+        else if ((q2 .ne. q3 .and. q3 .eq. q4) .or. &
+                 (q3 .ne. q2 .and. q2 .eq. q4) .or. &
+                 (q4 .ne. q2 .and. q2 .eq. q3)) then
+            mult1 = 3.0_r8
+            mult2 = 1.0_r8
+            mult3 = 1.0_r8
+            mult4 = 1.0_r8
+        else
+            mult1 = 6.0_r8
+            mult2 = 2.0_r8
+            mult3 = 2.0_r8
+            mult4 = 2.0_r8
+        end if
+
         prefactor = fourphonon_prefactor*mcg%weight**2
         do b2 = 1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
@@ -140,26 +160,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     evp3 = conjg(evp3)
                     c0 = dot_product(evp3, ptf)
                     psisq = abs(c0*conjg(c0))*prefactor
-
-                    ! Take care of invariances caused by permutation
-                    if (q2 .eq. q3 .and. q3 .eq. q4) then
-                        mult1 = 1.0_r8
-                        mult2 = 1.0_r8
-                        mult3 = 1.0_r8
-                        mult4 = 1.0_r8
-                    else if ((q2 .ne. q3 .and. q3 .eq. q4) .or. &
-                             (q3 .ne. q2 .and. q2 .eq. q4) .or. &
-                             (q4 .ne. q2 .and. q2 .eq. q3)) then
-                        mult1 = 3.0_r8
-                        mult2 = 1.0_r8
-                        mult3 = 1.0_r8
-                        mult4 = 1.0_r8
-                    else
-                        mult1 = 6.0_r8
-                        mult2 = 2.0_r8
-                        mult3 = 2.0_r8
-                        mult4 = 2.0_r8
-                    end if
 
                     ! Prefactors, only the Bose-Einstein distributions
                     plf1 = n2p*n3p*n4p - n2*n3*n4
