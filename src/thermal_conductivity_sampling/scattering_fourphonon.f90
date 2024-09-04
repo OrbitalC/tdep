@@ -101,8 +101,13 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
     compute_loop: do qi = 1, mcg%npoints
     do qj = 1, mcg%npoints
-        q2 = qgridfull1(qi)
-        q3 = qgridfull2(qj)
+        if (mctol .gt. 0) then
+            q2 = rng%rnd_int(mcg%npoints)
+            q3 = rng%rnd_int(mcg%npoints)
+        else
+            q2 = qgridfull1(qi)
+            q3 = qgridfull2(qj)
+        end if
         if (q3 .lt. q2) cycle
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, mcg%full_dims)
         if (q4 .lt. q3) cycle
