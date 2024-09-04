@@ -1,6 +1,6 @@
 
 subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thres, &
-                                          g0, integrationtype, smearing, mw, mem)
+                                          g0, integrationtype, smearing, mctol, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -25,6 +25,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     integer, intent(in) :: integrationtype
     !> The smearing width
     real(r8), intent(in) :: smearing
+    !> The Monte-Carlo integration tolerance
+    real(r8), intent(in) :: mctol
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -55,6 +57,12 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     !> The reducible triplet corresponding to the currently computed triplet
     integer, dimension(:, :), allocatable :: red_triplet
 
+    real(r8), dimension(:, :), allocatable :: od_terms
+    integer :: n, m
+    real(r8) :: buf
+    real(r8), dimension(10) :: buf_iter
+    real(r8), dimension(9) :: diff_iter
+
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -62,6 +70,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     call mem%allocate(egv1, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv2, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv3, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    call mem%allocate(od_terms, [qp%n_full_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    od_terms = 0.0_r8
 
     ! Already set some values for mode (q1, b1)
     q1 = sr%q1(il)
@@ -72,7 +83,15 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mcg%generate_grid(qgridfull, rng)
 
-    prefactor = threephonon_prefactor*mcg%weight
+    call rng%shuffle_int_array(qgridfull)
+
+!   prefactor = threephonon_prefactor*mcg%weight
+    prefactor = threephonon_prefactor
+
+    n = 0
+    m = 0
+    buf = 0.0_r8
+    buf_iter = 0.0_r8
 
     compute_loop: do qi = 1, mcg%npoints
         q2 = qgridfull(qi)
@@ -133,21 +152,53 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 f3 = (n2 + n3 + 1.0_r8)*lo_gauss(om1, -om2 - om3, sigma)
 
                 ! And this is all scattering reunited
-                fall = permutation_mult*psisq*(f0 - f1 + f2 - f3)
+               !fall = permutation_mult*psisq*(f0 - f1 + f2 - f3)
+                fall = psisq*(f0 - f1 + f2 - f3)
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
                 do i = 1, size(red_triplet, 2)
-                    g0 = g0 + fall
+                   !g0 = g0 + fall
+                    buf = buf + fall
 
-                    i2 = (red_triplet(1, i) - 1)*dr%n_mode + b2
-                    sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8*fall*om2/om1
+                   !i2 = (red_triplet(1, i) - 1)*dr%n_mode + b2
+                   !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8*fall*om2/om1
 
-                    i3 = (red_triplet(2, i) - 1)*dr%n_mode + b3
-                    sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8*fall*om3/om1
+                   !i3 = (red_triplet(2, i) - 1)*dr%n_mode + b3
+                   !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8*fall*om3/om1
+
+                    od_terms(red_triplet(1, i), b2) = od_terms(red_triplet(1, i), b2) + 2.0_r8 * fall * om2 / om1
+                    od_terms(red_triplet(2, i), b3) = od_terms(red_triplet(2, i), b3) + 2.0_r8 * fall * om3 / om1
                 end do
             end do
         end do
+        n = n + 1
+        m = m + size(red_triplet, 2) ! * permutation_mult
+        do i=2, 10
+            buf_iter(i-1) = buf_iter(i)
+        end do
+        buf_iter(10) = buf / real(m, r8)
+        if (n .gt. 11) then
+            do i=1, 9
+                diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
+            end do
+            if (maxval(diff_iter) .lt. mctol) then
+!               write(*, *) 'q3ph, exited at ', n, 'instead of ', mcg%npoints
+                exit compute_loop
+            else
+            end if
+        end if
     end do compute_loop
+
+    ! And now we add things, with the normalization
+    g0 = g0 + buf / real(m, r8)
+    od_terms = od_terms / real(m, r8)
+    do q2=1, qp%n_full_point
+        do b2=1, dr%n_mode
+            i2 = (q2 - 1)*dr%n_mode + b2
+            sr%Xi(il, i2) = sr%Xi(il, i2) + od_terms(q2, b2)
+        end do
+    end do
+
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -156,6 +207,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(od_terms, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     deallocate (red_triplet)
 end subroutine
 

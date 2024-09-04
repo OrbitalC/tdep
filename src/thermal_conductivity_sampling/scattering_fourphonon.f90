@@ -1,6 +1,6 @@
 
 subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thres, &
-                                         g0, integrationtype, smearing, mw, mem)
+                                         g0, integrationtype, smearing, mctol, mw, mem)
     !> The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -25,6 +25,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     integer, intent(in) :: integrationtype
     !> The smearing width
     real(r8), intent(in) :: smearing
+    !> The Monte-Carlo integration tolerance
+    real(r8), intent(in) :: mctol
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -57,6 +59,12 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> The reducible triplet corresponding to the currently computed quartet
     integer, dimension(:, :), allocatable :: red_quartet
 
+    real(r8), dimension(:, :), allocatable :: od_terms
+    integer :: n, m
+    real(r8) :: buf
+    real(r8), dimension(10) :: buf_iter
+    real(r8), dimension(9) :: diff_iter
+
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -66,6 +74,9 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call mem%allocate(egv2, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv3, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv4, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    call mem%allocate(od_terms, [qp%n_full_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    od_terms = 0.0_r8
 
     ! Already set some buffer values for mode (q1, b1)
     q1 = sr%q1(il)
@@ -79,7 +90,15 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call mcg%generate_grid(qgridfull1, rng)
     call mcg%generate_grid(qgridfull2, rng)
 
-    do qi = 1, mcg%npoints
+    call rng%shuffle_int_array(qgridfull1)
+    call rng%shuffle_int_array(qgridfull2)
+
+    n = 0
+    m = 0
+    buf = 0.0_r8
+    buf_iter = 0.0_r8
+
+    compute_loop: do qi = 1, mcg%npoints
     do qj = 1, mcg%npoints
         q2 = qgridfull1(qi)
         q3 = qgridfull2(qj)
@@ -114,8 +133,13 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
             mult3 = 2.0_r8
             mult4 = 2.0_r8
         end if
+        mult1 = 1.0_r8
+        mult2 = 1.0_r8
+        mult3 = 1.0_r8
+        mult4 = 1.0_r8
 
-        prefactor = fourphonon_prefactor*mcg%weight**2
+       !prefactor = fourphonon_prefactor*mcg%weight**2
+        prefactor = fourphonon_prefactor
         do b2 = 1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
@@ -180,22 +204,54 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
                     ! Add everything to the linewidth
                     do i = 1, size(red_quartet, 2)
-                        g0 = g0 + fall
+                       !g0 = g0 + fall
+                        buf = buf + fall
 
-                        i2 = (red_quartet(1, i) - 1)*dr%n_mode + b2
-                        sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8*fall*om2/om1
+                        od_terms(red_quartet(1, i), b2) = od_terms(red_quartet(1, i), b2) + 2.0_r8 * fall * om2 / om1
+                        od_terms(red_quartet(2, i), b3) = od_terms(red_quartet(2, i), b3) + 2.0_r8 * fall * om3 / om1
+                        od_terms(red_quartet(3, i), b4) = od_terms(red_quartet(3, i), b4) + 2.0_r8 * fall * om4 / om1
 
-                        i3 = (red_quartet(2, i) - 1)*dr%n_mode + b3
-                        sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8*fall*om3/om1
+                       !i2 = (red_quartet(1, i) - 1)*dr%n_mode + b2
+                       !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8*fall*om2/om1
 
-                        i4 = (red_quartet(3, i) - 1)*dr%n_mode + b4
-                        sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8*fall*om4/om1
+                       !i3 = (red_quartet(2, i) - 1)*dr%n_mode + b3
+                       !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8*fall*om3/om1
+
+                       !i4 = (red_quartet(3, i) - 1)*dr%n_mode + b4
+                       !sr%Xi(il, i4) = sr%Xi(il, i4) + 2.0_r8*fall*om4/om1
                     end do
                 end do
             end do
         end do
+        n = n + 1
+        m = m + size(red_quartet, 2)
+!       buf_iter(n) = buf / real(m, r8)
+        do i=2, 10
+            buf_iter(i-1) = buf_iter(i)
+        end do
+        buf_iter(10) = buf / real(m, r8)
+        if (n .gt. 11) then
+            do i=1, 9
+                diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
+            end do
+            if (maxval(diff_iter) .lt. mctol) then
+                write(*, *) 'q4ph, exited at ', n, 'instead of ', mcg%npoints
+                exit compute_loop
+            end if
+        end if
     end do
+    end do compute_loop
+
+    ! And now we add things, with the normalization
+    g0 = g0 + buf / real(m, r8)
+    od_terms = od_terms / real(m, r8)
+    do q2=1, qp%n_full_point
+        do b2=1, dr%n_mode
+            i2 = (q2 - 1)*dr%n_mode + b2
+            sr%Xi(il, i2) = sr%Xi(il, i2) + od_terms(q2, b2)
+        end do
     end do
+
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -207,7 +263,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call mem%deallocate(egv4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(qgridfull2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    deallocate (red_quartet)
+    call mem%deallocate(od_terms, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, red_quartet, mw, mem)
@@ -254,8 +310,6 @@ subroutine quartet_is_irreducible(qp, uc, q1, q2, q3, q4, isred, red_quartet, mw
         qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
         qv3 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q3)%r)
         qv4 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q4)%r)
-        newqp = -lo_hugeint
-        newqp_sort = -lo_hugeint
 
         isred = .false.
         ! Let's try all operations that leaves q1 invariant

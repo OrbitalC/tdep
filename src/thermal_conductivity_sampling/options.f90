@@ -17,6 +17,7 @@ type lo_opts
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: btetol             !< tolerance for the iterative BTE
+    real(flyt) :: mctol              !< tolerance for the Monte-Carlo integration
     integer :: scfiterations         !< Number of iteration for the Boltzmann equation
     logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
@@ -102,6 +103,10 @@ subroutine parse(opts)
                  help='Tolerance for the iterative BTE solution.', &
                  required=.false., act='store', def='1e-5', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--mctol', &
+                 help='Tolerance for the Monte-Carlo integration.', &
+                 required=.false., act='store', def='5e-3', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--noisotope', &
                  help='Do not consider isotope scattering.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
@@ -175,6 +180,7 @@ subroutine parse(opts)
     call cli%get(switch='--mfppts', val=opts%mfppts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
     call cli%get(switch='--btetol', val=opts%btetol)
+    call cli%get(switch='--mctol', val=opts%mctol)
     call cli%get(switch='--classical', val=opts%classical)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
