@@ -60,7 +60,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     integer, dimension(:, :), allocatable :: red_quartet
 
     real(r8), dimension(:, :), allocatable :: od_terms
-    integer :: n, m
+!   integer :: n, m
+    integer :: m
     real(r8) :: buf
     real(r8), dimension(10) :: buf_iter
     real(r8), dimension(9) :: diff_iter
@@ -93,7 +94,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call rng%shuffle_int_array(qgridfull1)
     call rng%shuffle_int_array(qgridfull2)
 
-    n = 0
+!   n = 0
     m = 0
     buf = 0.0_r8
     buf_iter = 0.0_r8
@@ -133,10 +134,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
             mult3 = 2.0_r8
             mult4 = 2.0_r8
         end if
-        mult1 = 1.0_r8
-        mult2 = 1.0_r8
-        mult3 = 1.0_r8
-        mult4 = 1.0_r8
+!       mult1 = 1.0_r8
+!       mult2 = 1.0_r8
+!       mult3 = 1.0_r8
+!       mult4 = 1.0_r8
 
        !prefactor = fourphonon_prefactor*mcg%weight**2
         prefactor = fourphonon_prefactor
@@ -223,21 +224,21 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                 end do
             end do
         end do
-        n = n + 1
-        m = m + size(red_quartet, 2)
+!       n = n + 1
+        m = m + size(red_quartet, 2) * (mult1 + mult2 + mult3 + mult4)
 !       buf_iter(n) = buf / real(m, r8)
         do i=2, 10
             buf_iter(i-1) = buf_iter(i)
         end do
         buf_iter(10) = buf / real(m, r8)
-        if (n .gt. 11) then
+!       if (n .gt. 11) then
             do i=1, 9
                 diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
             end do
             if (maxval(diff_iter) .lt. mctol) then
                 exit compute_loop
             end if
-        end if
+!       end if
     end do
     end do compute_loop
 
