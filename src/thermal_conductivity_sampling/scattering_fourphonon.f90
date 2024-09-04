@@ -235,7 +235,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                 diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
             end do
             if (maxval(diff_iter) .lt. mctol) then
-                write(*, *) 'q4ph, exited at ', n, 'instead of ', mcg%npoints
                 exit compute_loop
             end if
         end if
