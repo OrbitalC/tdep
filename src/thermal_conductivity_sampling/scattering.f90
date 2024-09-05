@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
-                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree
+                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree, lo_huge
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck, lo_return_unique
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -267,11 +267,11 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
         call mem%allocate(buf, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         do il = 1, sr%nlocal_point
             q1 = sr%q1(il)
-            do q2 = 1, qp%n_full_point
+            allq2: do q2 = 1, qp%n_full_point
+                buf = 0.0_r8
+                n = 0
                 do j = 1, qp%ip(q1)%n_invariant_operation
                     k = qp%ip(q1)%invariant_operation(j)
-                    buf = 0.0_r8
-                    n = 0
                     ! Here, we generate q''=R*q from the symmetry that leaves q invariant
                     select type (qp); type is (lo_fft_mesh)
                         qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
@@ -280,6 +280,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                         gi = qp%index_from_coordinate(qv2p)
                         q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
                     end select
+                    if (q2p .lt. q2) cycle allq2  ! If q2p < q2, we already did this guy
                     n = n + 1
                     ! We accumulate the values for each bands
                     do b2 = 1, dr%n_mode
@@ -305,7 +306,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                         sr%Xi(il, jl) = buf(b2)
                     end do
                 end do
-            end do
+            end do allq2
         end do
         call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         call tmr%tock('scattering matrix symmetrization')

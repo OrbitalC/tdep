@@ -40,27 +40,21 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     integer, dimension(:), allocatable :: qgridfull
     !> The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
-    !> The gaussian integration width
-    real(r8) :: sigma
-    !> Frequencies, bose-einstein occupation and scattering strength
-    real(r8) :: om1, om2, om3, plf, psisq, prefactor, fall, f0, f1, f2, f3
-    !> The bose-einstein distribution for the modes
-    real(r8) :: n2, n3
+    !> Frequencies, bose-einstein occupation and scattering strength and some other buffer
+    real(r8) :: sigma, om1, om2, om3, n2, n3, psisq, f0, f1, ff, buf, perm
     !> The complex threephonon matrix element
     complex(r8) :: c0
-    !> Integers for do loops
-    integer :: qi, q1, q2, q3, b1, b2, b3, i2, i3, i
+    !> Integers for do loops and counting
+    integer :: qi, q1, q2, q3, q2p, q3p, b1, b2, b3, i2, i3, i, n
     !> Is the triplet irreducible ?
     logical :: isred
-    !> Also what is the prefactor due to permutation ?
-    real(r8) :: permutation_mult
     !> The reducible triplet corresponding to the currently computed triplet
     integer, dimension(:, :), allocatable :: red_triplet
-
+    !> buff to keep the off diagonal scattering matrix elements
     real(r8), dimension(:, :), allocatable :: od_terms
-    integer :: n, m
-    real(r8) :: buf
+    !> To keep memory of the previous iterations
     real(r8), dimension(10) :: buf_iter
+    !> To be able to get the difference with previous iterations
     real(r8), dimension(9) :: diff_iter
 
     ! We start by allocating everything
@@ -85,17 +79,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
 
     call rng%shuffle_int_array(qgridfull)
 
-!   prefactor = threephonon_prefactor*mcg%weight
-    prefactor = threephonon_prefactor
-
     n = 0
-    m = 0
     buf = 0.0_r8
-    buf_iter = 0.0_r8
+    buf_iter = lo_huge  ! to avoid random early stop
+    diff_iter = lo_huge
 
     compute_loop: do qi = 1, mcg%npoints
         q2 = qgridfull(qi)
-
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
         if (q3 .lt. q2) cycle
         call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, red_triplet, mw, mem)
@@ -103,10 +93,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
 
         ! Let's compute the multiplicity due to permutation now
         if (q2 .eq. q3) then
-            permutation_mult = 1.0_r8
+            perm = 1.0_r8
         else
-            permutation_mult = 2.0_r8
+            perm = 2.0_r8
         end if
+        n = n + size(red_triplet, 2) * perm
+
+        ff = 0.0_r8
 
         ! This get the ifc3 in Fourier space, but not on phonons
         call pretransform_phi3(fct, qp%ap(q2)%r, qp%ap(q3)%r, ptf)
@@ -139,59 +132,102 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 evp2 = conjg(evp2)
                 ! And with this, we have the scattering matrix element coming in
                 c0 = dot_product(evp2, ptf)
-                psisq = abs(c0*conjg(c0))*prefactor ! Tada
+                psisq = threephonon_prefactor*abs(c0*conjg(c0))
 
                 ! Let's get the Bose-Einstein distributions
                 n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
                 n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
 
                 ! The prefactor for the scattering
-                f0 = (n2 - n3)*lo_gauss(om1, -om2 + om3, sigma)
-                f1 = (n2 - n3)*lo_gauss(om1, om2 - om3, sigma)
-                f2 = (n2 + n3 + 1.0_r8)*lo_gauss(om1, om2 + om3, sigma)
-                f3 = (n2 + n3 + 1.0_r8)*lo_gauss(om1, -om2 - om3, sigma)
+                f0 = perm*psisq*(n2 - n3)*(lo_gauss(om1, -om2 + om3, sigma)-lo_gauss(om1, om2 - om3, sigma))
+                f1 = perm*psisq*(n2 + n3 + 1.0_r8)*(lo_gauss(om1, om2 + om3, sigma)-lo_gauss(om1, -om2 - om3, sigma))
 
-                ! And this is all scattering reunited
-               !fall = permutation_mult*psisq*(f0 - f1 + f2 - f3)
-                fall = psisq*(f0 - f1 + f2 - f3)
+                ! We get track of what happened, to avoid termintating randomly because of forbiden processes
+                ! Should be incredibly rare, but we have randomness, you never know
+                ff = ff + f0 + f1
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
                 do i = 1, size(red_triplet, 2)
-                   !g0 = g0 + fall
-                    buf = buf + fall
+                    ! We accumulate the linewidth
+                    buf = buf + f0 + f1
 
-                   !i2 = (red_triplet(1, i) - 1)*dr%n_mode + b2
-                   !sr%Xi(il, i2) = sr%Xi(il, i2) + 2.0_r8*fall*om2/om1
-
-                   !i3 = (red_triplet(2, i) - 1)*dr%n_mode + b3
-                   !sr%Xi(il, i3) = sr%Xi(il, i3) + 2.0_r8*fall*om3/om1
-
-                    od_terms(red_triplet(1, i), b2) = od_terms(red_triplet(1, i), b2) + 2.0_r8 * fall * om2 / om1
-                    od_terms(red_triplet(2, i), b3) = od_terms(red_triplet(2, i), b3) + 2.0_r8 * fall * om3 / om1
+                    ! And also the off-diagonal part of the scattering matrix
+                    q2p = red_triplet(1, i)
+                    q3p = red_triplet(2, i)
+                    od_terms(q2p, b2) = od_terms(q2p, b2) + 2.0_r8 * (f0 + f1) * om2 / om1
+                    od_terms(q3p, b3) = od_terms(q3p, b3) + 2.0_r8 * (f0 + f1) * om3 / om1
                 end do
             end do
         end do
-        n = n + 1
-        m = m + size(red_triplet, 2) ! * permutation_mult
-        do i=2, 10
-            buf_iter(i-1) = buf_iter(i)
-        end do
-        buf_iter(10) = buf / real(m, r8)
-        if (n .gt. 11) then
+        ! Here we try to estimate if we can end the Monte-Carlo integration
+        if (ff .gt. 0.0_r8 .and. mctol .gt. 0.0_r8) then
+            ! We move around the values kept in memory so that buf_iter(10) = current value
+            do i=2, 10
+                buf_iter(i-1) = buf_iter(i)
+            end do
+            buf_iter(10) = buf / real(n, r8)
+            ! We compare the absolute difference of the 10 last iterations
             do i=1, 9
                 diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
             end do
-            if (maxval(diff_iter) .lt. mctol) then
-!               write(*, *) 'q3ph, exited at ', n, 'instead of ', mcg%npoints
-                exit compute_loop
-            else
-            end if
+            ! Maybe we can finish early ?
+            if (maxval(diff_iter) .lt. mctol) exit compute_loop
         end if
     end do compute_loop
 
+    ! Now we can symmetrize the off-diagonal contribution
+    ! This can be done in a way to put a value to for mode that have been skipped by the Monte-Carlo !
+    symmetrize: block
+        integer, dimension(dr%n_mode) :: nn
+        !> To hold the q-point in reduced coordinates
+        real(r8), dimension(3) :: qv2, qv2p
+        !> To get the index of the new triplet on the fft_grid
+        integer, dimension(3) :: gi
+        !> Some buffer
+        real(r8), dimension(dr%n_mode) :: buf_xi
+        integer :: j, k
+
+        ! Let's average the off diagonal term
+        allq2: do q2=1, qp%n_full_point
+            buf_xi = 0.0_r8
+            nn = 0
+            do j=1, qp%ip(q1)%n_invariant_operation
+                k = qp%ip(q1)%invariant_operation(j)
+                select type(qp); type is (lo_fft_mesh)
+                    qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+                    qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+                    if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+                    gi = qp%index_from_coordinate(qv2p)
+                    q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
+                end select
+                if (q2p .lt. q2) cycle allq2  ! If q2p < q2, we already did this guy
+                do b2=1, dr%n_mode
+                    if (od_terms(q2p, b2) .gt. 0.0_r8) then
+                        nn(b2) = nn(b2) + 1
+                        buf_xi(b2) = buf_xi(b2) + od_terms(q2p, b2)
+                    end if
+                end do
+            end do
+            do j=1, qp%ip(q1)%n_invariant_operation
+                k = qp%ip(q1)%invariant_operation(j)
+                select type(qp); type is (lo_fft_mesh)
+                    qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
+                    qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
+                    if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
+                    gi = qp%index_from_coordinate(qv2p)
+                    q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
+                end select
+                do b2=1, dr%n_mode
+                    if (nn(b2) .eq. 0) cycle
+                    od_terms(q2p, b2) = buf_xi(b2) / real(nn(b2), r8)
+                end do
+            end do
+        end do allq2
+    end block symmetrize
+
     ! And now we add things, with the normalization
-    g0 = g0 + buf / real(m, r8)
-    od_terms = od_terms / real(m, r8)
+    g0 = g0 + buf / real(n, r8)
+    od_terms = od_terms / real(n, r8)
     do q2=1, qp%n_full_point
         do b2=1, dr%n_mode
             i2 = (q2 - 1)*dr%n_mode + b2
