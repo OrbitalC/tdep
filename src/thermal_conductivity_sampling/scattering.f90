@@ -174,8 +174,6 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
         !> Some integers for the loops
         integer :: il, j, q1, b1, b2
 
-        integer :: tmp
-
         call mem%allocate(buf_lw, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         buf_lw = 0.0_r8
 

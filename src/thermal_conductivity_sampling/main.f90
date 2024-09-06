@@ -147,19 +147,14 @@ initharmonic: block
         allocate (dr%iq(q1)%qs(dr%n_mode))
         allocate (dr%iq(q1)%mfp(3, dr%n_mode))
         allocate (dr%iq(q1)%scalar_mfp(dr%n_mode))
+        allocate (dr%iq(q1)%kappa(3, 3, dr%n_mode))
         dr%iq(q1)%linewidth = 0.0_r8
         dr%iq(q1)%F0 = 0.0_r8
         dr%iq(q1)%Fn = 0.0_r8
         dr%iq(q1)%qs = 0.0_r8
         dr%iq(q1)%mfp = 0.0_r8
         dr%iq(q1)%scalar_mfp = 0.0_r8
-
-        allocate (dr%iq(q1)%kappa(3, 3, dr%n_mode))
         dr%iq(q1)%kappa = 0.0_r8
-    end do
-    do q1 = 1, qp%n_full_point
-        allocate (dr%aq(q1)%kappa(3, 3, dr%n_mode))
-        dr%aq(q1)%kappa = 0.0_r8
     end do
     call tmr_init%tock('harmonic dispersions')
     call tmr_tot%tock('initialization')
@@ -286,7 +281,15 @@ kappa: block
 end block kappa
 
 finalize_and_write: block
-    integer :: u
+    integer :: u, q1, b1
+
+    ! We need to write Fn in the right format if we want the right values of kappa in the outfile
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+            dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%Fn(:, b1) * dr%iq(q1)%omega(b1) / opts%temperature
+        end do
+    end do
 
     if (mw%talk) then
         write (*, *) ''

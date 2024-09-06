@@ -71,8 +71,6 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mcg%generate_grid(qgridfull, rng)
 
-    call rng%shuffle_int_array(qgridfull)
-
     compute_loop: do qi = 1, mcg%npoints
         q2 = qgridfull(qi)
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
@@ -127,8 +125,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                 ! The prefactor for the scattering
                 plf0 = n2 - n3
                 plf1 = n2 + n3 + 1.0_r8
-                f0 = perm*psisq*plf0*(lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma))
-                f1 = perm*psisq*plf1*(lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma))
+                f0 = perm*psisq*plf0*(lo_gauss(om1,-om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma))
+                f1 = perm*psisq*plf1*(lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1,-om2 - om3, sigma))
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
                 do i = 1, size(red_triplet, 2)
@@ -148,6 +146,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
     ! Now we can symmetrize the off-diagonal contribution
     ! This can be done in a way to put a value to for mode that have been skipped by the Monte-Carlo !
     symmetrize_and_distribute: block
+        !> To keep track of the number of mode we actually add
         integer, dimension(dr%n_mode) :: nn
         !> To hold the q-point in reduced coordinates
         real(r8), dimension(3) :: qv2p
@@ -155,14 +154,17 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
         integer, dimension(3) :: gi
         !> Some buffer
         real(r8), dimension(dr%n_mode) :: buf_xi
+        !> Some integers for the do loops and stuff
         integer :: j, k, i2
 
         ! Let's average the off diagonal term
         allq2: do q2 = 1, qp%n_full_point
             buf_xi = 0.0_r8
             nn = 0
+            ! First we get the average value
             do j = 1, qp%ip(q1)%n_invariant_operation
                 k = qp%ip(q1)%invariant_operation(j)
+                ! First we generate q2'
                 select type (qp); type is (lo_fft_mesh)
                     qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
                     qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
@@ -170,7 +172,9 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     gi = qp%index_from_coordinate(qv2p)
                     q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
                 end select
-                if (q2p .lt. q2) cycle allq2  ! If q2p < q2, we already did this guy
+                ! If q2p < q2, we already did this guy
+                if (q2p .lt. q2) cycle allq2
+                ! Accumulate values for each equivalent term, but avoid those which where not computed
                 do b2 = 1, dr%n_mode
                     if (od_terms(q2p, b2) .gt. 0.0_r8) then
                         nn(b2) = nn(b2) + 1
@@ -178,6 +182,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
                     end if
                 end do
             end do
+            ! And now we can distribute it
             do j = 1, qp%ip(q1)%n_invariant_operation
                 k = qp%ip(q1)%invariant_operation(j)
                 select type (qp); type is (lo_fft_mesh)

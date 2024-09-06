@@ -84,9 +84,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call mcg%generate_grid(qgridfull1, rng)
     call mcg%generate_grid(qgridfull2, rng)
 
-    call rng%shuffle_int_array(qgridfull1)
-    call rng%shuffle_int_array(qgridfull2)
-
     compute_loop: do qi = 1, mcg%npoints
     do qj = 1, mcg%npoints
         q2 = qgridfull1(qi)

@@ -1,7 +1,7 @@
 #include "precompilerdefinitions"
 module kappa
 use konstanter, only: r8, lo_sqtol, lo_kb_hartree, lo_freqtol, lo_kappa_au_to_SI, &
-                      lo_phonongroupveltol, lo_groupvel_Hartreebohr_to_ms, lo_pi
+                      lo_groupvel_Hartreebohr_to_ms
 use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_harmonic_oscillator_cv
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
@@ -257,12 +257,11 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
                 om1 = dr%iq(iq)%omega(jmode)
                 tau1 = dr%iq(iq)%linewidth(jmode)
                 do kmode = 1, dr%n_mode
-                    ! We only compute the off diagonal contribution
                     if (jmode .eq. kmode) cycle  ! We only want the off diagonal contribution
                     ! Skip gamma for acoustic branches
-                    if (dr%iq(iq)%omega(kmode) .lt. lo_freqtol) cycle
-
                     om2 = dr%iq(iq)%omega(kmode)
+                    if (om2 .lt. lo_freqtol) cycle
+
                     tau2 = dr%iq(iq)%linewidth(kmode)
 
                     ! This is consistent with the paper, but a bit different from QHGK
@@ -273,7 +272,6 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
                     else
                         f0 = 0.5_r8*(lo_harmonic_oscillator_cv(temperature, om1) + &
                                      lo_harmonic_oscillator_cv(temperature, om2))
-                        !                   f0 = lo_harmonic_oscillator_cv(temperature, om1 + om2)
                     end if
 
                     tau = (tau1 + tau2)/((tau1 + tau2)**2 + (om1 - om2)**2)
@@ -318,8 +316,7 @@ subroutine symmetrize_kappa(kappa, uc)
     end do
 
     kappa = tmp/uc%sym%n
-    tmp = sum(abs(kappa))
-    kappa = lo_chop(kappa, tmp*1e-6_r8)
+    kappa = lo_chop(kappa, sum(abs(kappa))*1e-6_r8)
 end subroutine
 
 subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, classical, mw, mem)
@@ -344,11 +341,17 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, classical, mw,
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
+    !> The F vector on cart, mode, irr-qpoint
     real(r8), dimension(:, :, :), allocatable :: Fnb
+    !> The F vector on full q-point, flattened along mode/qpoint for BLAS vector-matrix multiplication
     real(r8), dimension(:, :), allocatable :: Fbb, buf
+    !> The thermal conductivity
     real(r8), dimension(3, 3) :: kappa
+    !> Buffer to check convergence
     real(r8), dimension(niter) :: scfcheck
+    !> The mixing parameter between iterations
     real(r8) :: mixingparameter
+    !> Integer for the do loop
     integer :: iter
 
     ! set some things and make space
@@ -455,6 +458,12 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, classical, mw,
             end do
             scfcheck(iter) = g0/qp%n_irr_point/dr%n_mode
 
+            ! Get the current kappa, to print to stdout.
+            call get_kappa(dr, qp, uc, temperature, classical, kappa)
+            m0 = kappa*lo_kappa_au_to_SI
+            if (mw%r .eq. 0) write (*, "(1X,I4,6(1X,F14.4),2X,ES10.3)") &
+                iter, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), scfcheck(iter)
+
             ! Check for convergence. The criterion is that the relative difference between the new
             ! and old Fn is to be one part in 1E-5, for two consecutive iterations.
             if (iter .ge. 3) then
@@ -464,12 +473,7 @@ subroutine iterative_bte(sr, dr, qp, uc, temperature, niter, tol, classical, mw,
                 end if
             end if
 
-            ! We are not converged if we made it here. Get the current kappa, to print to stdout.
-            call get_kappa(dr, qp, uc, temperature, classical, kappa)
-            m0 = kappa*lo_kappa_au_to_SI
-            if (mw%r .eq. 0) write (*, "(1X,I4,6(1X,F14.4),2X,ES10.3)") &
-                iter, m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3), scfcheck(iter)
-
+            ! We are not converged if we made it here.
             ! If we had too many iterations I want to adjust the mixing a little
             if (iter .gt. 15 .and. mixingparameter .gt. 0.50) then
                 mixingparameter = mixingparameter*0.98_r8
