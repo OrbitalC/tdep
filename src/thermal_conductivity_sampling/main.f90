@@ -287,10 +287,7 @@ end block kappa
 
 finalize_and_write: block
     integer :: u
-    real(r8) :: t0
-    ! Write thermal conductivity to file
 
-    ! sum up the total time
     if (mw%talk) then
         write (*, *) ''
         write (*, *) '... dumping auxiliary data to files'
@@ -304,11 +301,8 @@ finalize_and_write: block
         write (*, *) ''
         write (*, '(1X,A21)') 'Suggested citations :'
         write (*, '(1X,A41,A56)') 'Software : ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
-        write (*, '(1X,A41,A53)') 'Method : ', 'D. A. Broido et al., Appl Phys Lett 91, 231922 (2007)'
-        write (*, '(1X,A41,A43)') 'Iterative Boltzmann transport equation : ', 'M. Omini et al., Phys Rev B 53, 9064 (1996)'
-        write (*, '(1X,A41,A49)') 'Algorithm : ', 'A. H. Romero et al., Phys Rev B 91, 214310 (2015)'
-        write (*, '(1X,A41,A43)') 'Off diagonal coherent contribution : ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
-        write (*, '(1X,A41,A46)') 'Sampling method for scattering : ', 'Z. Guo et al., npj Comput Matter 10, 31 (2024)'
+        write (*, '(1X,A41,A50)') 'Theory : ', 'A. Castellano et al, J. Chem. Phys. 159, 23 (2023)'
+        write (*, '(1X,A41,A33)') 'Theory and algorithm : ', 'A. Castellano et al, ArXiv (2024)'
     end if
     call tmr_tot%tock('io')
 

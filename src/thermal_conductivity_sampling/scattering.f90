@@ -190,12 +190,12 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
             end if
             if (opts%thirdorder) then
                 call compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg3, rng, &
-                                                    opts%thres, buf, opts%integrationtype, opts%sigma, opts%mctol, mw, mem)
+                                                    opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
                 call tmr%tock('threephonon scattering')
             end if
             if (opts%fourthorder) then
                 call compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg4, rng, &
-                                                   opts%thres, buf, opts%integrationtype, opts%sigma, opts%mctol, mw, mem)
+                                                   opts%thres, buf, opts%integrationtype, opts%sigma, mw, mem)
                 call tmr%tock('fourphonon scattering')
             end if
             ! We end with the boundary scattering

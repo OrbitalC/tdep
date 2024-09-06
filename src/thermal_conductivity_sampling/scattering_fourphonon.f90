@@ -1,6 +1,6 @@
 
 subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thres, &
-                                         g0, integrationtype, smearing, mctol, mw, mem)
+                                         g0, integrationtype, smearing, mw, mem)
     !> The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -25,8 +25,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     integer, intent(in) :: integrationtype
     !> The smearing width
     real(r8), intent(in) :: smearing
-    !> The Monte-Carlo integration tolerance
-    real(r8), intent(in) :: mctol
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -49,7 +47,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     !> Stuff for the linewidths
     real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf0, plf1, plf2, plf3
     !> Integers for do loops
-    integer :: q1, q2, q3, q4, q2p, q3p, q4p, b1, b2, b3, b4, qi, qj, i2, i3, i4, i
+    integer :: q1, q2, q3, q4, q2p, q3p, q4p, b1, b2, b3, b4, qi, qj, i
     !> Is the quartet irreducible ?
     logical :: isred
     !> If so, what is its multiplicity
@@ -60,11 +58,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     integer, dimension(:, :), allocatable :: red_quartet
 
     real(r8), dimension(:, :), allocatable :: od_terms
-!   integer :: n, m
-    integer :: m
-    real(r8) :: buf, ff, buf0, buf1, buf2, buf3
-    real(r8), dimension(10) :: buf_iter
-    real(r8), dimension(9) :: diff_iter
 
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**4, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -94,21 +87,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
     call rng%shuffle_int_array(qgridfull1)
     call rng%shuffle_int_array(qgridfull2)
 
-!   n = 0
-    m = 0
-    buf = 0.0_r8
-    buf_iter = 0.0_r8
-    diff_iter = lo_huge
-
     compute_loop: do qi = 1, mcg%npoints
     do qj = 1, mcg%npoints
-        if (mctol .gt. 0) then
-            q2 = rng%rnd_int(mcg%npoints)
-            q3 = rng%rnd_int(mcg%npoints)
-        else
-            q2 = qgridfull1(qi)
-            q3 = qgridfull2(qj)
-        end if
+        q2 = qgridfull1(qi)
+        q3 = qgridfull2(qj)
         if (q3 .lt. q2) cycle
         q4 = fft_fourth_grid_index(qp%ip(q1)%full_index, q2, q3, mcg%full_dims)
         if (q4 .lt. q3) cycle
@@ -140,11 +122,6 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
             mult2 = 2.0_r8
             mult3 = 2.0_r8
         end if
-        ff = 0.0_r8
-        buf0 = 0.0_r8
-        buf1 = 0.0_r8
-        buf2 = 0.0_r8
-        buf3 = 0.0_r8
 
         do b2 = 1, dr%n_mode
             om2 = dr%aq(q2)%omega(b2)
@@ -172,6 +149,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
 
                     n4 = sr%be(qp%ap(q4)%irreducible_index, b4)
                     n4p = n4 + 1.0_r8
+                    egv4 = dr%aq(q4)%egv(:, b4)/sqrt(om4)
 
                     select case (integrationtype)
                     case (1)
@@ -183,13 +161,11 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
                     end select
 
-                    egv4 = dr%aq(q4)%egv(:, b4)/sqrt(om4)
-
                     evp3 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode**3, (1.0_r8, 0.0_r8), egv4, 1, evp2, 1, evp3, dr%n_mode)
                     evp3 = conjg(evp3)
                     c0 = dot_product(evp3, ptf)
-                    psisq = fourphonon_prefactor*abs(c0*conjg(c0))
+                    psisq = fourphonon_prefactor*abs(c0*conjg(c0))*mcg%weight**2
 
                     ! Prefactors, only the Bose-Einstein distributions
                     plf0 = n2p*n3p*n4p - n2*n3*n4
@@ -198,73 +174,51 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     plf3 = 3.0_r8*n4*n3p*n2p - n4p*n3*n2
 
                     ! Prefactors, including the matrix elements and dirac
-                    f0 = mult0*psisq*plf0*(lo_gauss(om1, om2 + om3 + om4, sigma)-lo_gauss(om1,-om2 - om3 - om4, sigma))
-                    f1 = mult1*psisq*plf1*(lo_gauss(om1,-om2 + om3 + om4, sigma)-lo_gauss(om1, om2 - om3 - om4, sigma))
-                    f2 = mult2*psisq*plf2*(lo_gauss(om1,-om3 + om2 + om4, sigma)-lo_gauss(om1, om3 - om2 - om4, sigma))
-                    f3 = mult3*psisq*plf3*(lo_gauss(om1,-om4 + om3 + om2, sigma)-lo_gauss(om1, om4 - om3 - om2, sigma))
+                    f0 = mult0*psisq*plf0*(lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma))
+                    f1 = mult1*psisq*plf1*(lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma))
+                    f2 = mult2*psisq*plf2*(lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma))
+                    f3 = mult3*psisq*plf3*(lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma))
 
                     fall = f0 + f1 + f2 + f3
 
-                    ff = ff + fall
-
                     ! Add everything to the linewidth
                     do i = 1, size(red_quartet, 2)
-                       !g0 = g0 + fall
-                        buf = buf + fall
-
-                        buf0 = buf0 + f0
-                        buf1 = buf1 + f1
-                        buf2 = buf2 + f2
-                        buf3 = buf3 + f3
+                        g0 = g0 + fall
 
                         q2p = red_quartet(1, i)
                         q3p = red_quartet(2, i)
                         q4p = red_quartet(3, i)
 
-                        od_terms(q2p, b2) = od_terms(q2p, b2) + 2.0_r8 * fall * om2 / om1
-                        od_terms(q3p, b3) = od_terms(q3p, b3) + 2.0_r8 * fall * om3 / om1
-                        od_terms(q4p, b4) = od_terms(q4p, b4) + 2.0_r8 * fall * om4 / om1
+                        od_terms(q2p, b2) = od_terms(q2p, b2) + 2.0_r8*fall*om2/om1
+                        od_terms(q3p, b3) = od_terms(q3p, b3) + 2.0_r8*fall*om3/om1
+                        od_terms(q4p, b4) = od_terms(q4p, b4) + 2.0_r8*fall*om4/om1
                     end do
                 end do
             end do
         end do
-        m = m + size(red_quartet, 2)
-        ! Here we try to estimate if we can end the Monte-Carlo integration
-        if (ff .gt. 0.0_r8 .and. mctol .gt. 0.0_r8) then
-            ! We move around the values kept in memory so that buf_iter(-1) = current value
-            do i=2, 10
-                buf_iter(i-1) = buf_iter(i)
-            end do
-            buf_iter(10) = (buf0 / mult0 + buf1 / mult1 + buf2 / mult2 + buf3 / mult3) / real(m, r8)
-            ! We compare the absolute difference of the 10 last iterations
-            do i=1, 9
-                diff_iter(i) = abs(buf_iter(10) - buf_iter(10-i)) / abs(buf_iter(10))
-            end do
-            ! Maybe we can finish early ?
-            if (maxval(diff_iter) .lt. mctol) exit compute_loop
-        end if
     end do
     end do compute_loop
 
     ! Now we can symmetrize the off-diagonal contribution
     ! This can be done in a way to put a value to for mode that have been skipped by the Monte-Carlo !
-    symmetrize: block
+    symmetrize_and_distribute: block
         integer, dimension(dr%n_mode) :: nn
         !> To hold the q-point in reduced coordinates
-        real(r8), dimension(3) :: qv2, qv2p
+        real(r8), dimension(3) :: qv2p
         !> To get the index of the new triplet on the fft_grid
         integer, dimension(3) :: gi
         !> Some buffer
         real(r8), dimension(dr%n_mode) :: buf_xi
-        integer :: j, k
+        !> Some integers for the do loop
+        integer :: j, k, i2
 
         ! Let's average the off diagonal term
-        allq2: do q2=1, qp%n_full_point
+        allq2: do q2 = 1, qp%n_full_point
             buf_xi = 0.0_r8
             nn = 0
-            do j=1, qp%ip(q1)%n_invariant_operation
+            do j = 1, qp%ip(q1)%n_invariant_operation
                 k = qp%ip(q1)%invariant_operation(j)
-                select type(qp); type is (lo_fft_mesh)
+                select type (qp); type is (lo_fft_mesh)
                     qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
                     qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
                     if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
@@ -272,41 +226,36 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, thre
                     q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
                 end select
                 if (q2p .lt. q2) cycle allq2  ! If q2p < q2, we already did this guy
-                do b2=1, dr%n_mode
+                do b2 = 1, dr%n_mode
                     if (od_terms(q2p, b2) .gt. 0.0_r8) then
                         nn(b2) = nn(b2) + 1
                         buf_xi(b2) = buf_xi(b2) + od_terms(q2p, b2)
                     end if
                 end do
             end do
-            do j=1, qp%ip(q1)%n_invariant_operation
+            do j = 1, qp%ip(q1)%n_invariant_operation
                 k = qp%ip(q1)%invariant_operation(j)
-                select type(qp); type is (lo_fft_mesh)
+                select type (qp); type is (lo_fft_mesh)
                     qv2 = matmul(uc%inv_reciprocal_latticevectors, qp%ap(q2)%r)
                     qv2p = lo_operate_on_vector(uc%sym%op(k), qv2, reciprocal=.true., fractional=.true.)
                     if (qp%is_point_on_grid(qv2p) .eqv. .false.) cycle
                     gi = qp%index_from_coordinate(qv2p)
                     q2p = qp%gridind2ind(gi(1), gi(2), gi(3)) ! this is R*q'
                 end select
-                do b2=1, dr%n_mode
+                do b2 = 1, dr%n_mode
                     if (nn(b2) .eq. 0) cycle
-                    od_terms(q2p, b2) = buf_xi(b2) / real(nn(b2), r8)
+                    od_terms(q2p, b2) = buf_xi(b2)/real(nn(b2), r8)
                 end do
             end do
         end do allq2
-    end block symmetrize
-
-    ! And now we add things, with the normalization
-!   g0 = g0 + buf / real(m, r8)
-!   g0 = g0 + (buf0 / mult0 + buf1 / mult1 + buf2 / mult2 + buf3 / mult3) / real(m, r8)
-    g0 = g0 + buf_iter(10)
-    od_terms = od_terms / real(m, r8)
-    do q2=1, qp%n_full_point
-        do b2=1, dr%n_mode
-            i2 = (q2 - 1)*dr%n_mode + b2
-            sr%Xi(il, i2) = sr%Xi(il, i2) + od_terms(q2, b2)
+        ! And now we distribute the off-diagonal terms on the scattering matrix
+        do q2 = 1, qp%n_full_point
+            do b2 = 1, dr%n_mode
+                i2 = (q2 - 1)*dr%n_mode + b2
+                sr%Xi(il, i2) = sr%Xi(il, i2) + od_terms(q2, b2)
+            end do
         end do
-    end do
+    end block symmetrize_and_distribute
 
     ! And we can deallocate everything
     call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
