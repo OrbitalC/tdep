@@ -103,7 +103,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, thr
 
                 select case (integrationtype)
                 case (1)
-                    sigma = (1.0_r8*lo_frequency_THz_to_Hartree)*smearing
+                    sigma = smearing * lo_frequency_THz_to_Hartree
                 case (2)
                     sigma = sqrt(sr%sigsq(q1, b1) + &
                                  sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &

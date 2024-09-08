@@ -79,7 +79,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
 
     init: block
         !> To initialize the random number generator and timing
-        real(r8) :: rseed, sigma
+        real(r8) :: rseed
         !> The q-point grid dimension
         integer, dimension(3) :: dims
         !> Some integers for the do loop/indices
