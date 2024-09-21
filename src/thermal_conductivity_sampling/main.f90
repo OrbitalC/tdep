@@ -185,7 +185,7 @@ end block scatters
 kappa: block
     real(r8), dimension(3, 3) :: kappa_bte, kappa_offdiag, kappa_sma, m0
     real(r8) :: t0
-    integer :: i, u
+    integer :: i, u, q1, b1
 
     call tmr_kappa%start()
     t0 = walltime()
@@ -276,14 +276,8 @@ kappa: block
 
         close (u)
     end if
-    call tmr_tot%tock('thermal conductivity computation')
-    t0 = walltime() - t0
-end block kappa
 
-finalize_and_write: block
-    integer :: u, q1, b1
-
-    ! We need to write Fn in the right format if we want the right values of kappa in the outfile
+    ! In a last step, we have to add a prefactor to Fn, to have the right kappa per mode in the outfile
     do q1=1, qp%n_irr_point
         do b1=1, dr%n_mode
             if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
@@ -291,6 +285,11 @@ finalize_and_write: block
         end do
     end do
 
+    call tmr_tot%tock('thermal conductivity computation')
+    t0 = walltime() - t0
+end block kappa
+
+finalize_and_write: block
     if (mw%talk) then
         write (*, *) ''
         write (*, *) '... dumping auxiliary data to files'
