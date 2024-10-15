@@ -62,7 +62,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
     real(r8) :: w
 
     do i=1, 3
-        reclat(:, i) = uc%reciprocal_latticevectors(:, i) / real(mcg%full_dims(i), r8)
+        reclat(:, i) = lo_twopi * uc%reciprocal_latticevectors(:, i) / real(mcg%full_dims(i), r8)
     end do
 
     ! We start by allocating everything
