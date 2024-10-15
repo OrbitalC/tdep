@@ -49,6 +49,14 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     !> buff to keep the off diagonal scattering matrix elements
     real(r8), dimension(:, :), allocatable :: od_terms
 
+    real(r8), dimension(3, 3) :: reclat
+    real(r8), dimension(3) :: dvel
+    real(r8) :: w
+
+    do i=1, 3
+        reclat(:, i) = uc%reciprocal_latticevectors(:, i) / real(mcg%full_dims(i), r8)
+    end do
+
     ! We start by allocating everything
     call mem%allocate(ptf, dr%n_mode**3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(evp1, dr%n_mode**2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -103,9 +111,15 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 case (1)
                     sigma = smearing*lo_frequency_THz_to_Hartree
                 case (2)
-                    sigma = sqrt(sr%sigsq(q1, b1) + &
-                                 sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-                                 sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+!                   sigma = sqrt(sr%sigsq(q1, b1) + &
+!                                sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+!                                sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+                    dvel = dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3)
+                    w = 0.0_r8
+                    do i=1, 3
+                        w = w + dot_product(reclat(:, i), dvel)**2
+                    end do
+                    sigma = sqrt(w / 12.0_r8)
                 end select
 
                 ! This is the multiplication of eigv of phonons 1 and 2 and now 3
