@@ -27,7 +27,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
     ! Eigenvectors
     complex(r8), dimension(uc%na*3, 2) :: egviso
     ! prefactor and phonon buffers
-    real(r8) :: om1, om2, sigma, psisq, prefactor, f0
+    real(r8) :: om1, om2, sigma, psisq, prefactor, f0, deltaf
     ! Integers for do loops
     integer :: q1, b1, q2, b2, i, niso
 
@@ -45,9 +45,17 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
             select case (integrationtype)
             case (1)
                 sigma = lo_frequency_THz_to_Hartree*smearing
+                deltaf = lo_gauss(om1, om2, sigma)
             case (2)
                 sigma = sqrt(sr%sigsq(q1, b1) + &
                              sr%sigsq(qp%ap(q2)%irreducible_index, b2))
+                deltaf = lo_gauss(om1, om2, sigma)
+            case (4)
+                sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2)
+                deltaf = lo_lorentz(om1, om2, sigma * 2.0_r8)
+            case default
+                call lo_stop_gracefully(['integrationtype not implemented'], &
+                                        lo_exitcode_param, __FILE__, __LINE__)
             end select
 
             i = (q2 - 1)*dr%n_mode + b2
@@ -56,7 +64,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
 
             psisq = isotope_scattering_strength(uc, egviso)*prefactor
 
-            f0 = psisq*om1*om2*lo_gauss(om1, om2, sigma)
+            f0 = psisq*om1*om2*deltaf
             g0 = g0 + f0
             sr%Xi(il, i) = sr%Xi(il, i) + f0*om2/om1
         end do

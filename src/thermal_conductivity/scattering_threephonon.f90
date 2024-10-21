@@ -38,6 +38,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     real(r8), dimension(3) :: qv2, qv3
     !> Frequencies, bose-einstein occupation and scattering strength and some other buffer
     real(r8) :: sigma, om1, om2, om3, n2, n3, psisq, f0, f1, plf0, plf1, perm
+    !>
+    real(r8) :: delta0, delta1
     !> The complex threephonon matrix element
     complex(r8) :: c0
     !> Integers for do loops and counting
@@ -102,12 +104,23 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 select case (integrationtype)
                 case (1)
                     sigma = smearing*lo_frequency_THz_to_Hartree
+                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
                 case (2)
                     sigma = sqrt(sr%sigsq(q1, b1) + &
                                  sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                  sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+                case (4)
+                    sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3)
+                    sigma = sigma * 2.0_r8
+                    delta0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
+                    delta1 = lo_lorentz(om1, om2 + om3, sigma) - lo_lorentz(om1, -om2 - om3, sigma)
+                case default
+                    call lo_stop_gracefully(['integrationtype not implemented'], &
+                                            lo_exitcode_param, __FILE__, __LINE__)
                 end select
-
                 ! This is the multiplication of eigv of phonons 1 and 2 and now 3
                 evp2 = 0.0_r8
                 call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
@@ -123,8 +136,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 ! The prefactor for the scattering
                 plf0 = n2 - n3
                 plf1 = n2 + n3 + 1.0_r8
-                f0 = perm*psisq*plf0*(lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma))
-                f1 = perm*psisq*plf1*(lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma))
+                f0 = perm*psisq*plf0*delta0
+                f1 = perm*psisq*plf1*delta1
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
                 do i = 1, size(red_triplet, 2)

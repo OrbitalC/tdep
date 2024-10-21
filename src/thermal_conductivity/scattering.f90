@@ -2,7 +2,8 @@
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
                       lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree, lo_huge
-use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_gauss, lo_planck, lo_return_unique
+use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, &
+                          lo_gauss, lo_planck, lo_return_unique, lo_lorentz
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -204,7 +205,11 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                 end if
             end if
             ! Now we can update the linewidth for this mode
-            buf_lw(sr%q1(il), sr%b1(il)) = buf
+            if (opts%integrationtype .eq. 4) then
+                buf_lw(sr%q1(il), sr%b1(il)) =  (1.0_r8 - opts%lwmix) * buf + opts%lwmix * dr%iq(sr%q1(il))%linewidth(sr%b1(il))
+            else
+                buf_lw(sr%q1(il), sr%b1(il)) = buf
+            end if
 
             if (mw%talk .and. lo_trueNtimes(il, 127, sr%nlocal_point)) then
                 call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)

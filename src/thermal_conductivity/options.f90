@@ -16,6 +16,7 @@ type lo_opts
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: btetol             !< tolerance for the iterative BTE
+    real(flyt) :: lwmix              !< mixing parameter for the self-consistent linewidth
     integer :: scfiterations         !< Number of iteration for the Boltzmann equation
     logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
@@ -66,7 +67,7 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--integrationtype', switch_ab='-it', &
                  help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian.', &
-                 required=.false., act='store', def='2', choices='1,2', error=lo_status)
+                 required=.false., act='store', def='2', choices='1,2,4', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
                  help='Do not consider third order contributions to the scattering.', &
@@ -114,6 +115,10 @@ subroutine parse(opts)
     call cli%add(switch='--qpoint_grid4ph', switch_ab='-qg4ph', &
                  help='Dimension of the grid for the fourphonon integration.', &
                  nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--linewidth_mixing', switch_ab='-lwmix', &
+                 help='Mixing parameter for the self-consistent linewidth.', &
+                 required=.false., act='store', def='0.7', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -164,6 +169,7 @@ subroutine parse(opts)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
     call cli%get(switch='--btetol', val=opts%btetol)
     call cli%get(switch='--classical', val=opts%classical)
+    call cli%get(switch='--linewidth_mixing', val=opts%lwmix)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog
@@ -196,6 +202,11 @@ subroutine parse(opts)
         do i = 1, 3
             if (opts%qg4ph(i) .lt. 0 .or. opts%qg4ph(i) .gt. opts%qgrid(i)) opts%qg4ph(i) = opts%qgrid(i)
         end do
+    end if
+
+    if (opts%lwmix .lt. 0.0_flyt .or. opts%lwmix .gt. 1.0_flyt) then
+        write(*, *) 'The linewidth mixing parameter have to be between 0 and 1'
+        stop
     end if
 
 end subroutine

@@ -1,8 +1,10 @@
 #include "precompilerdefinitions"
 program thermal_conductivity
-use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, lo_m_to_Bohr, lo_emu_to_amu
+use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
+                      lo_m_to_Bohr, lo_emu_to_amu, lo_frequency_Hartree_to_Hz, &
+                      lo_exitcode_param, lo_phonongroupveltol
 use gottochblandat, only: walltime, tochar, open_file
-use mpi_wrappers, only: lo_mpi_helper
+use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
@@ -11,6 +13,7 @@ use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use lo_timetracker, only: lo_timer
+use hdf5_wrappers, only: lo_hdf5_helper
 
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, symmetrize_kappa
@@ -155,6 +158,71 @@ initharmonic: block
         dr%iq(q1)%scalar_mfp = 0.0_r8
         dr%iq(q1)%kappa = 0.0_r8
     end do
+
+    ! If we have the fourth type of integration we read again linewidth
+    if (opts%integrationtype .eq. 4) then
+    read_lw: block
+        !> The HDF5 reader
+        type(lo_hdf5_helper) :: h5
+        !> The linewidths to be read
+        real(r8), dimension(:, :), allocatable :: lw, qptin
+        !> the norm of the group velocity
+        real(r8) :: velnorm
+        !> Do loops and indices
+        integer :: b1, qf, readrnk
+
+        readrnk = mw%n - 1
+            if (mw%talk) write(*, *) 'reading linewidth from file'
+
+            if (mw%r .eq. readrnk) then
+                call h5%init(__FILE__, __LINE__)
+                call h5%open_file('read', 'infile.grid_kappa.hdf5')
+
+                call h5%read_data(lw, h5%file_id, 'linewidths')
+                call h5%read_data(qptin, h5%file_id, 'qpoints')
+
+                call h5%close_file()
+                call h5%destroy(__FILE__, __LINE__)
+            else
+                allocate(lw(dr%n_mode, qp%n_full_point))
+                allocate(qptin(3, qp%n_full_point))
+            end if
+            call mw%bcast(lw, from=readrnk)
+            call mw%bcast(qptin, from=readrnk)
+
+            ! Sanity check, do the given q-point/mode correspond to what we are calculating
+            if (size(lw, 1) .ne. dr%n_mode) then
+                call lo_stop_gracefully(['Different number of modes in infile.grid_kappa.hdf5'],&
+                                        lo_exitcode_param, __FILE__, __LINE__)
+            end if
+            if (size(lw, 2) .ne. qp%n_full_point) then
+                call lo_stop_gracefully(['Different number of q-point in infile.grid_kappa.hdf5'],&
+                                        lo_exitcode_param, __FILE__, __LINE__)
+            end if
+
+            ! And distribute everything
+            do q1=1, qp%n_irr_point
+                qf = qp%ip(q1)%full_index
+                if (maxval(abs(qptin(:, qf) - qp%ap(qf)%r)) .gt. 1e-12_r8) then
+                    call lo_stop_gracefully(['Mismatch with the q-points in infile.grid_kappa.hdf5'],&
+                                            lo_exitcode_param, __FILE__, __LINE__)
+                end if
+                do b1=1, dr%n_mode
+                    if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+                    dr%iq(q1)%linewidth(b1) = lw(b1, qf) / lo_frequency_Hartree_to_Hz
+                    dr%iq(q1)%qs(b1) = 2.0_r8 * dr%iq(q1)%linewidth(b1)
+                    velnorm = norm2(dr%iq(q1)%vel(:, b1))
+                    if (velnorm .gt. lo_phonongroupveltol) then
+                        dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1)/dr%iq(q1)%qs(b1)
+                        dr%iq(q1)%scalar_mfp(b1) = velnorm/dr%iq(q1)%qs(b1)
+                        dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
+                        dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
+                    end if
+                end do
+            end do
+    end block read_lw
+    end if
+
     call tmr_init%tock('harmonic dispersions')
     call tmr_tot%tock('initialization')
 

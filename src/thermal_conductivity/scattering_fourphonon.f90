@@ -52,9 +52,11 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
     real(r8) :: mult0, mult1, mult2, mult3
     !> All the prefactors for the scattering
     real(r8) :: f0, f1, f2, f3, f4, f5, f6, f7, fall
+    !> The delta functions
+    real(r8) :: deltaf0, deltaf1, deltaf2, deltaf3
     !> The reducible triplet corresponding to the currently computed quartet
     integer, dimension(:, :), allocatable :: red_quartet
-
+    !> buff to keep the off diagonal scattering matrix elements
     real(r8), dimension(:, :), allocatable :: od_terms
 
     ! We start by allocating everything
@@ -149,11 +151,31 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                     select case (integrationtype)
                     case (1)
                         sigma = smearing*lo_frequency_THz_to_Hartree
+                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
+                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
+                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
+                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
                     case (2)
                         sigma = sqrt(sr%sigsq(q1, b1) + &
                                      sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                      sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
                                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
+                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
+                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
+                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
+                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
+                    case (4)
+                        sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + &
+                                dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3) + &
+                                dr%iq(qp%ap(q4)%irreducible_index)%linewidth(b4)
+                        sigma = sigma * 2.0_r8
+                        deltaf0 = lo_lorentz(om1, om2 + om3 + om4, sigma) - lo_lorentz(om1, -om2 - om3 - om4, sigma)
+                        deltaf1 = lo_lorentz(om1, -om2 + om3 + om4, sigma) - lo_lorentz(om1,  om2 - om3 - om4, sigma)
+                        deltaf2 = lo_lorentz(om1, -om3 + om2 + om4, sigma) - lo_lorentz(om1,  om3 - om2 - om4, sigma)
+                        deltaf3 = lo_lorentz(om1, -om4 + om3 + om2, sigma) - lo_lorentz(om1,  om4 - om3 - om2, sigma)
+                    case default
+                        call lo_stop_gracefully(['integrationtype not implemented'], &
+                                                lo_exitcode_param, __FILE__, __LINE__)
                     end select
 
                     evp3 = 0.0_r8
@@ -169,10 +191,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                     plf3 = 3.0_r8*n4*n3p*n2p - n4p*n3*n2
 
                     ! Prefactors, including the matrix elements and dirac
-                    f0 = mult0*psisq*plf0*(lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma))
-                    f1 = mult1*psisq*plf1*(lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma))
-                    f2 = mult2*psisq*plf2*(lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma))
-                    f3 = mult3*psisq*plf3*(lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma))
+                    f0 = mult0*psisq*plf0*deltaf0
+                    f1 = mult1*psisq*plf1*deltaf1
+                    f2 = mult2*psisq*plf2*deltaf2
+                    f3 = mult3*psisq*plf3*deltaf3
 
                     fall = f0 + f1 + f2 + f3
 
