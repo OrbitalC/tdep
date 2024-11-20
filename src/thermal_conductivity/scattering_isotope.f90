@@ -31,8 +31,8 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
     ! Integers for do loops
     integer :: q1, b1, q2, b2, i, niso
 
-    q1 = sr%q1(il)
-    b1 = sr%b1(il)
+    q1 = sr%my_qpoints(il)
+    b1 = sr%my_modes(il)
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
@@ -50,7 +50,10 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
                 sigma = sqrt(sr%sigsq(q1, b1) + &
                              sr%sigsq(qp%ap(q2)%irreducible_index, b2))
                 deltaf = lo_gauss(om1, om2, sigma)
-            case (4)
+            case (6)
+                sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), smearing)
+                deltaf = lo_gauss(om1, om2, sigma)
+            case (7)
                 sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2)
                 deltaf = lo_lorentz(om1, om2, sigma * 2.0_r8)
             case default

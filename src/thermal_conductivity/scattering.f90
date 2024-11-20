@@ -33,10 +33,10 @@ real(r8), parameter :: fourphonon_prefactor = lo_pi/96.0_r8
 ! Container for scattering rates
 type lo_scattering_rates
     !> The number of qpoint/mode on this rank
-    integer :: nlocal_point
+    integer :: my_nqpoints
     !> The list of qpoint and modes for this rank
-    integer, dimension(:), allocatable :: q1, b1
-    !> Let's precompute the Bose-Einstein distribution
+    integer, dimension(:), allocatable :: my_qpoints, my_modes
+    !> Bose-Einstein and squared smearing for each mode on irreducible q-point
     real(r8), dimension(:, :), allocatable :: be, sigsq
     !> The scattering matrix
     real(r8), dimension(:, :), allocatable :: Xi
@@ -84,7 +84,8 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
         !> The q-point grid dimension
         integer, dimension(3) :: dims
         !> Some integers for the do loop/indices
-        integer :: q1, b1, il, j, nlocal_point, ctr
+        integer :: q1, b1, il, j, my_nqpoints, ctr
+        !> The seed for the random number generator for the Monte-Carlo integration
 
         ! grid dimensions
         select type (qp)
@@ -94,8 +95,15 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
             call lo_stop_gracefully(['This routine only works with FFT meshes'], lo_exitcode_param, __FILE__, __LINE__)
         end select
 
+        if (opts%seed .gt. 0) then
+            rseed = 1.0 / real(opts%seed, r8)
+        else
+            rseed = walltime()
+            if (mw%talk) write(*, *) '... walltime() used to generate random state'
+        end if
+
         ! Initialize the random number generator
-        call rng%init(iseed=mw%r, rseed=walltime())
+        call rng%init(iseed=mw%r, rseed=rseed)
 
         if (mw%talk) write (*, *) '... creating Monte-Carlo grid'
         ! Initialize the monte-carlo grid
@@ -125,7 +133,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
 
         if (mw%talk) write (*, *) '... distributing q-point/modes on MPI ranks'
         ctr = 0
-        nlocal_point = 0
+        my_nqpoints = 0
         do q1 = 1, qp%n_irr_point
             do b1 = 1, dr%n_mode
                 ! We skip the acoustic mode at Gamma
@@ -134,17 +142,17 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
 
                 ! MPI thing
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
-                nlocal_point = nlocal_point + 1
+                my_nqpoints = my_nqpoints + 1
             end do
         end do
 
         ! We can allocate all we need
-        sr%nlocal_point = nlocal_point
-        allocate (sr%q1(nlocal_point))
-        allocate (sr%b1(nlocal_point))
-        allocate (sr%Xi(nlocal_point, qp%n_full_point*dr%n_mode))
-        sr%q1 = -lo_hugeint
-        sr%b1 = -lo_hugeint
+        sr%my_nqpoints = my_nqpoints
+        allocate (sr%my_qpoints(my_nqpoints))
+        allocate (sr%my_modes(my_nqpoints))
+        allocate (sr%Xi(my_nqpoints, qp%n_full_point*dr%n_mode))
+        sr%my_qpoints = -lo_hugeint
+        sr%my_modes = -lo_hugeint
         sr%Xi = 0.0_r8
 
         ! Let's attribute the q1/b1 indices to the ranks
@@ -159,8 +167,8 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                 ! MPI thing
                 if (mod(ctr, mw%n) .ne. mw%r) cycle
                 il = il + 1
-                sr%q1(il) = q1
-                sr%b1(il) = b1
+                sr%my_qpoints(il) = q1
+                sr%my_modes(il) = b1
             end do
         end do
         if (mw%talk) write (*, *) '... everything is ready, starting scattering computation'
@@ -180,7 +188,7 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
 
         t0 = walltime()
         if (mw%talk) call lo_progressbar_init()
-        do il = 1, sr%nlocal_point
+        do il = 1, sr%my_nqpoints
             buf = 0.0_r8
             if (opts%isotopescattering) then
                 call compute_isotope_scattering(il, sr, qp, dr, uc, opts%temperature, buf, &
@@ -199,23 +207,24 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
             end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
-                velnorm = norm2(dr%iq(sr%q1(il))%vel(:, sr%b1(il)))
+                velnorm = norm2(dr%iq(sr%my_qpoints(il))%vel(:, sr%my_modes(il)))
                 if (velnorm .gt. lo_phonongroupveltol) then
                     buf = buf + velnorm/opts%mfp_max
                 end if
             end if
             ! Now we can update the linewidth for this mode
-            if (opts%integrationtype .eq. 4) then
+            if (opts%integrationtype .eq. 7) then
                 buf_lw(sr%q1(il), sr%b1(il)) =  (1.0_r8 - opts%lwmix) * buf + opts%lwmix * dr%iq(sr%q1(il))%linewidth(sr%b1(il))
             else
                 buf_lw(sr%q1(il), sr%b1(il)) = buf
             end if
+            buf_lw(sr%my_qpoints(il), sr%my_modes(il)) = buf
 
-            if (mw%talk .and. lo_trueNtimes(il, 127, sr%nlocal_point)) then
-                call lo_progressbar(' ... computing scattering amplitude', il, sr%nlocal_point, walltime() - t0)
+            if (mw%talk .and. lo_trueNtimes(il, 127, sr%my_nqpoints)) then
+                call lo_progressbar(' ... computing scattering amplitude', il, sr%my_nqpoints, walltime() - t0)
             end if
         end do
-        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%nlocal_point, sr%nlocal_point, walltime() - t0)
+        if (mw%talk) call lo_progressbar(' ... computing scattering amplitude', sr%my_nqpoints, sr%my_nqpoints, walltime() - t0)
 
         ! Reduce the linewidth
         call mw%allreduce('sum', buf_lw)
@@ -266,10 +275,10 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
         if (mw%talk) write (*, *) '... symmetrizing scattering matrix'
 
         ! We use the relation Xi_{R*q, R*q'} = Xi_{q, q'''} to enforce the symmetry of Xi
-        ! TODO actually use this symmetry to reduce the number of scattering to compute
+        ! TODO look if these irreducible pair could reduce the cost
         call mem%allocate(buf, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        do il = 1, sr%nlocal_point
-            q1 = sr%q1(il)
+        do il = 1, sr%my_nqpoints
+            q1 = sr%my_qpoints(il)
             allq2: do q2 = 1, qp%n_full_point
                 buf = 0.0_r8
                 n = 0
@@ -327,11 +336,11 @@ subroutine sr_destroy(sr)
     integer :: il
 
     if (allocated(sr%Xi)) deallocate (sr%Xi)
-    if (allocated(sr%q1)) deallocate (sr%q1)
-    if (allocated(sr%b1)) deallocate (sr%b1)
+    if (allocated(sr%my_qpoints)) deallocate (sr%my_qpoints)
+    if (allocated(sr%my_modes)) deallocate (sr%my_modes)
     if (allocated(sr%be)) deallocate (sr%be)
     if (allocated(sr%sigsq)) deallocate (sr%sigsq)
-    sr%nlocal_point = -lo_hugeint
+    sr%my_nqpoints = -lo_hugeint
 end subroutine
 
 ! Function to measure the size of the memory
@@ -342,8 +351,8 @@ function sr_size_in_mem(sr) result(mem)
     integer(i8) :: mem
 
     mem = storage_size(sr)
-    if (allocated(sr%q1)) mem = mem + storage_size(sr%q1)*size(sr%q1)
-    if (allocated(sr%b1)) mem = mem + storage_size(sr%b1)*size(sr%b1)
+    if (allocated(sr%my_qpoints)) mem = mem + storage_size(sr%my_qpoints)*size(sr%my_qpoints)
+    if (allocated(sr%my_modes)) mem = mem + storage_size(sr%my_modes)*size(sr%my_modes)
     if (allocated(sr%be)) mem = mem + storage_size(sr%be)*size(sr%be)
     if (allocated(sr%Xi)) mem = mem + storage_size(sr%Xi)*size(sr%Xi)
     if (allocated(sr%sigsq)) mem = mem + storage_size(sr%sigsq)*size(sr%sigsq)

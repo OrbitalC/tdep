@@ -15,15 +15,17 @@ type lo_opts
     real(flyt) :: sigma              !< scaling factor for adaptive gaussian
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
-    real(flyt) :: btetol             !< tolerance for the iterative BTE
     real(flyt) :: lwmix              !< mixing parameter for the self-consistent linewidth
+    real(flyt) :: itertol            !< tolerance for the iterative solution
     integer :: scfiterations         !< Number of iteration for the Boltzmann equation
+    integer :: itermaxsteps          !< Number of iteration for the Boltzmann equation
     logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
     logical :: isotopescattering     !< use isotope scattering
     integer :: integrationtype       !< adaptive or standard gaussian integration
+    integer :: seed                  !< seed for the Monte-Carlo grid
 
     ! Debugging things
     logical :: timereversal
@@ -67,7 +69,7 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--integrationtype', switch_ab='-it', &
                  help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian.', &
-                 required=.false., act='store', def='2', choices='1,2,4', error=lo_status)
+                 required=.false., act='store', def='2', choices='1,2,6,7', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
                  help='Do not consider third order contributions to the scattering.', &
@@ -79,7 +81,7 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     cli_qpoint_grid
     call cli%add(switch='--sigma', &
-                 help='Global scaling factor for adaptive Gaussian smearing.', &
+                 help='Global scaling factor for Gaussian/adaptive Gaussian smearing. The default is determined procedurally, and scaled by this number.', &
                  required=.false., act='store', def='1.0', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_readqmesh
@@ -89,11 +91,11 @@ subroutine parse(opts)
                  required=.false., act='store', def='300', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--max_mfp', &
-                 help='Add a limit on the mean free path as an approximation of domain size.', &
+                 help='Add a limit on the mean free path as an approximation of domain size (in m).', &
                  required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--btetol', &
-                 help='Tolerance for the iterative BTE solution.', &
+    call cli%add(switch='--iterative_tolerance', &
+                 help='Tolerance for the iterative solution.', &
                  required=.false., act='store', def='1e-5', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--noisotope', &
@@ -104,8 +106,8 @@ subroutine parse(opts)
                  help='Use the classical limit for phonon occupation and heat capacity.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--scfiterations', &
-                 help='Number of iterations for the iterative Boltzmann equation.', &
+    call cli%add(switch='--iterative_maxsteps', &
+                 help='Max number of iterations for the iterative solution.', &
                  required=.false., act='store', def='200', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--qpoint_grid3ph', switch_ab='-qg3ph', &
@@ -119,6 +121,10 @@ subroutine parse(opts)
     call cli%add(switch='--linewidth_mixing', switch_ab='-lwmix', &
                  help='Mixing parameter for the self-consistent linewidth.', &
                  required=.false., act='store', def='0.7', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--seed', &
+                 help='Positive integer to seed the random number generator for the Monte-Carlo grids.', &
+                 required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
 
     ! hidden
@@ -156,7 +162,7 @@ subroutine parse(opts)
     call cli%get(switch='--qpoint_grid', val=opts%qgrid)
     call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph)
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph)
-    call cli%get(switch='--scfiterations', val=opts%scfiterations)
+    call cli%get(switch='--iterative_maxsteps', val=opts%itermaxsteps)
     call cli%get(switch='--sigma', val=opts%sigma)
     call cli%get(switch='--tau_boundary', val=opts%tau_boundary)
     call cli%get(switch='--nothirdorder', val=dumlog)
@@ -167,9 +173,10 @@ subroutine parse(opts)
     call cli%get(switch='--integrationtype', val=opts%integrationtype)
     call cli%get(switch='--readiso', val=opts%readiso)
     call cli%get(switch='--max_mfp', val=opts%mfp_max)
-    call cli%get(switch='--btetol', val=opts%btetol)
+    call cli%get(switch='--iterative_tolerance', val=opts%itertol)
     call cli%get(switch='--classical', val=opts%classical)
     call cli%get(switch='--linewidth_mixing', val=opts%lwmix)
+    call cli%get(switch='--seed', val=opts%seed)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog

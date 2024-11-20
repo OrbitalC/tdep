@@ -63,8 +63,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     od_terms = 0.0_r8
 
     ! Already set some values for mode (q1, b1)
-    q1 = sr%q1(il)
-    b1 = sr%b1(il)
+    q1 = sr%my_qpoints(il)
+    b1 = sr%my_modes(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
 
@@ -112,7 +112,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                                  sr%sigsq(qp%ap(q3)%irreducible_index, b3))
                     delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
                     delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
-                case (4)
+                case (6)
+                    sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3), &
+                                                 dr%default_smearing(b3), smearing)
+                case (7)
                     sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3)
                     sigma = sigma * 2.0_r8
                     delta0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
@@ -155,7 +158,8 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     end do compute_loop
 
     ! Now we can symmetrize the off-diagonal contribution
-    ! This can be done in a way to put a value to for mode that have been skipped by the Monte-Carlo !
+    ! For this, we only compute the average values from q-point on the Monte-Carlo grid.
+    ! But we distribute averaged entries of the scattering matrix for every equivalent points
     symmetrize_and_distribute: block
         !> To keep track of the number of mode we actually add
         integer, dimension(dr%n_mode) :: nn

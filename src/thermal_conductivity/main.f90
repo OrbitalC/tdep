@@ -16,7 +16,7 @@ use lo_timetracker, only: lo_timer
 use hdf5_wrappers, only: lo_hdf5_helper
 
 use options, only: lo_opts
-use kappa, only: get_kappa, get_kappa_offdiag, iterative_bte, symmetrize_kappa
+use kappa, only: get_kappa, get_kappa_offdiag, iterative_solution, symmetrize_kappa
 use scattering, only: lo_scattering_rates
 
 implicit none
@@ -62,17 +62,18 @@ initharmonic: block
         write (*, '(1X,A40,I4,I4,I4)') 'full q-point grid                       ', opts%qgrid
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 3rd order q-point grid      ', opts%qg3ph
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 4th order q-point grid      ', opts%qg4ph
-        write (*, '(1X,A40,I5)') 'Max number of iteration                 ', opts%scfiterations
+        write (*, '(1X,A40,I5)') 'Max number of iteration                 ', opts%itermaxsteps
         write (*, '(1X,A40,E20.12)') 'Max mean free path (in m)               ', opts%mfp_max/lo_m_to_Bohr
-        write (*, '(1X,A40,E20.12)') 'Tolerance for the iterative solution    ', opts%btetol
+        write (*, '(1X,A40,E20.12)') 'Tolerance for the iterative solution    ', opts%itertol
         select case (opts%integrationtype)
         case (1)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
-            write (*, '(1X,A40,E20.12)') 'Broadening parameter                    ', opts%sigma
         case (2)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
+        write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
         end select
-        write (*, '(1X,A40,I4)') 'Number of MPI ranks                     ', mw%n
+        write (*, '(1X,A40,I10)') 'Number of MPI ranks                     ', mw%n
+        if (opts%seed .gt. 0) write(*, '(1X,A40,I10)') 'Random seed                             ', opts%seed
         write (*, *) ''
     end if
 
@@ -232,7 +233,7 @@ initharmonic: block
     call tmr_init%stop()
 end block initharmonic
 
-scatters: block
+get_scattering_rates: block
     call tmr_scat%start()
     if (mw%talk) then
         write (*, *) ''
@@ -247,10 +248,10 @@ scatters: block
     call tmr_tot%tock('scattering computation')
 
     if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', t0, ' s'
-end block scatters
+end block get_scattering_rates
 
-kappa: block
-    real(r8), dimension(3, 3) :: kappa_bte, kappa_offdiag, kappa_sma, m0
+blockkappa: block
+    real(r8), dimension(3, 3) :: kappa_iter, kappa_offdiag, kappa_sma, m0
     real(r8) :: t0
     integer :: i, u, q1, b1
 
@@ -259,7 +260,7 @@ kappa: block
 
     ! I might get a silly tiny temperature, then things will break.
     if (opts%temperature .lt. lo_temperaturetol) then
-        kappa_bte = 0.0_r8
+        kappa_iter = 0.0_r8
         kappa_sma = 0.0_r8
         kappa_offdiag = 0.0_r8
     end if
@@ -273,29 +274,29 @@ kappa: block
     if (mw%talk) write (*, *) '... computing off diagonal (coherence) contribution'
     call get_kappa_offdiag(dr, qp, uc, fc, opts%temperature, opts%classical, mem, mw, kappa_offdiag)
     call tmr_kappa%tock('off-diagonal contribution')
-    if (opts%scfiterations .gt. 0) then
+    if (opts%itermaxsteps .gt. 0) then
         if (mw%talk) then
             write (*, *) '... solving iteratively the collective contribution'
             write (*, "(1X,A4,6(1X,A14),2X,A10)") 'iter', &
                 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   ', 'DeltaF/F'
         end if
         t0 = walltime()
-        call iterative_bte(sr, dr, qp, uc, opts%temperature, opts%scfiterations, opts%btetol, opts%classical, mw, mem)
+        call iterative_solution(sr, dr, qp, uc, opts%temperature, opts%itermaxsteps, opts%itertol, opts%classical, mw, mem)
         t0 = walltime() - t0
         if (mw%talk) write (*, "(1X,A,F12.3,A)") '... done in ', t0, ' s'
         call tmr_kappa%tock('collective contribution')
     end if
-    call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_bte)
+    call get_kappa(dr, qp, uc, opts%temperature, opts%classical, kappa_iter)
     if (mw%talk) write (*, *) ''
     if (mw%talk) write (*, *) '... symmetrizing the thermal conductivity tensors'
-    call symmetrize_kappa(kappa_bte, uc)
+    call symmetrize_kappa(kappa_iter, uc)
     call symmetrize_kappa(kappa_offdiag, uc)
     call symmetrize_kappa(kappa_sma, uc)
     call tmr_kappa%tock('symmetrization')
     call tmr_kappa%stop()
     if (mw%talk) then
         ! First we write in the standard output
-        u = open_file('out', 'outfile.kappa')
+        u = open_file('out', 'outfile.thermal_conductivity')
         write (u, '(A2,A5,15X,A)') '# ', 'Unit:', 'W/m/K'
         write (u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
 
@@ -311,7 +312,7 @@ kappa: block
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
         write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
-        m0 = (kappa_bte - kappa_sma)*lo_kappa_au_to_SI
+        m0 = (kappa_iter - kappa_sma)*lo_kappa_au_to_SI
         ! First in the standard output
         write (*, "(1X,A)") 'Correction to include collective contribution via iterative procedure'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
@@ -331,7 +332,7 @@ kappa: block
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
         write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
-        m0 = (kappa_bte + kappa_offdiag)*lo_kappa_au_to_SI
+        m0 = (kappa_iter + kappa_offdiag)*lo_kappa_au_to_SI
         ! First in the standard output
         write (*, "(1X,A26)") 'Total thermal conductivity'
         write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
@@ -354,22 +355,28 @@ kappa: block
 
     call tmr_tot%tock('thermal conductivity computation')
     t0 = walltime() - t0
-end block kappa
+end block blockkappa
 
 finalize_and_write: block
     if (mw%talk) then
         write (*, *) ''
         write (*, *) '... dumping auxiliary data to files'
-        call dr%write_to_hdf5(qp, uc, 'outfile.grid_kappa.hdf5', mem, opts%temperature)
+        call dr%write_to_hdf5(qp, uc, 'outfile.thermal_conductivity_grid.hdf5', mem, opts%temperature)
 
         write (*, *) ''
-        write (*, '(A,A)') 'Scattering rates can be found in               ', 'outfile.grid_kappa.hdf5'
-        write (*, '(A,A)') 'Thermal conductivity tensor can be found in    ', 'outfile.kappa'
+        write (*, '(A,A)') 'Scattering rates can be found in               ', 'outfile.thermal_conductivity.hdf5'
+        write (*, '(A,A)') 'Thermal conductivity tensor can be found in    ', 'outfile.thermal_conductivity'
 
         ! Print timings
         write (*, *) ''
-        write (*, '(1X,A21)') 'Suggested citations :'
-        write (*, '(1X,A41,A56)') 'Software : ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
+        write (*, '(1X,A)') 'SUGGESTED CITATIONS:'
+        write (*, '(1X,A41,A)') 'Software: ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
+        write (*, '(1X,A41,A)') 'Method: ', 'D. A. Broido et al., Appl Phys Lett 91, 231922 (2007)'
+        write (*, '(1X,A41,A)') 'Iterative Boltzmann transport equation: ', 'M. Omini et al., Phys Rev B 53, 9064 (1996)'
+        write (*, '(1X,A41,A)') 'Algorithm: ', 'A. H. Romero et al., Phys Rev B 91, 214310 (2015)'
+        write (*, '(1X,A41,A)') "Off-diagonal (coherences') contribution: ", 'M. Simoncelli et al., Nat Phys 15 809-813  (2019)'
+        write (*, '(1X,A41,A)') '                                         ', 'L. Isaeva et al., Nat Commun 10 3853 (2019)'
+        write (*, '(1X,A41,A)') '                                         ', 'A. Fiorentino et al., Phys Rev B 107, 054311  (2023)'
         write (*, '(1X,A41,A52)') 'Theory : ', 'A. Castellano et al, J. Chem. Phys. 159 (23), (2023)'
         write (*, '(1X,A41,A33)') 'Theory and algorithm : ', 'A. Castellano et al, ArXiv (2024)'
     end if

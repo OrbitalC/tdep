@@ -73,8 +73,8 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
     od_terms = 0.0_r8
 
     ! Already set some buffer values for mode (q1, b1)
-    q1 = sr%q1(il)
-    b1 = sr%b1(il)
+    q1 = sr%my_qpoints(il)
+    b1 = sr%my_modes(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
 
@@ -164,7 +164,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                         deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
                         deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
                         deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
-                    case (4)
+                    case (6)
+                        sigma = qp%smearingparameter(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4), &
+                                                     dr%default_smearing(b3), smearing)
+                    case (7)
                         sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + &
                                 dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3) + &
                                 dr%iq(qp%ap(q4)%irreducible_index)%linewidth(b4)

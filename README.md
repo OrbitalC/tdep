@@ -19,7 +19,7 @@ Briefly summarized, the package provides all the tools you need to build accurat
 
 - `lineshape`: Compute phonon spectral functions including lifetime broadening and shifts for single q-points, q-point meshes, or q-point paths in the Brillouin zone. The grid mode computes _spectral_ thermal transport properties as well.
 
-- `thermal_conductivity_2023`: Compute thermal transport by solving the phonon Boltzmann transport equation with perturbative treatment of third-order anharmonicity. Older implementation, the new program should be used.
+- `thermal_conductivity_2023`: Compute thermal transport by solving the phonon Boltzmann transport equation with perturbative treatment of third-order anharmonicity. Legacy implementation, the significantly improved program thermal_conductivity should be used!
 
 More details, examples, and theoretical background can be found in the [online documentation](https://tdep-developers.github.io/tdep/program). See [below](#how-to-cite) which references should be cited for which program.
 
@@ -68,7 +68,12 @@ and the respective publications for the algorithms that were used:
 - Method: [D. A. Broido *et al.*, Appl Phys Lett **91**, 231922 (2007)](https://doi.org/10.1063/1.2822891)
 
 - Implementation: [O. Hellman and D.A. Broido, Phys. Rev. B **90**, 134309 (2014)](https://dx.doi.org/10.1103/physrevb.90.134309)
-- Fourth order contributions: [J. Klarbring *et al.*, Phys Rev Lett **125**, 045701 (2020)](https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.125.045701)
+- Fourth-order contributions: [J. Klarbring *et al.*, Phys Rev Lett **125**, 045701 (2020)](https://journals.aps.org/prl/abstract/10.1103/PhysRevLett.125.045701)
+- Off-diagonal contributions: 
+    - [Simoncelli, M. & Marzari, N. & Mauri, F. (2019), Nat. Phys. **15** 803-819](https://doi.org/10.1038/s41567-019-0520-x)
+    - [Isaeva, L & Barbalinardo, G. & Donadio, D. & Baroni, S., Nat. Comm. **10** 3853 (2019)](https://doi.org/10.1038/s41467-019-11572-4)
+    - [Fiorentino, A. & Baroni, S, Phys. Rev. B, **107**, 054311 (2023)](https://doi.org/10.1103/PhysRevB.107.054311)
+
 
 `lineshape`
 
