@@ -167,6 +167,10 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                     case (6)
                         sigma = qp%smearingparameter(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4), &
                                                      dr%default_smearing(b3), smearing)
+                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
+                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
+                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
+                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
                     case (7)
                         sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + &
                                 dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3) + &

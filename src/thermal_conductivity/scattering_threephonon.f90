@@ -102,22 +102,24 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
 
                 select case (integrationtype)
-                case (1)
+                case (1)  ! Gaussian smearing
                     sigma = smearing*lo_frequency_THz_to_Hartree
                     delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
                     delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
-                case (2)
+                case (2)  ! Adaptive Gaussian smearing
                     sigma = sqrt(sr%sigsq(q1, b1) + &
                                  sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                  sr%sigsq(qp%ap(q3)%irreducible_index, b3))
                     delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
                     delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
-                case (6)
+                case (6)  ! Adaptive, but with non-symmetric sigma, for testing purposes
                     sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3), &
                                                  dr%default_smearing(b3), smearing)
-                case (7)
+                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+                case (7)  ! Self-consistent Lorentzian
                     sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3)
-                    sigma = sigma * 2.0_r8
+                    sigma = sigma * 2.0_r8  ! We need a factor two because of the definition used in lo_lorentz
                     delta0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
                     delta1 = lo_lorentz(om1, om2 + om3, sigma) - lo_lorentz(om1, -om2 - om3, sigma)
                 case default

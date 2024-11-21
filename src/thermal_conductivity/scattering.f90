@@ -212,13 +212,15 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                     buf = buf + velnorm/opts%mfp_max
                 end if
             end if
+
             ! Now we can update the linewidth for this mode
             if (opts%integrationtype .eq. 7) then
-                buf_lw(sr%q1(il), sr%b1(il)) =  (1.0_r8 - opts%lwmix) * buf + opts%lwmix * dr%iq(sr%q1(il))%linewidth(sr%b1(il))
+                q1 = sr%my_qpoints(il)
+                b1 = sr%my_modes(il)
+                buf_lw(q1, b1) = (1.0_r8 - opts%lwmix) * dr%iq(q1)%linewidth(b1) + opts%lwmix * buf
             else
-                buf_lw(sr%q1(il), sr%b1(il)) = buf
+                buf_lw(sr%my_qpoints(il), sr%my_modes(il)) = buf
             end if
-            buf_lw(sr%my_qpoints(il), sr%my_modes(il)) = buf
 
             if (mw%talk .and. lo_trueNtimes(il, 127, sr%my_nqpoints)) then
                 call lo_progressbar(' ... computing scattering amplitude', il, sr%my_nqpoints, walltime() - t0)

@@ -2,7 +2,7 @@
 program thermal_conductivity
 use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
                       lo_m_to_Bohr, lo_emu_to_amu, lo_frequency_Hartree_to_Hz, &
-                      lo_exitcode_param, lo_phonongroupveltol
+                      lo_exitcode_param, lo_phonongroupveltol, lo_tol
 use gottochblandat, only: walltime, tochar, open_file
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -68,9 +68,12 @@ initharmonic: block
         select case (opts%integrationtype)
         case (1)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
+            write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
         case (2)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
-        write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
+            write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
+        case (7)
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Self-consistent Lorentzian'
         end select
         write (*, '(1X,A40,I10)') 'Number of MPI ranks                     ', mw%n
         if (opts%seed .gt. 0) write(*, '(1X,A40,I10)') 'Random seed                             ', opts%seed
@@ -159,72 +162,76 @@ initharmonic: block
         dr%iq(q1)%scalar_mfp = 0.0_r8
         dr%iq(q1)%kappa = 0.0_r8
     end do
+    call tmr_init%tock('harmonic dispersions')
 
-    ! If we have the fourth type of integration we read again linewidth
-    if (opts%integrationtype .eq. 4) then
+    ! This is for self-consistent linewidths
+    if (opts%integrationtype .eq. 7) then
     read_lw: block
         !> The HDF5 reader
         type(lo_hdf5_helper) :: h5
         !> The linewidths to be read
-        real(r8), dimension(:, :), allocatable :: lw, qptin
+        real(r8), dimension(:, :), allocatable :: lw, qptin, freq
         !> the norm of the group velocity
         real(r8) :: velnorm
         !> Do loops and indices
         integer :: b1, qf, readrnk
 
         readrnk = mw%n - 1
-            if (mw%talk) write(*, *) 'reading linewidth from file'
+            if (mw%talk) write(*, *) '... reading linewidth from file'
 
             if (mw%r .eq. readrnk) then
                 call h5%init(__FILE__, __LINE__)
-                call h5%open_file('read', 'infile.grid_kappa.hdf5')
+                call h5%open_file('read', 'infile.thermal_conductivity_grid.hdf5')
 
                 call h5%read_data(lw, h5%file_id, 'linewidths')
+                call h5%read_data(freq, h5%file_id, 'frequencies')
                 call h5%read_data(qptin, h5%file_id, 'qpoints')
+
+                lw = lw / lo_frequency_Hartree_to_Hz
+                freq = freq / lo_frequency_Hartree_to_Hz
 
                 call h5%close_file()
                 call h5%destroy(__FILE__, __LINE__)
             else
                 allocate(lw(dr%n_mode, qp%n_full_point))
+                allocate(freq(dr%n_mode, qp%n_full_point))
                 allocate(qptin(3, qp%n_full_point))
             end if
             call mw%bcast(lw, from=readrnk)
+            call mw%bcast(freq, from=readrnk)
             call mw%bcast(qptin, from=readrnk)
 
             ! Sanity check, do the given q-point/mode correspond to what we are calculating
             if (size(lw, 1) .ne. dr%n_mode) then
-                call lo_stop_gracefully(['Different number of modes in infile.grid_kappa.hdf5'],&
+                call lo_stop_gracefully(['Different number of modes in infile.thermal_conductivity_grid.hdf5'],&
                                         lo_exitcode_param, __FILE__, __LINE__)
             end if
             if (size(lw, 2) .ne. qp%n_full_point) then
-                call lo_stop_gracefully(['Different number of q-point in infile.grid_kappa.hdf5'],&
+                call lo_stop_gracefully(['Different number of q-point in infile.thermal_conductivity_grid.hdf5'],&
                                         lo_exitcode_param, __FILE__, __LINE__)
             end if
 
             ! And distribute everything
             do q1=1, qp%n_irr_point
                 qf = qp%ip(q1)%full_index
-                if (maxval(abs(qptin(:, qf) - qp%ap(qf)%r)) .gt. 1e-12_r8) then
-                    call lo_stop_gracefully(['Mismatch with the q-points in infile.grid_kappa.hdf5'],&
+                if (maxval(abs(qptin(:, qf) - qp%ap(qf)%r)) .gt. lo_tol) then
+                    call lo_stop_gracefully(['Mismatch with the q-points in infile.thermal_conductivity_grid.hdf5'],&
                                             lo_exitcode_param, __FILE__, __LINE__)
                 end if
                 do b1=1, dr%n_mode
-                    if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
-                    dr%iq(q1)%linewidth(b1) = lw(b1, qf) / lo_frequency_Hartree_to_Hz
-                    dr%iq(q1)%qs(b1) = 2.0_r8 * dr%iq(q1)%linewidth(b1)
-                    velnorm = norm2(dr%iq(q1)%vel(:, b1))
-                    if (velnorm .gt. lo_phonongroupveltol) then
-                        dr%iq(q1)%mfp(:, b1) = dr%iq(q1)%vel(:, b1)/dr%iq(q1)%qs(b1)
-                        dr%iq(q1)%scalar_mfp(b1) = velnorm/dr%iq(q1)%qs(b1)
-                        dr%iq(q1)%F0(:, b1) = dr%iq(q1)%mfp(:, b1)
-                        dr%iq(q1)%Fn(:, b1) = dr%iq(q1)%F0(:, b1)
+                    if (abs(freq(b1, qf) - dr%aq(qf)%omega(b1)) .gt. lo_freqtol) then
+                    call lo_stop_gracefully(['Mismatch with the frequencies in infile.thermal_conductivity_grid.hdf5'],&
+                                            lo_exitcode_param, __FILE__, __LINE__)
                     end if
+                    if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
+                    dr%iq(q1)%linewidth(b1) = lw(b1, qf)
+                    dr%iq(q1)%qs(b1) = 2.0_r8 * dr%iq(q1)%linewidth(b1)
                 end do
             end do
+        call tmr_init%tock('reading linewidths')
     end block read_lw
     end if
 
-    call tmr_init%tock('harmonic dispersions')
     call tmr_tot%tock('initialization')
 
     ! now I have all harmonic things, stop the init timer

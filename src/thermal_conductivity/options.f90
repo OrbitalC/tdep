@@ -120,7 +120,7 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--linewidth_mixing', switch_ab='-lwmix', &
                  help='Mixing parameter for the self-consistent linewidth.', &
-                 required=.false., act='store', def='0.7', error=lo_status)
+                 required=.false., act='store', def='1.0', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--seed', &
                  help='Positive integer to seed the random number generator for the Monte-Carlo grids.', &
