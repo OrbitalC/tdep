@@ -43,7 +43,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
     ! The gaussian integration width
     real(r8) :: sigma
     !> Stuff for the linewidths
-    real(r8) :: n2, n3, n4, n2p, n3p, n4p, plf0, plf1, plf2, plf3
+    real(r8) :: n1, n2, n3, n4, n2p, n3p, n4p, plf0, plf1, plf2, plf3
     !> Integers for do loops
     integer :: q1, q2, q3, q4, q2p, q3p, q4p, b1, b2, b3, b4, qi, qj, i
     !> Is the quartet irreducible ?
@@ -77,6 +77,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
     b1 = sr%my_modes(il)
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
+    n1 = sr%be(q1, b1)
 
     ! Prepare the grid for the monte-carlo average
     call mem%allocate(qgridfull1, qp%n_full_point, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -149,37 +150,55 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                     egv4 = dr%aq(q4)%egv(:, b4)/sqrt(om4)
 
                     select case (integrationtype)
-                    case (1)
+                    case (1)  ! Gaussian smearing
                         sigma = smearing*lo_frequency_THz_to_Hartree
-                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
-                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
-                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
-                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
-                    case (2)
+
+                        f0 = (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1, om2 + om3 + om4, sigma) - &
+                             (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        f1 = (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, -om2 + om3 + om4, sigma) -&
+                             (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, om2 - om3 - om4, sigma)
+                        f2 = (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, -om3 + om2 + om4, sigma) -&
+                             (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, om3 - om2 - om4, sigma)
+                        f3 = (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, -om4 + om3 + om2, sigma) -&
+                             (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, om4 - om3 - om2, sigma)
+                    case (2)  ! Adaptive Gaussian smearing
                         sigma = sqrt(sr%sigsq(q1, b1) + &
                                      sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                      sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
                                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
-                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
-                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
-                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
-                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
-                    case (6)
+                        f0 = (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1, om2 + om3 + om4, sigma) - &
+                             (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        f1 = (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, -om2 + om3 + om4, sigma) -&
+                             (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, om2 - om3 - om4, sigma)
+                        f2 = (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, -om3 + om2 + om4, sigma) -&
+                             (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, om3 - om2 - om4, sigma)
+                        f3 = (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, -om4 + om3 + om2, sigma) -&
+                             (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, om4 - om3 - om2, sigma)
+                    case (6)  ! Adaptive, but with non-symmetric sigma, for testing purposes
                         sigma = qp%smearingparameter(dr%aq(q3)%vel(:, b3) - dr%aq(q4)%vel(:, b4), &
                                                      dr%default_smearing(b3), smearing)
-                        deltaf0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
-                        deltaf1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
-                        deltaf2 = lo_gauss(om1, -om3 + om2 + om4, sigma) - lo_gauss(om1, om3 - om2 - om4, sigma)
-                        deltaf3 = lo_gauss(om1, -om4 + om3 + om2, sigma) - lo_gauss(om1, om4 - om3 - om2, sigma)
-                    case (7)
+                        f0 = (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1, om2 + om3 + om4, sigma) - &
+                             (n2p*n3p*n4p - n2*n3*n4) * lo_gauss(om1,-om2 - om3 - om4, sigma)
+                        f1 = (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, -om2 + om3 + om4, sigma) -&
+                             (3.0_r8*n2*n3p*n4p - n2p*n3*n4) * lo_gauss(om1, om2 - om3 - om4, sigma)
+                        f2 = (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, -om3 + om2 + om4, sigma) -&
+                             (3.0_r8*n3*n2p*n4p - n3p*n2*n4) * lo_gauss(om1, om3 - om2 - om4, sigma)
+                        f3 = (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, -om4 + om3 + om2, sigma) -&
+                             (3.0_r8*n4*n3p*n2p - n4p*n3*n2) * lo_gauss(om1, om4 - om3 - om2, sigma)
+                    case (7)  ! Self-consistent Lorentzian
                         sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + &
                                 dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3) + &
                                 dr%iq(qp%ap(q4)%irreducible_index)%linewidth(b4)
                         sigma = sigma * 2.0_r8
-                        deltaf0 = lo_lorentz(om1, om2 + om3 + om4, sigma) - lo_lorentz(om1, -om2 - om3 - om4, sigma)
-                        deltaf1 = lo_lorentz(om1, -om2 + om3 + om4, sigma) - lo_lorentz(om1,  om2 - om3 - om4, sigma)
-                        deltaf2 = lo_lorentz(om1, -om3 + om2 + om4, sigma) - lo_lorentz(om1,  om3 - om2 - om4, sigma)
-                        deltaf3 = lo_lorentz(om1, -om4 + om3 + om2, sigma) - lo_lorentz(om1,  om4 - om3 - om2, sigma)
+
+                        f0 = n2*n3*n4/n1 * lo_lorentz(om1, om2 + om3 + om4, sigma) +&
+                             n2p*n3p*n4p/n1 * lo_lorentz(om1, -om2 - om3 - om4, sigma)
+                        f1 = n2p*n3*n4/n1 * lo_lorentz(om1, -om2 + om3 + om4, sigma) +&
+                             n2*n3p*n4p/n1 * lo_lorentz(om1, om2 - om3 - om4, sigma)
+                        f2 = n2*n3p*n4/n1 * lo_lorentz(om1, om2 - om3 + om4, sigma) +&
+                             n2p*n3*n4p/n1 * lo_lorentz(om1, -om2 + om3 - om4, sigma)
+                        f3 = n2*n3*n4p/n1 * lo_lorentz(om1, om2 + om3 - om4, sigma) +&
+                             n2p*n3p*n4/n1 * lo_lorentz(om1, -om2 - om3 + om4, sigma)
                     case default
                         call lo_stop_gracefully(['integrationtype not implemented'], &
                                                 lo_exitcode_param, __FILE__, __LINE__)
@@ -191,19 +210,7 @@ subroutine compute_fourphonon_scattering(il, sr, qp, dr, uc, fcf, mcg, rng, &
                     c0 = dot_product(evp3, ptf)
                     psisq = fourphonon_prefactor*abs(c0*conjg(c0))*mcg%weight**2
 
-                    ! Prefactors, only the Bose-Einstein distributions
-                    plf0 = n2p*n3p*n4p - n2*n3*n4
-                    plf1 = 3.0_r8*n2*n3p*n4p - n2p*n3*n4
-                    plf2 = 3.0_r8*n3*n2p*n4p - n3p*n2*n4
-                    plf3 = 3.0_r8*n4*n3p*n2p - n4p*n3*n2
-
-                    ! Prefactors, including the matrix elements and dirac
-                    f0 = mult0*psisq*plf0*deltaf0
-                    f1 = mult1*psisq*plf1*deltaf1
-                    f2 = mult2*psisq*plf2*deltaf2
-                    f3 = mult3*psisq*plf3*deltaf3
-
-                    fall = f0 + f1 + f2 + f3
+                    fall = psisq * (mult0*f0 + mult1*f1 + mult2*f2 + mult3*f3)
 
                     ! Add everything to the linewidth
                     do i = 1, size(red_quartet, 2)

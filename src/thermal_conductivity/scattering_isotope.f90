@@ -42,19 +42,24 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, temperature, &
             om2 = dr%aq(q2)%omega(b2)
             if (om2 .lt. lo_freqtol) cycle
 
+
             select case (integrationtype)
-            case (1)
+            case (1)  ! Gaussian smearing
                 sigma = lo_frequency_THz_to_Hartree*smearing
                 deltaf = lo_gauss(om1, om2, sigma)
-            case (2)
+            case (2)  ! Adaptive Gaussian smearing
                 sigma = sqrt(sr%sigsq(q1, b1) + &
                              sr%sigsq(qp%ap(q2)%irreducible_index, b2))
                 deltaf = lo_gauss(om1, om2, sigma)
-            case (6)
+            case (6)  ! Adaptive, but with non-symmetric sigma, for testing purposes
                 sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), dr%default_smearing(b2), smearing)
                 deltaf = lo_gauss(om1, om2, sigma)
-            case (7)
-                sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) * 2.0_r8
+            case (7)  ! Self-consistent Lorentzian
+                sigma = 2.0_r8 * dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2)
+                ! For very small linewidths, we can have a too large value for the same frequencies
+                if (abs(om2 - om1) .lt. lo_freqtol) then
+                    sigma = max(0.01_r8 * dr%default_smearing(b2), sigma)
+                end if
                 deltaf = lo_lorentz(om1, om2, sigma)
             case default
                 call lo_stop_gracefully(['integrationtype not implemented'], &

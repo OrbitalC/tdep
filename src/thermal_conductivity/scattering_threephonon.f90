@@ -37,7 +37,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     !> The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
     !> Frequencies, bose-einstein occupation and scattering strength and some other buffer
-    real(r8) :: sigma, om1, om2, om3, n2, n3, psisq, f0, f1, plf0, plf1, perm
+    real(r8) :: sigma, om1, om2, om3, n1, n2, n3, psisq, f0, f1, plf0, plf1, perm
     !>
     real(r8) :: delta0, delta1
     !> The complex threephonon matrix element
@@ -101,27 +101,48 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 if (om3 .lt. lo_freqtol) cycle
                 egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
 
+                ! Let's get the Bose-Einstein distributions
+                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
+                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
+
                 select case (integrationtype)
                 case (1)  ! Gaussian smearing
                     sigma = smearing*lo_frequency_THz_to_Hartree
-                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
-                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+
+                    f0 = (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma) -&
+                         (n2 - n3) * lo_gauss(om1, om2 - om3, sigma) +&
+                         (n2 + n3 + 1) * lo_gauss(om1, om2 + om3, sigma) -&
+                         (n2 + n3 + 1) * lo_gauss(om1, -om2 - om3, sigma)
+
                 case (2)  ! Adaptive Gaussian smearing
                     sigma = sqrt(sr%sigsq(q1, b1) + &
                                  sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                                  sr%sigsq(qp%ap(q3)%irreducible_index, b3))
-                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
-                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+
+                    f0 = (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma) -&
+                         (n2 - n3) * lo_gauss(om1, om2 - om3, sigma) +&
+                         (n2 + n3 + 1) * lo_gauss(om1, om2 + om3, sigma) -&
+                         (n2 + n3 + 1) * lo_gauss(om1, -om2 - om3, sigma)
+
                 case (6)  ! Adaptive, but with non-symmetric sigma, for testing purposes
                     sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2) - dr%aq(q3)%vel(:, b3), &
                                                  dr%default_smearing(b3), smearing)
-                    delta0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
-                    delta1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+
+                    f0 = (n2 - n3) * lo_gauss(om1, -om2 + om3, sigma) -&
+                         (n2 - n3) * lo_gauss(om1, om2 - om3, sigma) +&
+                         (n2 + n3 + 1) * lo_gauss(om1, om2 + om3, sigma) -&
+                         (n2 + n3 + 1) * lo_gauss(om1, -om2 - om3, sigma)
+
                 case (7)  ! Self-consistent Lorentzian
                     sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3)
                     sigma = sigma * 2.0_r8  ! We need a factor two because of the definition used in lo_lorentz
-                    delta0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
-                    delta1 = lo_lorentz(om1, om2 + om3, sigma) - lo_lorentz(om1, -om2 - om3, sigma)
+
+                    n1 = sr%be(q1, b1)
+
+                    f0 = n2 * n3 / n1 * lo_lorentz(om1, om2 + om3, sigma) + &
+                         (n2 + 1) * (n3 + 1) / n1 * lo_lorentz(om1, -om2 - om3, sigma) + &
+                         (n2 + 1) * n3 / n1 * lo_lorentz(om1, -om2 + om3, sigma) + &
+                         n2 * (n3 + 1) / n1 * lo_lorentz(om1, om2 - om3, sigma)
                 case default
                     call lo_stop_gracefully(['integrationtype not implemented'], &
                                             lo_exitcode_param, __FILE__, __LINE__)
@@ -134,26 +155,18 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 c0 = dot_product(evp2, ptf)
                 psisq = threephonon_prefactor*abs(c0*conjg(c0))*mcg%weight
 
-                ! Let's get the Bose-Einstein distributions
-                n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
-                n3 = sr%be(qp%ap(q3)%irreducible_index, b3)
-
-                ! The prefactor for the scattering
-                plf0 = n2 - n3
-                plf1 = n2 + n3 + 1.0_r8
-                f0 = perm*psisq*plf0*delta0
-                f1 = perm*psisq*plf1*delta1
+                f0 = f0 * psisq * perm
 
                 ! And we add everything for each triplet equivalent to the one we are actually computing
                 do i = 1, size(red_triplet, 2)
                     ! We accumulate the linewidth
-                    g0 = g0 + f0 + f1
+                    g0 = g0 + f0
 
                     ! And also the off-diagonal part of the scattering matrix
                     q2p = red_triplet(1, i)
                     q3p = red_triplet(2, i)
-                    od_terms(q2p, b2) = od_terms(q2p, b2) + 2.0_r8*(f0 + f1)*om2/om1
-                    od_terms(q3p, b3) = od_terms(q3p, b3) + 2.0_r8*(f0 + f1)*om3/om1
+                    od_terms(q2p, b2) = od_terms(q2p, b2) + 2.0_r8*f0*om2/om1
+                    od_terms(q3p, b3) = od_terms(q3p, b3) + 2.0_r8*f0*om3/om1
                 end do
             end do
         end do

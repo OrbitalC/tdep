@@ -1,7 +1,8 @@
 #include "precompilerdefinitions"
 module scattering
 use konstanter, only: r8, i8, lo_freqtol, lo_twopi, lo_exitcode_param, lo_hugeint, lo_pi, lo_tol, &
-                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree, lo_huge
+                      lo_phonongroupveltol, lo_tol, lo_frequency_THz_to_Hartree, lo_kb_hartree, lo_huge, &
+                      lo_frequency_Hartree_to_meV
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, &
                           lo_gauss, lo_planck, lo_return_unique, lo_lorentz
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully

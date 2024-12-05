@@ -73,7 +73,8 @@ initharmonic: block
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
             write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
         case (7)
-            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Self-consistent Lorentzian'
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'self-consistent Lorentzian'
+            write (*, '(1X,A40,E20.12)') 'Mixing parameter for the linewidths     ', opts%lwmix
         end select
         write (*, '(1X,A40,I10)') 'Number of MPI ranks                     ', mw%n
         if (opts%seed .gt. 0) write(*, '(1X,A40,I10)') 'Random seed                             ', opts%seed
@@ -225,7 +226,6 @@ initharmonic: block
                     end if
                     if (dr%iq(q1)%omega(b1) .lt. lo_freqtol) cycle
                     dr%iq(q1)%linewidth(b1) = lw(b1, qf)
-                    dr%iq(q1)%qs(b1) = 2.0_r8 * dr%iq(q1)%linewidth(b1)
                 end do
             end do
         call tmr_init%tock('reading linewidths')
