@@ -204,6 +204,10 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
                                                    buf, opts%integrationtype, opts%sigma, mw, mem)
                 call tmr%tock('fourphonon scattering')
             end if
+            if (opts%sqerr .gt. 0.0_r8) then
+                call compute_mlip_scattering(il, sr, qp, dr, uc, opts%temperature, opts%sqerr, buf, &
+                                                opts%integrationtype, opts%sigma, mw, mem)
+            end if
             ! We end with the boundary scattering
             if (opts%mfp_max .gt. 0.0_r8) then
                 velnorm = norm2(dr%iq(sr%my_qpoints(il))%vel(:, sr%my_modes(il)))
@@ -322,6 +326,7 @@ end subroutine
 #include "scattering_isotope.f90"
 #include "scattering_threephonon.f90"
 #include "scattering_fourphonon.f90"
+#include "scattering_mlip.f90"
 
 subroutine sr_destroy(sr)
     !> The scattering amplitudes

@@ -1,6 +1,7 @@
 #include "precompilerdefinitions"
 module options
-use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr, lo_hugeint
+use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr, lo_hugeint, &
+                      lo_force_eVA_to_HartreeBohr
 use flap, only: command_line_interface
 implicit none
 private
@@ -16,6 +17,7 @@ type lo_opts
     real(flyt) :: tau_boundary       !< add a constant as boundary scattering
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: itertol            !< tolerance for the iterative solution
+    real(flyt) :: sqerr              !< Variance of the forces error, for an mlip
     integer :: itermaxsteps          !< Number of iteration for the Boltzmann equation
     logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
@@ -120,6 +122,10 @@ subroutine parse(opts)
                  help='Positive integer to seed the random number generator for the Monte-Carlo grids.', &
                  required=.false., act='store', def='-1', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--sqerr', &
+                 help='Variance of the error for an effective potential, to extrapol to prediction without error.', &
+                 required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--tau_boundary', hidden=.true., &
@@ -170,6 +176,7 @@ subroutine parse(opts)
     call cli%get(switch='--iterative_tolerance', val=opts%itertol)
     call cli%get(switch='--classical', val=opts%classical)
     call cli%get(switch='--seed', val=opts%seed)
+    call cli%get(switch='--sqerr', val=opts%sqerr)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog
@@ -202,6 +209,10 @@ subroutine parse(opts)
         do i = 1, 3
             if (opts%qg4ph(i) .lt. 0 .or. opts%qg4ph(i) .gt. opts%qgrid(i)) opts%qg4ph(i) = opts%qgrid(i)
         end do
+    end if
+
+    if (opts%sqerr .gt. 0.0_flyt) then
+        opts%sqerr = opts%sqerr * lo_force_eVA_to_HartreeBohr**2
     end if
 
 end subroutine
