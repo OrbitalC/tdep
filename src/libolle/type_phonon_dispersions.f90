@@ -9,10 +9,10 @@ use konstanter, only: r8, i8, lo_huge, lo_hugeint, lo_degenvector, lo_status, lo
                       lo_Hartree_to_Joule, lo_exitcode_physical, lo_imag, lo_time_s_to_au
 use gottochblandat, only: open_file, walltime, tochar, lo_trueNtimes, lo_classical_harmonic_oscillator_free_energy, &
                           lo_harmonic_oscillator_cv, lo_harmonic_oscillator_entropy, lo_harmonic_oscillator_free_energy, &
-                          lo_planck, lo_sqnorm, lo_progressbar_init, lo_progressbar, qsort, lo_outerproduct, lo_chop, &
-                          lo_symmetric_eigensystem_3x3matrix, lo_flattentensor, lo_unflatten_2tensor, &
-                          lo_linear_least_squares, lo_nullspace_coefficient_matrix, lo_identitymatrix, &
-                          lo_real_pseudoinverse, lo_determ
+                          lo_classical_harmonic_oscillator_entropy, lo_planck, lo_sqnorm, lo_progressbar_init, &
+                          lo_progressbar, qsort, lo_outerproduct, lo_chop, lo_symmetric_eigensystem_3x3matrix, &
+                          lo_flattentensor, lo_unflatten_2tensor, lo_linear_least_squares, lo_nullspace_coefficient_matrix, &
+                          lo_identitymatrix, lo_real_pseudoinverse, lo_determ
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_blas_lapack_wrappers, only: lo_gemm, lo_gemv
@@ -138,6 +138,8 @@ contains
     procedure :: phonon_angular_momentum_matrix
     !> thermal displacement covariance matrix
     procedure :: thermal_displacement_matrix
+    !> kinetic contribution to the stress tensor
+    procedure :: phonon_kinetic_stress
     !> store the full grid in a hdf file
     procedure :: write_to_hdf5
     !> store the irreducible grid in a hdf5 file
@@ -864,6 +866,58 @@ pure function phonon_entropy(dr, temperature, modenum, sitenum) result(s)
     s = s/dr%n_full_qpoint/(dr%n_mode/3)
 end function
 
+!> calculate the phonon entropy as a direct sum
+pure function phonon_entropy_classical(dr, temperature, modenum, sitenum) result(s)
+    !> the phonon dispersions
+    class(lo_phonon_dispersions), intent(in) :: dr
+    !> the temperature
+    real(r8), intent(in) :: temperature
+    !> the entropy in eV/K/atom (entropy for the modenum-th mode if modenum is specified)
+    real(r8) :: s
+    !> calculate vibrational entropy for a specific mode
+    integer, intent(in), optional :: modenum
+    !> project entropy onto a specific site
+    integer, intent(in), optional :: sitenum
+
+    complex(r8), dimension(3) :: cv0
+    real(r8) :: w
+    integer :: i, j
+
+    ! Calculate the entropy of only one mode if modenum is specified
+    if (present(modenum)) then
+        j = modenum
+        s = 0.0_r8
+        do i = 1, dr%n_full_qpoint
+            s = s + lo_classical_harmonic_oscillator_entropy(temperature, dr%aq(i)%omega(j))
+        end do
+        s = s/dr%n_full_qpoint/(dr%n_mode/3)
+        return
+    end if
+
+    ! If modenum or sitenum was not specified, calculate the total entropy
+    if (present(sitenum)) then
+        s = 0.0_r8
+        do i = 1, dr%n_full_qpoint
+            do j = 1, dr%n_mode
+                cv0 = dr%aq(i)%egv((sitenum - 1)*3 + 1:sitenum*3, j)
+                w = abs(dot_product(cv0, cv0))
+                s = s + w*lo_classical_harmonic_oscillator_entropy(temperature, dr%aq(i)%omega(j))
+            end do
+        end do
+        s = s/dr%n_full_qpoint/(dr%n_mode/3)
+        return
+    end if
+
+    ! If modenum or sitenum was not specified, calculate the total entropy
+    s = 0.0_r8
+    do i = 1, dr%n_full_qpoint
+        do j = 1, dr%n_mode
+            s = s + lo_classical_harmonic_oscillator_entropy(temperature, dr%aq(i)%omega(j))
+        end do
+    end do
+    s = s/dr%n_full_qpoint/(dr%n_mode/3)
+end function
+
 !> calculate phonon angular momentum matrix
 subroutine phonon_angular_momentum_matrix(dr, qp, uc, temperature, alpha, mw)
     !> dispersion relations
@@ -1077,6 +1131,42 @@ subroutine thermal_displacement_matrix(dr, qp, uc, temperature, sigma, mw, mem)
     call mem%deallocate(IM, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(wV, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(vX, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+end subroutine
+
+!> Calculate the kinetic contribution to the stress tensor
+subroutine phonon_kinetic_stress(dr, qp, uc, temperature, kinsigma)
+    !> dispersion relations
+    class(lo_phonon_dispersions), intent(in) :: dr
+    !> qpoint mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> crystal structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> temperature
+    real(r8), intent(in) :: temperature
+    !> displacement covariance matrix
+    real(r8), dimension(3, 3), intent(out) :: kinsigma
+
+    !> The eigenvector for a given mode
+    complex(r8), dimension(3) :: egv
+    !> Some buffers
+    real(r8) :: pref, om, f0
+    !> Integers for do loop
+    integer :: aq, im, a
+
+    kinsigma = 0.0_r8
+    pref = 1.0_r8 / uc%volume / qp%n_full_point
+    do aq=1, qp%n_full_point
+    do im=1, dr%n_mode
+        om = dr%aq(aq)%omega(im)
+        if (om .lt. lo_freqtol) cycle
+        f0 = om * (lo_planck(temperature, om) + 0.5_r8) * pref
+        do a=1, uc%na
+            egv = dr%aq(aq)%egv((a - 1)*3 + 1:a*3, im)
+            kinsigma(:, :) = kinsigma(:, :) - real(lo_outerproduct(egv, egv)) * f0
+        end do
+    end do
+    end do
+    kinsigma(:, :) = lo_chop(kinsigma(:, :), 1e-12_r8)
 end subroutine
 
 !> Calculate all the harmonic things for a q-point

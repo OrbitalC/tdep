@@ -73,6 +73,7 @@ public :: lo_harmonic_oscillator_cv
 public :: lo_harmonic_oscillator_entropy
 public :: lo_harmonic_oscillator_free_energy
 public :: lo_harmonic_oscillator_internal_energy
+public :: lo_classical_harmonic_oscillator_entropy
 public :: lo_index_in_periodic_array
 public :: lo_invert3x3matrix
 public :: lo_sqrt3x3matrix
@@ -677,6 +678,11 @@ interface
         real(flyt), intent(in) :: temp
         real(flyt), intent(in) :: omega
         real(flyt) :: cv
+    end function
+    module elemental function lo_classical_harmonic_oscillator_entropy(temp,omega) result(s)
+        real(flyt), intent(in) :: temp
+        real(flyt), intent(in) :: omega
+        real(flyt) :: s
     end function
     module subroutine lo_untangle_one_tetrahedron(corner,energy,groupvelocity,degentol,permutation,success,error_interp_energy,error_interp_gradient)
         real(r8), dimension(3,4), intent(in) :: corner
