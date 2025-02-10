@@ -211,9 +211,9 @@ subroutine parse(opts)
         end do
     end if
 
-    if (opts%sqerr .gt. 0.0_flyt) then
-        opts%sqerr = opts%sqerr * lo_force_eVA_to_HartreeBohr**2
-    end if
+!   if (opts%sqerr .gt. 0.0_flyt) then
+!       opts%sqerr = opts%sqerr * lo_force_eVA_to_HartreeBohr**2
+!   end if
 
 end subroutine
 

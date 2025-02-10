@@ -38,7 +38,33 @@ subroutine compute_mlip_scattering(il, sr, qp, dr, uc, temperature, sqerr, &
     om1 = dr%iq(q1)%omega(b1)
     egviso(:, 1) = dr%iq(q1)%egv(:, b1)
 
-    ! g0 = g0 - 2.0 * sqerr / uc%mass(1) / lo_kB_Hartree / temperature
-    g0 = g0 - 2.0 * sqerr / uc%mass(1) / om1
+    do q2 = 1, qp%n_full_point
+        prefactor = isotope_prefactor*qp%ap(q2)%integration_weight
+        do b2 = 1, dr%n_mode
+            om2 = dr%aq(q2)%omega(b2)
+            if (om2 .lt. lo_freqtol) cycle
+
+            select case (integrationtype)
+            case (1)
+                sigma = lo_frequency_THz_to_Hartree*smearing
+            case (2)
+                sigma = sqrt(sr%sigsq(q1, b1) + &
+                             sr%sigsq(qp%ap(q2)%irreducible_index, b2))
+            case (6)
+                sigma = qp%smearingparameter(dr%aq(q2)%vel(:, b2), &
+                                             dr%default_smearing(b2), smearing)
+            end select
+
+            i = (q2 - 1)*dr%n_mode + b2
+
+            egviso(:, 2) = dr%aq(q2)%egv(:, b2)
+
+            psisq = sqerr*prefactor
+
+            f0 = psisq*om1*om2*lo_gauss(om1, om2, sigma)
+            g0 = g0 - f0
+!           sr%Xi(il, i) = sr%Xi(il, i) + f0*om2/om1
+        end do
+    end do
 
 end subroutine
