@@ -2,21 +2,137 @@ module thirdorder
 !! Compute the third order contribution to the anharmonic free energy
 use konstanter, only: r8, lo_freqtol, lo_twopi, lo_imag, lo_kb_Hartree, lo_exitcode_param
 use gottochblandat, only: walltime, lo_trueNtimes, lo_progressbar_init, lo_progressbar, lo_planck, &
-                          lo_planck_deriv, lo_planck_secondderiv
+                          lo_planck_deriv, lo_planck_secondderiv, lo_invert_real_matrix, &
+                          lo_harmonic_oscillator_cv, lo_harmonic_oscillator_internal_energy
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_qpointmesh, only: lo_qpoint_mesh, lo_fft_mesh
 use type_crystalstructure, only: lo_crystalstructure
+use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use lo_timetracker, only: lo_timer
 
+use lo_thermodynamic_helpers, only: lo_full_to_voigt
+
 implicit none
 private
 
+public :: elastic_thirdorder
 public :: free_energy_thirdorder
 
 contains
+subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, quantum, mw, mem)
+    !> crystal structure
+    type(lo_crystalstructure), intent(in) :: uc
+    !> second order force constants
+    type(lo_forceconstant_secondorder), intent(inout) :: fc
+    !> third order force constant
+    type(lo_forceconstant_thirdorder), intent(in) :: fct
+    !> q-point mesh
+    class(lo_qpoint_mesh), intent(in) :: qp
+    !> dispersions
+    type(lo_phonon_dispersions), intent(in) :: dr
+    !> temperature
+    real(r8), intent(in) :: temperature
+    !> free energies and heat capacity
+    real(r8), dimension(3, 3), intent(out) :: p3ph, alpha
+    !> what to compute
+    logical, intent(in) :: quantum
+    !> mpi helper
+    type(lo_mpi_helper), intent(inout) :: mw
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
+
+    complex(r8), dimension(:), allocatable :: egv
+    complex(r8), dimension(3, 3) :: c0
+    real(r8), dimension(6, 6) :: cij, sij
+    real(r8), dimension(3, 3) :: grun, buf
+    real(r8), dimension(3) :: qv, rv2, rv3
+    real(r8), dimension(2) :: d
+    complex(r8) :: expiqr, evprod
+    real(r8) :: om, iqr, invsqrtmass, u0, cv0
+    integer :: q1, b1, a1, t, a2, a3, i, j, k, l, ivoigt, jvoigt, ctr
+
+    allocate(egv(dr%n_mode))
+
+    p3ph = 0.0_r8
+    buf = 0.0_r8
+
+    ctr = 0
+    do q1=1, qp%n_full_point
+        qv = qp%ap(q1)%r * lo_twopi
+        do b1=1, dr%n_mode
+            ctr = ctr + 1
+            if (mod(ctr, mw%n) .ne. mw%r) cycle
+            om = dr%aq(q1)%omega(b1)
+            if (om .lt. lo_freqtol) cycle
+            c0 = 0.0_r8
+            egv = dr%aq(q1)%egv(:, b1)
+            do a1=1, fct%na
+            do t=1, fct%atom(a1)%n
+                a2 = fct%atom(a1)%triplet(t)%i2
+                a3 = fct%atom(a1)%triplet(t)%i3
+                rv2 = fct%atom(a1)%triplet(t)%lv2
+                rv3 = fct%atom(a1)%triplet(t)%rv3
+                invsqrtmass = uc%invsqrtmass(a1) * uc%invsqrtmass(a2)
+                iqr = -dot_product(qv, rv2)
+                expiqr = cmplx(cos(iqr), sin(iqr), r8)
+                do i=1, 3
+                do j=1, 3
+                    evprod = conjg(egv((a1-1) * 3 + i)) * egv((a2-1) * 3 + j) * expiqr
+                    do k=1, 3
+                    do l=1, 3
+                        c0(k, l) = c0(k, l) + fct%atom(a1)%triplet(t)%m(i, j, k) * evprod * rv3(l) * invsqrtmass
+                    end do
+                    end do
+                end do
+                end do
+            end do
+            end do
+            grun = -real(c0, r8) / (6.0_r8 * om**2)
+
+            ! Now we can accumulate things using the Gruneisen parameter
+            if (quantum) then
+                u0 = lo_harmonic_oscillator_internal_energy(temperature, om)
+                cv0 = lo_harmonic_oscillator_cv(temperature, om)
+            else
+                u0 = lo_kb_Hartree * temperature
+                cv0 = lo_kb_Hartree
+            end if
+
+            p3ph(:, :) = p3ph(:, :) - grun(:, :) * u0 * qp%ap(q1)%integration_weight / uc%volume
+            do i=1, 3
+            do j=1, 3
+                buf(i, j) = buf(i, j) + cv0 * grun(i, j) * qp%ap(q1)%integration_weight
+            end do
+            end do
+
+        end do
+    end do
+    call mw%allreduce('sum', p3ph)
+    call mw%allreduce('sum', buf)
+
+    call fc%get_elastic_constants(uc, mw, -1)
+    cij = fc%elastic_constants_voigt + fc%elastic_constants_voigt_longrange
+    call lo_invert_real_matrix(cij, sij)
+
+    alpha = 0.0_r8
+    do i=1, 3
+    do j=1, 3
+    do k=1, 3
+    do l=1, 3
+        ivoigt = lo_full_to_voigt(i, j)
+        jvoigt = lo_full_to_voigt(k, l)
+
+        alpha(i, j) = alpha(i, j) + sij(ivoigt, jvoigt) * buf(k, l) / uc%volume
+    end do
+    end do
+    end do
+    end do
+end subroutine
+
+
 !> Calculate the third order free energy
 subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, quantum, mw, mem)
     !> crystal structure
@@ -126,12 +242,15 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
                         ddn2 = lo_planck_secondderiv(temperature, om1)
                         ddn3 = lo_planck_secondderiv(temperature, om1)
 
+                        ! This are the formula to get the free energy
                         f1 = (n1 + 1.0_r8)*(n2 + n3 + 1.0_r8) + n2*n3
                         f2 = n1*n2 + n1*n3 - n2*n3 + 1.0_r8
 
+                        ! Here is for the entropy
                         df1 = dn1 * (n2 + n3 + 1.0_r8) + (n1 + 1.0_r8) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
                         df2 = dn1 * n2 + n1 * dn2 + dn1 * n3 + n1 * dn3 - dn2 * n3 - n2 * dn3
 
+                        ! And the heat capacity
                         ddf1 = ddn1 * (n2 + n3 + 1.0_r8) + 2.0_r8 * dn1 * (dn2 + dn3) + (n1 + 1.0_r8) * (ddn2 + ddn3) + &
                                ddn2 * n3 + n2 * ddn3 + 2.0_r8 * dn2 * dn3
                         ddf2 = ddn1 * n2 + n1 * ddn2 + 2.0_r8 * dn1 * dn2 + ddn1 * n3 + n1 * ddn3 + 2.0_r8 * dn1 * dn3 - &
