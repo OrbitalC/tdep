@@ -1,8 +1,9 @@
 program anharmonic_free_energy
 !!{!src/anharmonic_free_energy/manual.md!}
-use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, lo_tol, lo_status
+use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, lo_tol, lo_status, lo_freqtol, lo_twopi
 use gottochblandat, only: open_file, walltime, lo_linspace, lo_progressbar_init, lo_progressbar, tochar, &
-                          lo_does_file_exist, lo_mean, lo_stddev
+                          lo_does_file_exist, lo_mean, lo_stddev, lo_harmonic_oscillator_internal_energy, lo_chop, &
+                          lo_invert_real_matrix, lo_harmonic_oscillator_cv
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use lo_timetracker, only: lo_timer
@@ -17,10 +18,10 @@ use lo_phonon_bandstructure_on_path, only: lo_phonon_bandstructure
 use type_phonon_dos, only: lo_phonon_dos
 
 use options, only: lo_opts
-use thirdorder, only: free_energy_thirdorder
+use thirdorder, only: free_energy_thirdorder, elastic_thirdorder
 use fourthorder, only: free_energy_fourthorder, free_energy_fourthorder_secondorder
 use epot, only: lo_energy_differences
-use thermo, only: lo_thermodynamics
+use lo_thermodynamic_helpers, only: lo_thermodynamics, lo_symmetrize_stress, lo_full_to_voigt
 
 implicit none
 
@@ -38,7 +39,7 @@ real(r8), dimension(3, 5) :: cumulant, cumulant_var
 real(r8), dimension(3, 3, 5) :: stress_pot, stress_potvar
 real(r8) :: timer_init, timer_total
 real(r8) :: U0, U1, energy_unit_factor
-logical :: havehighorder
+logical :: havehighorder, havesim
 
 ! Init MPI, timers and options
 call mw%init()
@@ -56,8 +57,15 @@ init: block
     if (mw%talk) then
         write(*, *) 'Recap of the parameters governing the calculation'
         write(*, *) ''
+        write (*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
+        write (*, '(1X,A40,L3)') 'Classical limit                         ', opts%quantum
+        write (*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
+        write (*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
+        write (*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
+        write(*, *) ''
     end if
 
+    if (mw%talk) write(*, *) '... reading input files'
     ! Read structure
     call uc%readfromfile('infile.ucposcar', verbosity=opts%verbosity)
     call uc%classify('wedge', timereversal=.true.)
@@ -67,8 +75,14 @@ init: block
     call fc%readfromfile(uc, 'infile.forceconstant', mem, verbosity=-1)
     if (mw%talk) write (*, *) '... read second order forceconstant'
 
-    if (opts%thirdorder) call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
-    if (opts%fourthorder) call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
+    if (opts%thirdorder) then
+        call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
+        if (mw%talk) write (*, *) '... read third order forceconstant'
+    end if
+    if (opts%fourthorder) then
+        call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
+        if (mw%talk) write (*, *) '... read fourth order forceconstant'
+    end if
     havehighorder = .false.
     if (opts%thirdorder .or. opts%fourthorder) havehighorder = .true.
 
@@ -111,6 +125,7 @@ latdyn: block
 
     temperature = opts%temperature
 
+    if (mw%talk) write(*, *) '... computing thermodynamic properties with harmonic dispersion'
     ! We start by computing everything we can from the harmonic phonons
     if (opts%quantum) then
         thermo%f0 = dr%phonon_free_energy(temperature)
@@ -125,27 +140,25 @@ latdyn: block
         thermo%cv0 = 3.0_r8 * lo_kb_Hartree
         thermo%stress_kin = 0.0_r8
         do i=1, 3
-            thermo%stress_kin(i, i) = -lo_kb_Hartree * temperature * uc%na / uc%volume
+            thermo%stress_kin(i, i) = lo_kb_Hartree * temperature * uc%na / uc%volume
         end do
     end if
-    write(*, *) 'Free energy'
-    write(*, *) thermo%f0
-    write(*, *) 'Entropy'
-    write(*, *) thermo%s0
-    write(*, *) 'Internal energy'
-    write(*, *) thermo%u0
-    write(*, *) ''
+    ! Usually not needed here, but always a good idea to clean
+    call lo_symmetrize_stress(thermo%stress_kin, uc)
+    thermo%stress_kin = lo_chop(thermo%stress_kin, sum(abs(thermo%stress_kin))*1e-6_r8)
 
-    write(*, *) 'Potential stress'
-    do i=1, 3
-        write(*, '(1X,F24.12,1X,F24.12,1X,F24.12)') thermo%stress_pot(i, :) * lo_pressure_HartreeBohr_to_GPa
-    end do
-    write(*, *) 'Kinetic stress'
-    do i=1, 3
-        write(*, '(1X,F24.12,1X,F24.12,1X,F24.12)') thermo%stress_kin(i, :) * lo_pressure_HartreeBohr_to_GPa
-    end do
+    ! If we have third order IFC, might as well compute elastic things
+    if (opts%thirdorder) then
+        if (mw%talk) write(*, *) '... computing third order contribution to elastic properties'
+
+        call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%stress_3ph, thermo%alpha, opts%quantum, mw, mem)
+        ! Now we symmetrize and store everything
+        call lo_symmetrize_stress(thermo%stress_3ph, uc)
+        thermo%stress_3ph = lo_chop(thermo%stress_3ph, sum(abs(thermo%stress_3ph))*1e-6_r8)
+        call lo_symmetrize_stress(thermo%alpha, uc)
+        thermo%alpha = lo_chop(thermo%alpha, sum(abs(thermo%alpha))*1e-6_r8)
+    end if
     call tmr%tock('harmonic properties')
-
 end block latdyn
 
 calcepot: block
@@ -157,15 +170,17 @@ calcepot: block
     real(r8), dimension(:, :, :), allocatable :: buf_stress
     real(r8), dimension(:, :), allocatable :: buf
     real(r8), dimension(:, :), allocatable :: ediff
-    real(r8), dimension(3, 3) :: s2, s3, s4, sp
+    real(r8), dimension(3, 3) :: s3, sk2, sk3, sk4, skp
 
     real(r8) :: e2, e3, e4, ep, inverse_kbt, f0
     integer :: i, j, a, b, blocksize
+    real(r8) :: stol
 
-    if (mw%talk) then
-        write(*, *) ''
-        write(*, *) 'Computing energy differences'
-    end if
+    if (mw%talk) write(*, *) ''
+    if (lo_does_file_exist('infile.sim.hdf5') .or. lo_does_file_exist('infile.meta')) then
+    havesim = .true.
+
+    if (mw%talk) write(*, *) 'Computing energy differences'
 
     call ss%readfromfile('infile.ssposcar')
     call ss%classify('supercell', uc)
@@ -178,7 +193,7 @@ calcepot: block
         call sim%read_from_file(verbosity=opts%verbosity + 2, stride=1, magnetic=.false., dielectric=.false., nrand=-1, mw=mw)
     end if
 
-    if (abs(opts%temperature - sim%temperature_thermostat) .gt. lo_tol) then
+    if (abs(opts%temperature - sim%temperature_thermostat) .gt. lo_tol .and. mw%talk) then
         write(*, *)
         write(*, *) 'WARNING: input and simulation temperatures do not match'
         write(*, '(1X,A24,F24.12)') 'Input temperature', opts%temperature
@@ -187,7 +202,6 @@ calcepot: block
         write(*, *)
     end if
 
-    thermo%temperature = sim%temperature_thermostat
     if (thermo%temperature .gt. 1E-5_r8) then
         inverse_kbt = 1.0_r8/lo_kb_Hartree/thermo%temperature
     else
@@ -195,92 +209,26 @@ calcepot: block
     end if
 
     if (mw%talk) write(*, *) '... computing energy differences'
+    call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, mw)
 
-    ! Calculate the baseline energy
-    allocate (ediff(sim%nt, 5))
-    allocate (sdiff(sim%nt, 3, 3, 5))
-    ediff = 0.0_r8
-    sdiff = 0.0_r8
+    stol = sum(abs(thermo%stress_pot)) * 1e-6_r8
+    call lo_symmetrize_stress(thermo%stress_pot, uc)
+    thermo%stress_pot = lo_chop(thermo%stress_pot, stol)
+    call lo_symmetrize_stress(thermo%stress_potvar, uc)
+    thermo%stress_potvar = lo_chop(thermo%stress_potvar, stol)
+    call lo_symmetrize_stress(thermo%stress_diff, uc)
+    thermo%stress_diff = lo_chop(thermo%stress_diff, stol)
+    call lo_symmetrize_stress(thermo%stress_diffvar, uc)
+    thermo%stress_diffvar = lo_chop(thermo%stress_diffvar, stol)
 
-    ! First, we compute the energy differences
-    do i = 1, sim%nt
-        if (mod(i, mw%n) .ne. mw%r) cycle
-        call pot%energies_and_forces(sim%u(:, :, i), e2, e3, e4, ep)
-        ! We store the energy differences
-        ediff(i, 1) = sim%stat%potential_energy(i)
-        ediff(i, 2) = sim%stat%potential_energy(i) - e2
-        ediff(i, 3) = sim%stat%potential_energy(i) - e2 - ep
-        ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3
-        ediff(i, 5) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
-
-        ! But also the stress
-        sdiff(i, :, :, 1) = sim%stat%stress(:, :, i)
-!       sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s2
-!       sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s2 - sp
-!       sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s2 - sp - s3
-!       sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s2 - sp - s3 - s4
-    end do
-    call mw%allreduce('sum', ediff)
-    call mw%allreduce('sum', sdiff)
-
-    ! We can now compute all properties, including their errors using block averaging
-    cumulant = 0.0_r8
-    cumulant_var = 0.0_r8
-    blocksize = floor(real(sim%nt, r8) / real(opts%nblocks))
-    allocate(buf(3, opts%nblocks))
-    allocate(buf_stress(3, 3, opts%nblocks))
-    do i=1, 5
-        ! Here we compute all properties for each blocks
-        do j=1, opts%nblocks
-            f0 = lo_mean(ediff(blocksize*j:min(blocksize*j+1, sim%nt), i))
-            buf(1, j) = lo_mean(ediff(blocksize*j:min(blocksize*j+1, sim%nt), i))
-            buf(2, j) = lo_mean((ediff(blocksize*j:min(blocksize*j+1, sim%nt), i) - f0)**2)
-            buf(3, j) = lo_mean((ediff(blocksize*j:min(blocksize*j+1, sim%nt), i) - f0)**3)
-
-            do a=1, 3
-            do b=1, 3
-                buf_stress(a, b, j) = lo_mean(sdiff(i, a, b, blocksize*j:min(blocksize*j+1, sim%nt)))
-            end do
-            end do
-        end do
-        ! First order cumulant
-        cumulant(1, i) = lo_mean(buf(1, :))
-        cumulant_var(1, i) = lo_mean((buf(1, :) - cumulant(1, i))**2)
-        ! Second order cumulant
-        cumulant(2, i) = lo_mean(buf(2, :))
-        cumulant_var(2, i) = lo_mean((buf(2, :) - cumulant(2, i))**2)
-        ! Third order cumulant
-        cumulant(3, i) = lo_mean(buf(3, :))
-        cumulant_var(3, i) = lo_mean((buf(3, :) - cumulant(3, i))**2)
-
-        do a=1, 3
-        do b=1, 3
-            stress_pot(a, b, i) = lo_mean(buf_stress(a, b, :))
-            stress_potvar(a, b, i) = lo_mean((buf_stress(a, b, :) - thermo%stress_pot(a, b))**2)
-        end do
-        end do
-    end do
-    cumulant = cumulant/real(ss%na, r8)
-    cumulant(2, :) = 0.5_r8 * cumulant(2, :) * inverse_kbt
-    cumulant_var(2, :) = 0.5_r8 * cumulant_var(2, :) * inverse_kbt
-    cumulant_var(3, :) = cumulant_var(3, :) * inverse_kbt**2 / 6.0_r8
-
-    if (mw%talk) then
-        write (*, *) ''
-        write (*, *) 'Temperature (K) (from infile.meta): ', sim%temperature_thermostat
-        write (*, *) 'Potential energy:'
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '                  input: ', cumulant(1, 1)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 1)*lo_Hartree_to_eV
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '                  E-fc2: ', cumulant(1, 2)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 2)*lo_Hartree_to_eV
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '            E-fc2-polar: ', cumulant(1, 3)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 3)*lo_Hartree_to_eV
-        if (opts%thirdorder) then
-            write (*, "(1X,A,E21.14,1X,A,F21.14)") '        E-fc2-polar-fc3: ', cumulant(1, 4)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 4)*lo_Hartree_to_eV
-        end if
-        if (opts%fourthorder) then
-            write (*, "(1X,A,E21.14,1X,A,F21.14)") '    E-fc2-polar-fc3-fc4: ', cumulant(1, 5)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 5)*lo_Hartree_to_eV
+    else
+        havesim = .false.
+        if (mw%talk) then
+            write(*, *) 'No simulation found, skipping computation of cumulant correction'
         end if
     end if
-    call tmr%tock('cumulants')
 end block calcepot
+
 
 latdyn3ph: block
     !> The phonon dispersion relation
@@ -307,11 +255,6 @@ latdyn3ph: block
         thermo%s3 = s3
         thermo%u3 = (fe3 + opts%temperature * s3)
         thermo%cv3 = cv3
-
-        if (mw%talk) write(*, *) fe3 * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) thermo%u3 * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) s3 / lo_kb_Hartree
-        if (mw%talk) write(*, *) cv3 / lo_kb_Hartree
     end if
     call tmr%tock('three-phonon')
 
@@ -342,21 +285,11 @@ latdyn4ph: block
         thermo%u4 = (fe4 + opts%temperature * s4)
         thermo%cv4 = cv4
 
-        if (mw%talk) write(*, *) fe4 * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) thermo%u4 * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) s4 / lo_kb_Hartree
-        if (mw%talk) write(*, *) cv4 / lo_kb_Hartree
-
         call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
         thermo%f4 = thermo%f4 + fe4
         thermo%s4 = thermo%s4 + s4
         thermo%u4 = thermo%u4 + (fe4 + opts%temperature * s4)
         thermo%cv4 = thermo%cv4 + cv4
-
-        if (mw%talk) write(*, *) fe4 * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) (fe4 + opts%temperature * s4) * lo_Hartree_to_eV
-        if (mw%talk) write(*, *) s4 / lo_kb_Hartree
-        if (mw%talk) write(*, *) cv4 / lo_kb_Hartree
     end if
     call tmr%tock('four-phonon')
 
@@ -366,45 +299,6 @@ summary: block
     real(r8) :: f0, f1, f2
     character(len=1000) :: opf1, opf2
 
-    if (mw%talk) then
-        write(*, *) ''
-        write(*, *) 'SUMMARY OF RESULTS'
-        write(*, *) ''
-        opf1 = '(1X,3(A20))'
-        opf2 = '(1X,3(F20.12))'
-        f0 = (cumulant(1, 2) + thermo%f0) * lo_Hartree_to_eV
-        f1 = (cumulant(1, 2) + thermo%f0 + thermo%f3) * lo_Hartree_to_eV
-        f2 = (cumulant(1, 2) + thermo%f0 + thermo%f3 + thermo%f4) * lo_Hartree_to_eV
-        write(*, *) 'Free energy [eV/at]'
-        write(*, opf1) 'zeroth order', 'first order', 'second order'
-        write(*, opf2) f0, f1, f2
-
-        f0 = (cumulant(1, 2) + thermo%u0) * lo_Hartree_to_eV
-        f1 = (cumulant(1, 2) + thermo%u0 + thermo%u3) * lo_Hartree_to_eV
-        f2 = (cumulant(1, 2) + thermo%u0 + thermo%u3 + thermo%u4) * lo_Hartree_to_eV
-        write(*, *) 'Internal energy [eV/at]'
-        write(*, opf1) 'zeroth order', 'first order', 'second order'
-        write(*, opf2) f0, f1, f2
-
-        f0 = (thermo%s0) / lo_kb_Hartree
-        f1 = (thermo%s0 + thermo%s3) / lo_kb_Hartree
-        f2 = (thermo%s0 + thermo%s3 + thermo%s4) / lo_kb_Hartree
-        write(*, *) 'Entropy [eV/at/K]'
-        write(*, opf1) 'zeroth order', 'first order', 'second order'
-        write(*, opf2) f0, f1, f2
-
-        f0 = (thermo%cv0) / lo_kb_Hartree
-        f1 = (thermo%cv0 + thermo%cv3) / lo_kb_Hartree
-        f2 = (thermo%cv0 + thermo%cv3 + thermo%cv4) / lo_kb_Hartree
-        write(*, *) 'Heat capacity [kb]'
-        write(*, opf1) 'zeroth order', 'first order', 'second order'
-        write(*, opf2) f0, f1, f2
-
-        write (*, *) ''
-        write (*, '(1X,A)') 'SUGGESTED CITATIONS:'
-        write (*, '(1X,A41,A)') 'Software: ', 'F. Knoop et al., J. Open Source Softw 9(94), 6150 (2024)'
-
-    end if
     call tmr%stop()
     if (mw%talk) write(*, *) ''
     call tmr%dump(mw, 'Timings:')

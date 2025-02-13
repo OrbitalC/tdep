@@ -1162,7 +1162,7 @@ subroutine phonon_kinetic_stress(dr, qp, uc, temperature, kinsigma)
         f0 = om * (lo_planck(temperature, om) + 0.5_r8) * pref
         do a=1, uc%na
             egv = dr%aq(aq)%egv((a - 1)*3 + 1:a*3, im)
-            kinsigma(:, :) = kinsigma(:, :) - real(lo_outerproduct(egv, egv)) * f0
+            kinsigma(:, :) = kinsigma(:, :) + real(lo_outerproduct(egv, egv)) * f0
         end do
     end do
     end do
