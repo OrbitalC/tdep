@@ -162,11 +162,6 @@ subroutine setup_potential_energy_differences(pot, uc, ss, fc2, fc3, fc4, mw, ve
     t0 = timer
     t1 = timer
 
-    if (verbosity .gt. 0) then
-        write (*, *) ''
-        write (*, *) 'PREPARING POTENTIAL ENERGY DIFFERENCES'
-    end if
-
     call fc2%remap(uc, ss, pot%fc2)
     if (verbosity .gt. 0) then
         t1 = walltime()
@@ -243,6 +238,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     ediff = 0.0_r8
     sdiff = 0.0_r8
 
+    if (mw%talk) write(*, *) '... computing energy differences'
+
     ! Let's compute energies and stress differences
     do i=1, sim%nt
         if (mod(i, mw%n) .ne. mw%r) cycle
@@ -258,7 +255,10 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         sdiff(i, :, :, 1) = sim%stat%stress(:, :, i)
         sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s3
     end do
+    call mw%allreduce('sum', ediff)
+    call mw%allreduce('sum', sdiff)
 
+    if (mw%talk) write(*, *) '... computing free energy correction'
     allocate(buf(3, nblocks))
     allocate(buf_stress(3, 3, nblocks))
 
@@ -274,7 +274,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         ! First, let's compute properties for each blocks
         do j=1, nblocks
             istart = blocksize*j
-            iend = min(blocksize*j + 1, sim%nt)
+            iend = min(blocksize*(j+1), sim%nt)
 
             f0 = lo_mean(ediff(istart:iend, i))
             buf(1, j) = lo_mean(ediff(istart:iend, i))
@@ -289,26 +289,27 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         end do
         ! First order cumulant
         cumulant(1, i) = lo_mean(buf(1, :))
-        cumulant_var(1, i) = lo_mean((buf(1, :) - cumulant(1, i))**2)
+        cumulant_var(1, i) = sqrt(lo_mean((buf(1, :) - cumulant(1, i))**2))
         ! Second order cumulant
         cumulant(2, i) = lo_mean(buf(2, :))
-        cumulant_var(2, i) = lo_mean((buf(2, :) - cumulant(2, i))**2)
+        cumulant_var(2, i) = sqrt(lo_mean((buf(2, :) - cumulant(2, i))**2))
         ! Third order cumulant
         cumulant(3, i) = lo_mean(buf(3, :))
-        cumulant_var(3, i) = lo_mean((buf(3, :) - cumulant(3, i))**2)
+        cumulant_var(3, i) = sqrt(lo_mean((buf(3, :) - cumulant(3, i))**2))
 
         ! Same for the stress
         if (i .lt. 3) then
         do a=1, 3
         do b=1, 3
             stress_pot(a, b, i) = lo_mean(buf_stress(a, b, :))
-            stress_potvar(a, b, i) = lo_mean((buf_stress(a, b, :) - stress_pot(a, b, i))**2)
+            stress_potvar(a, b, i) = sqrt(lo_mean((buf_stress(a, b, :) - stress_pot(a, b, i))**2))
         end do
         end do
         end if
     end do
     ! We add the prefactor for the cumulants
     cumulant = cumulant/real(ss%na, r8)
+    cumulant_var = cumulant_var/real(ss%na, r8)
     cumulant(2, :) = 0.5_r8 * cumulant(2, :) * inverse_kbt
     cumulant_var(2, :) = 0.5_r8 * cumulant_var(2, :) * inverse_kbt
     cumulant_var(3, :) = cumulant_var(3, :) * inverse_kbt**2 / 6.0_r8
@@ -329,7 +330,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     thermo%stress_pot(:, :) = stress_pot(:, :, 1)
     thermo%stress_potvar(:, :) = stress_potvar(:, :, 1)
     thermo%stress_diff(:, :) = stress_pot(:, :, 2)
-    thermo%stress_potvar(:, :) = stress_potvar(:, :, 2)
+    thermo%stress_diffvar(:, :) = stress_potvar(:, :, 2)
 end subroutine
 
 end module

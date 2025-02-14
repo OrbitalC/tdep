@@ -58,7 +58,7 @@ init: block
         write(*, *) 'Recap of the parameters governing the calculation'
         write(*, *) ''
         write (*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
-        write (*, '(1X,A40,L3)') 'Classical limit                         ', opts%quantum
+        write (*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
         write (*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
         write (*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
         write (*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
@@ -162,19 +162,12 @@ latdyn: block
 end block latdyn
 
 calcepot: block
+    !> The simulation
     type(lo_mdsim) :: sim
+    !> The potentiel energy helper
     type(lo_energy_differences) :: pot
+    !> The supercell
     type(lo_crystalstructure) :: ss
-
-    real(r8), dimension(:, :, :, :), allocatable :: sdiff
-    real(r8), dimension(:, :, :), allocatable :: buf_stress
-    real(r8), dimension(:, :), allocatable :: buf
-    real(r8), dimension(:, :), allocatable :: ediff
-    real(r8), dimension(3, 3) :: s3, sk2, sk3, sk4, skp
-
-    real(r8) :: e2, e3, e4, ep, inverse_kbt, f0
-    integer :: i, j, a, b, blocksize
-    real(r8) :: stol
 
     if (mw%talk) write(*, *) ''
     if (lo_does_file_exist('infile.sim.hdf5') .or. lo_does_file_exist('infile.meta')) then
@@ -182,15 +175,19 @@ calcepot: block
 
     if (mw%talk) write(*, *) 'Computing energy differences'
 
+    if (mw%talk) write(*, *) '... reading simulation files'
+    ! Read the supercell
     call ss%readfromfile('infile.ssposcar')
     call ss%classify('supercell', uc)
+    ! Setup the ifc with the potential
+    if (mw%talk) write(*, *) '... preparing potential energy differences'
     call pot%setup(uc, ss, fc, fct, fcf, mw, opts%verbosity+1)
 
     ! We fetch the simulation data
     if (lo_does_file_exist('infile.sim.hdf5')) then
-        call sim%read_from_hdf5('infile.sim.hdf5', verbosity=opts%verbosity + 2, stride=-1)
+        call sim%read_from_hdf5('infile.sim.hdf5', verbosity=-1, stride=-1)
     else
-        call sim%read_from_file(verbosity=opts%verbosity + 2, stride=1, magnetic=.false., dielectric=.false., nrand=-1, mw=mw)
+        call sim%read_from_file(verbosity=-1, stride=1, magnetic=.false., dielectric=.false., nrand=-1, mw=mw)
     end if
 
     if (abs(opts%temperature - sim%temperature_thermostat) .gt. lo_tol .and. mw%talk) then
@@ -202,25 +199,9 @@ calcepot: block
         write(*, *)
     end if
 
-    if (thermo%temperature .gt. 1E-5_r8) then
-        inverse_kbt = 1.0_r8/lo_kb_Hartree/thermo%temperature
-    else
-        inverse_kbt = 0.0_r8
-    end if
-
-    if (mw%talk) write(*, *) '... computing energy differences'
     call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, mw)
 
-    stol = sum(abs(thermo%stress_pot)) * 1e-6_r8
-    call lo_symmetrize_stress(thermo%stress_pot, uc)
-    thermo%stress_pot = lo_chop(thermo%stress_pot, stol)
-    call lo_symmetrize_stress(thermo%stress_potvar, uc)
-    thermo%stress_potvar = lo_chop(thermo%stress_potvar, stol)
-    call lo_symmetrize_stress(thermo%stress_diff, uc)
-    thermo%stress_diff = lo_chop(thermo%stress_diff, stol)
-    call lo_symmetrize_stress(thermo%stress_diffvar, uc)
-    thermo%stress_diffvar = lo_chop(thermo%stress_diffvar, stol)
-
+    call tmr%tock('simulation')
     else
         havesim = .false.
         if (mw%talk) then
@@ -296,8 +277,135 @@ latdyn4ph: block
 end block latdyn4ph
 
 summary: block
+    !> Properties at the harmonic level
+    real(r8) :: fharm, uharm, sharm, charm
+    !> Properties with first order cumulant, 2nd order IFC
+    real(r8) :: f2_1, vf2_1, u2_1, vu2_1, s2_1, vs2_1, c2_1, vc2_1
+    !> Properties with second order cumulant, 2nd order IFC
+    real(r8) :: f2_2, vf2_2, u2_2, vu2_2, s2_2, vs2_2, c2_2, vc2_2
+    !> Properties with first order cumulant, 3rd order IFC
+    real(r8) :: f3_1, vf3_1, u3_1, vu3_1, s3_1, vs3_1, c3_1, vc3_1
+    !> The prefactor, depending if we have stochastic samples or not
+    real(r8) :: pref
     real(r8) :: f0, f1, f2
-    character(len=1000) :: opf1, opf2
+    real(r8), dimension(3, 3) :: sigma
+    character(len=1000) :: opfc, opff, opfs
+    !> A tolerance to clean-up stress results
+    real(r8) :: stol
+    integer :: i
+
+    if (opts%stochastic) then
+        pref = -1.0_r8
+    else
+        pref = 1.0_r8
+    end if
+
+    ! Clean and symmetrize every stress tensor
+    stol = sum(abs(thermo%stress_pot)) * 1e-6_r8
+    call lo_symmetrize_stress(thermo%stress_pot, uc)
+    thermo%stress_pot = lo_chop(thermo%stress_pot, stol)
+    call lo_symmetrize_stress(thermo%stress_potvar, uc)
+    thermo%stress_potvar = lo_chop(thermo%stress_potvar, stol)
+    call lo_symmetrize_stress(thermo%stress_diff, uc)
+    thermo%stress_diff = lo_chop(thermo%stress_diff, stol)
+    call lo_symmetrize_stress(thermo%stress_diffvar, uc)
+    thermo%stress_diffvar = lo_chop(thermo%stress_diffvar, stol)
+
+    fharm = thermo%f0 * lo_Hartree_to_eV
+    uharm = thermo%u0 * lo_Hartree_to_eV
+    sharm = thermo%s0 / lo_kB_Hartree
+    charm = thermo%cv0 / lo_kB_Hartree
+
+    f2_1 = thermo%clt_ifc2_1(1) * lo_Hartree_to_eV
+    u2_1 = thermo%clt_ifc2_1(1) * lo_Hartree_to_eV
+    s2_1 = 0.0_r8
+    c2_1 = 0.0_r8
+    vf2_1 = pref * thermo%clt_ifc2_1(2) * lo_Hartree_to_eV
+    vu2_1 = pref * thermo%clt_ifc2_1(2) * lo_Hartree_to_eV
+    vs2_1 = 0.0_r8
+    vc2_1 = 0.0_r8
+
+    f2_2 = thermo%clt_ifc2_2(1) * lo_Hartree_to_eV
+    u2_2 = thermo%clt_ifc2_2(1) * lo_Hartree_to_eV
+    s2_2 = 0.0_r8
+    c2_2 = 0.0_r8
+    vf2_2 = pref * thermo%clt_ifc2_2(2) * lo_Hartree_to_eV
+    vu2_2 = pref * thermo%clt_ifc2_2(2) * lo_Hartree_to_eV
+    vs2_2 = 0.0_r8
+    vc2_2 = 0.0_r8
+
+    f3_1 = thermo%clt_ifc3_1(1) * lo_Hartree_to_eV
+    u3_1 = thermo%clt_ifc3_1(1) * lo_Hartree_to_eV
+    s3_1 = 0.0_r8
+    c3_1 = 0.0_r8
+    vf3_1 = pref * thermo%clt_ifc3_1(2) * lo_Hartree_to_eV
+    vu3_1 = pref * thermo%clt_ifc3_1(2) * lo_Hartree_to_eV
+    vs3_1 = 0.0_r8
+    vc3_1 = 0.0_r8
+
+    if (mw%talk) then
+        opfc = '(4(1X,A24))'
+        opff = '(4(1X,F24.12))'
+        opfs = '(3(1X,F24.12))'
+        write(*, *) ''
+        write(*, *) 'SUMMARY OF RESULTS'
+        write(*, *) ''
+        write(*, *) 'Effective harmonic contribution'
+        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(*, opff) fharm, uharm, sharm, charm
+
+        write(*, *) ''
+        write(*, *) 'With first order cumulant correction, 2nd order IFC'
+        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(*, opff) fharm + f2_1, uharm+u2_1, sharm+s2_1, charm+c2_1
+        write(*, opff) vf2_1, vu2_1, vs2_1, vc2_1
+
+        write(*, *) ''
+        write(*, *) 'With second order cumulant correction, 2nd order IFC'
+        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(*, opff) fharm+f2_1+f2_2, uharm+u2_1+u2_2, sharm+s2_1+s2_2, charm+c2_1+c2_2
+        write(*, opff) vf2_1+vf2_2, vu2_1+vu2_2, vs2_1+vs2_2, vc2_1+vc2_2
+
+        if (opts%thirdorder) then
+        write(*, *) ''
+        write(*, *) 'With first order cumulant correction, 2nd+3rd order IFC'
+        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(*, opff) fharm + f3_1, uharm+u3_1, sharm+s3_1, charm+c3_1
+        write(*, opff) vf3_1, vu3_1, vs3_1, vc3_1
+        end if
+
+
+        write(*, *) ''
+        sigma = (thermo%stress_pot + thermo%stress_kin) * lo_pressure_HartreeBohr_to_GPa
+        write(*, *) 'Stress tensor [GPa]'
+        do i=1, 3
+            write(*, opfs) sigma(i, :)
+        end do
+        sigma = (thermo%stress_potvar) * lo_pressure_HartreeBohr_to_GPa
+        write(*, *) 'Uuncertainty [GPa]'
+        do i=1, 3
+            write(*, opfs) sigma(i, :)
+        end do
+        write(*, *) ''
+        sigma = (thermo%stress_diff + thermo%stress_3ph + thermo%stress_kin) * lo_pressure_HartreeBohr_to_GPa
+        write(*, *) 'Stress tensor with third order correction [GPa]'
+        do i=1, 3
+            write(*, opfs) sigma(i, :)
+        end do
+        sigma = (thermo%stress_diffvar) * lo_pressure_HartreeBohr_to_GPa
+        write(*, *) 'Uncertainty [GPa]'
+        do i=1, 3
+            write(*, opfs) sigma(i, :)
+        end do
+        write(*, *) ''
+        sigma = thermo%alpha * 1e6_r8
+        write(*, *) 'Anisotropic thermal expansion from third-order [1e-6/K]'
+        do i=1, 3
+            write(*, opfs) sigma(i, :)
+        end do
+        write(*, *) 'Volumic thermal expansion [1e-6/K]'
+        write(*, '(1X,F24.12)') sigma(1, 1) + sigma(2, 2) + sigma(3, 3)
+    end if
 
     call tmr%stop()
     if (mw%talk) write(*, *) ''
