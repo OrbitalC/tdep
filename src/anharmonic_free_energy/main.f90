@@ -59,6 +59,7 @@ init: block
         write(*, *) ''
         write (*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
         write (*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
+        write (*, '(1X,A40,L3)') 'Stochastic sampling                     ', opts%stochastic
         write (*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
         write (*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
         write (*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
@@ -319,11 +320,11 @@ summary: block
     f2_1 = thermo%clt_ifc2_1(1) * lo_Hartree_to_eV
     u2_1 = thermo%clt_ifc2_1(1) * lo_Hartree_to_eV
     s2_1 = 0.0_r8
-    c2_1 = 0.0_r8
+    c2_1 = pref * thermo%cv_ifc2_1(1) / lo_kB_Hartree
     vf2_1 = pref * thermo%clt_ifc2_1(2) * lo_Hartree_to_eV
     vu2_1 = pref * thermo%clt_ifc2_1(2) * lo_Hartree_to_eV
     vs2_1 = 0.0_r8
-    vc2_1 = 0.0_r8
+    vc2_1 = pref * thermo%cv_ifc2_1(2) / lo_kb_Hartree
 
     f2_2 = thermo%clt_ifc2_2(1) * lo_Hartree_to_eV
     u2_2 = thermo%clt_ifc2_2(1) * lo_Hartree_to_eV
@@ -350,18 +351,22 @@ summary: block
         write(*, *) ''
         write(*, *) 'SUMMARY OF RESULTS'
         write(*, *) ''
-        write(*, *) 'Effective harmonic contribution'
+        write(*, *) 'Effective harmonic contribution: F = F_harm'
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) fharm, uharm, sharm, charm
 
         write(*, *) ''
-        write(*, *) 'With first order cumulant correction, 2nd order IFC'
+        write(*, *) 'Gibbs-Bogoliubov approximation: F = F_harm + <V-V_harm>'
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) fharm + f2_1, uharm+u2_1, sharm+s2_1, charm+c2_1
         write(*, opff) vf2_1, vu2_1, vs2_1, vc2_1
 
         write(*, *) ''
-        write(*, *) 'With second order cumulant correction, 2nd order IFC'
+        if (opts%stochastic) then
+            write(*, *) 'With second order cumulant correction: F = F_harm + <V-V_harm> - <(V-V_harm)^2> / 2kBT'
+        else
+            write(*, *) 'With second order cumulant correction: F = F_harm + <V-V_harm> + <(V-V_harm)^2> / 2kBT'
+        end if
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) fharm+f2_1+f2_2, uharm+u2_1+u2_2, sharm+s2_1+s2_2, charm+c2_1+c2_2
         write(*, opff) vf2_1+vf2_2, vu2_1+vu2_2, vs2_1+vs2_2, vc2_1+vc2_2
@@ -386,25 +391,27 @@ summary: block
         do i=1, 3
             write(*, opfs) sigma(i, :)
         end do
-        write(*, *) ''
-        sigma = (thermo%stress_diff + thermo%stress_3ph + thermo%stress_kin) * lo_pressure_HartreeBohr_to_GPa
-        write(*, *) 'Stress tensor with third order correction [GPa]'
-        do i=1, 3
-            write(*, opfs) sigma(i, :)
-        end do
-        sigma = (thermo%stress_diffvar) * lo_pressure_HartreeBohr_to_GPa
-        write(*, *) 'Uncertainty [GPa]'
-        do i=1, 3
-            write(*, opfs) sigma(i, :)
-        end do
-        write(*, *) ''
-        sigma = thermo%alpha * 1e6_r8
-        write(*, *) 'Anisotropic thermal expansion from third-order [1e-6/K]'
-        do i=1, 3
-            write(*, opfs) sigma(i, :)
-        end do
-        write(*, *) 'Volumic thermal expansion [1e-6/K]'
-        write(*, '(1X,F24.12)') sigma(1, 1) + sigma(2, 2) + sigma(3, 3)
+        if (opts%thirdorder) then
+            write(*, *) ''
+            sigma = (thermo%stress_diff + thermo%stress_3ph + thermo%stress_kin) * lo_pressure_HartreeBohr_to_GPa
+            write(*, *) 'Stress tensor with third order correction [GPa]'
+            do i=1, 3
+                write(*, opfs) sigma(i, :)
+            end do
+            sigma = (thermo%stress_diffvar) * lo_pressure_HartreeBohr_to_GPa
+            write(*, *) 'Uncertainty [GPa]'
+            do i=1, 3
+                write(*, opfs) sigma(i, :)
+            end do
+            write(*, *) ''
+            sigma = thermo%alpha * 1e6_r8
+            write(*, *) 'Anisotropic thermal expansion from third-order [1e-6/K]'
+            do i=1, 3
+                write(*, opfs) sigma(i, :)
+            end do
+            write(*, *) 'Volumic thermal expansion [1e-6/K]'
+            write(*, '(1X,F24.12)') sigma(1, 1) + sigma(2, 2) + sigma(3, 3)
+        end if
     end if
 
     call tmr%stop()

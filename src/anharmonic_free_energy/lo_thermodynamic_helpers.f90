@@ -30,6 +30,8 @@ type lo_thermodynamics
     real(r8), dimension(2) :: clt_ifc2_1, clt_ifc2_2
     real(r8), dimension(2) :: clt_ifc3_1, clt_ifc3_2
     real(r8), dimension(2) :: clt_ifc4_1, clt_ifc4_2
+    !> Also for the heat capacity
+    real(r8), dimension(2) :: cv_ifc2_1
     !> The pressure
     real(r8) :: p=-lo_huge
     !> The stress tensor

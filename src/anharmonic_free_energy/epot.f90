@@ -216,15 +216,16 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     !> MPI
     type(lo_mpi_helper), intent(inout) :: mw
 
-    real(r8), dimension(3, 5) :: cumulant, cumulant_var
+    real(r8), dimension(3, 5) :: cumulant, cumulant_var, cumcv, cumcv_var
     real(r8), dimension(3, 3, 5) :: stress_pot, stress_potvar
     real(r8), dimension(:, :, :, :), allocatable :: sdiff
     real(r8), dimension(:, :, :), allocatable :: buf_stress
     real(r8), dimension(:, :), allocatable :: buf
+    real(r8), dimension(:, :), allocatable :: bufcv
     real(r8), dimension(:, :), allocatable :: ediff
     real(r8), dimension(3, 3) :: s3, sk2, sk3, sk4, skp
 
-    real(r8) :: e2, e3, e4, ep, inverse_kbt, f0
+    real(r8) :: e2, e3, e4, ep, inverse_kbt, f0, f1
     integer :: i, j, a, b, blocksize, istart, iend
 
     if (thermo%temperature .gt. 1E-5_r8) then
@@ -260,6 +261,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
 
     if (mw%talk) write(*, *) '... computing free energy correction'
     allocate(buf(3, nblocks))
+    allocate(bufcv(3, nblocks))
     allocate(buf_stress(3, 3, nblocks))
 
     cumulant = 0.0_r8
@@ -281,6 +283,9 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
             buf(2, j) = lo_mean((ediff(istart:iend, i) - f0)**2)
             buf(3, j) = lo_mean((ediff(istart:iend, i) - f0)**3)
 
+            f1 = lo_mean(ediff(istart:iend, 1))
+            bufcv(1, j) = lo_mean(ediff(istart:iend, i)*ediff(istart:iend, i)) - f0*lo_mean(ediff(istart:iend,i))
+
             do a=1, 3
             do b=1, 3
                 buf_stress(a, b, j) = lo_mean(sdiff(istart:iend, a, b, i))
@@ -296,6 +301,10 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         ! Third order cumulant
         cumulant(3, i) = lo_mean(buf(3, :))
         cumulant_var(3, i) = sqrt(lo_mean((buf(3, :) - cumulant(3, i))**2))
+
+        ! Correction for the heat capacity
+        cumcv(1, i) = lo_mean(bufcv(1, :))
+        cumcv_var(1, i) = sqrt(lo_mean((bufcv(1, :) - cumcv(1, i))**2))
 
         ! Same for the stress
         if (i .lt. 3) then
@@ -313,6 +322,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     cumulant(2, :) = 0.5_r8 * cumulant(2, :) * inverse_kbt
     cumulant_var(2, :) = 0.5_r8 * cumulant_var(2, :) * inverse_kbt
     cumulant_var(3, :) = cumulant_var(3, :) * inverse_kbt**2 / 6.0_r8
+    cumcv = cumcv*inverse_kbt/thermo%temperature/real(ss%na, r8)
+    cumcv_var = cumcv_var*inverse_kbt/thermo%temperature/real(ss%na, r8)
     ! And we can store everything
     thermo%clt_ifc2_1(1) = cumulant(1, 3)
     thermo%clt_ifc2_1(2) = cumulant_var(1, 3)
@@ -326,6 +337,9 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     thermo%clt_ifc4_1(2) = cumulant_var(1, 5)
     thermo%clt_ifc4_2(1) = cumulant(2, 5)
     thermo%clt_ifc4_2(2) = cumulant_var(2, 5)
+    ! And the cv
+    thermo%cv_ifc2_1(1) = cumcv(1, 3)
+    thermo%cv_ifc2_1(2) = cumcv_var(1, 3)
     ! Stress included
     thermo%stress_pot(:, :) = stress_pot(:, :, 1)
     thermo%stress_potvar(:, :) = stress_potvar(:, :, 1)
