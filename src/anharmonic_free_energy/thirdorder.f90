@@ -11,6 +11,7 @@ use type_crystalstructure, only: lo_crystalstructure
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_phonon_dispersions, only: lo_phonon_dispersions
+use type_symmetryoperation, only: lo_operate_on_secondorder_tensor
 use lo_timetracker, only: lo_timer
 
 use lo_thermodynamic_helpers, only: lo_full_to_voigt
@@ -44,31 +45,42 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
+    !> The eigenvector for the current mode
     complex(r8), dimension(:), allocatable :: egv
+    !> Complex coefficients for gruneisen
     complex(r8), dimension(3, 3) :: c0
+    !> stiffness and compliance tensors, in voigt notation
     real(r8), dimension(6, 6) :: cij, sij
-    real(r8), dimension(3, 3) :: grun, buf
+    !> Buffers for Gruneisen and thermal expansion, with full anisotropy
+    real(r8), dimension(3, 3) :: grun, bufalpha, grunbuf
+    !> q-points and lattice distances
     real(r8), dimension(3) :: qv, rv2, rv3
-    real(r8), dimension(2) :: d
+    !> Phase factor for Fourier transform and product of eigenvectors
     complex(r8) :: expiqr, evprod
+    !> Harmonic stuffs
     real(r8) :: om, iqr, invsqrtmass, u0, cv0
-    integer :: q1, b1, a1, t, a2, a3, i, j, k, l, ivoigt, jvoigt, ctr
+    !> Integers for do loops
+    integer :: q1, b1, a1, t, a2, a3, i, j, k, l, ivoigt, jvoigt, ctr, ifull
 
-    allocate(egv(dr%n_mode))
+    ! We start by allocating space for the eigenvector
+    call mem%allocate(egv, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
+    ! Set everything to zero
     p3ph = 0.0_r8
-    buf = 0.0_r8
+    bufalpha = 0.0_r8
 
+    ! And here we go
     ctr = 0
-    do q1=1, qp%n_full_point
-        qv = qp%ap(q1)%r * lo_twopi
+    do q1=1, qp%n_irr_point
+        qv = qp%ip(q1)%r * lo_twopi
         do b1=1, dr%n_mode
             ctr = ctr + 1
             if (mod(ctr, mw%n) .ne. mw%r) cycle
-            om = dr%aq(q1)%omega(b1)
+            ! We start by computing the mode Gruneisen parameter, with full anisotropy
+            om = dr%iq(q1)%omega(b1)
             if (om .lt. lo_freqtol) cycle
             c0 = 0.0_r8
-            egv = dr%aq(q1)%egv(:, b1)
+            egv = dr%iq(q1)%egv(:, b1)
             do a1=1, fct%na
             do t=1, fct%atom(a1)%n
                 a2 = fct%atom(a1)%triplet(t)%i2
@@ -92,6 +104,13 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
             end do
             grun = -real(c0, r8) / (6.0_r8 * om**2)
 
+            ! Here we sum over all symmetry equivalent q-point, taking into account the symop
+            grunbuf = 0.0_r8
+            do ifull=1, qp%ip(q1)%n_full_point
+                grunbuf = grunbuf + lo_operate_on_secondorder_tensor(uc%sym%op(ifull), grun)
+            end do
+            grun = grunbuf
+
             ! Now we can accumulate things using the Gruneisen parameter
             if (quantum) then
                 u0 = lo_harmonic_oscillator_internal_energy(temperature, om)
@@ -101,22 +120,21 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
                 cv0 = lo_kb_Hartree
             end if
 
-            p3ph(:, :) = p3ph(:, :) - grun(:, :) * u0 * qp%ap(q1)%integration_weight / uc%volume
-            do i=1, 3
-            do j=1, 3
-                buf(i, j) = buf(i, j) + cv0 * grun(i, j) * qp%ap(q1)%integration_weight
-            end do
-            end do
-
+            ! And we accumulate
+            p3ph(:, :) = p3ph(:, :) - grun(:, :) * u0 / uc%volume / qp%n_full_point
+            bufalpha(:, :) = bufalpha(:, :) + cv0 * grun(:, :) / qp%n_full_point
         end do
     end do
+    ! Reduce the calculation
     call mw%allreduce('sum', p3ph)
-    call mw%allreduce('sum', buf)
+    call mw%allreduce('sum', bufalpha)
 
+    ! We need the compliance tensor to get the thermal expansion
     call fc%get_elastic_constants(uc, mw, -1)
     cij = fc%elastic_constants_voigt + fc%elastic_constants_voigt_longrange
     call lo_invert_real_matrix(cij, sij)
 
+    ! And we just have to add the compliance tensor part to get the thermal expansion
     alpha = 0.0_r8
     do i=1, 3
     do j=1, 3
@@ -125,11 +143,13 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
         ivoigt = lo_full_to_voigt(i, j)
         jvoigt = lo_full_to_voigt(k, l)
 
-        alpha(i, j) = alpha(i, j) + sij(ivoigt, jvoigt) * buf(k, l) / uc%volume
+        ! That's simply the formula
+        alpha(i, j) = alpha(i, j) + sij(ivoigt, jvoigt) * bufalpha(k, l) / uc%volume
     end do
     end do
     end do
     end do
+    call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 
@@ -154,6 +174,8 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
     !> memory tracker
     type(lo_mem_helper), intent(inout) :: mem
 
+    !> For the smearing parameters
+    real(r8), dimension(:, :), allocatable :: sigsq
     !> Frequency scaled eigenvectors
     complex(r8), dimension(:), allocatable :: egv1, egv2, egv3
     !> Helper for Fourier transform of psi3
@@ -176,6 +198,7 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
     call mem%allocate(egv1, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv2, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%allocate(egv3, dr%n_mode, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(sigsq, [qp%n_irr_point, dr%n_mode], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 
     t0 = walltime()
 
@@ -188,6 +211,14 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
 
     fe3 = 0.0_r8
     cv3 = 0.0_r8
+
+    ! First we compute the broadening parameter for each modes
+    sigsq = 0.0_r8
+    do q1=1, qp%n_irr_point
+        do b1=1, dr%n_mode
+            sigsq(q1, b1) = qp%smearingparameter(dr%iq(q1)%vel(:, b1), dr%default_smearing(b1), 1.0_r8)**2
+        end do
+    end do
 
     do q1=1, qp%n_irr_point
     do q2=1, qp%n_full_point
@@ -208,79 +239,84 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
         call pretransform_phi3(fct, qp%ap(q2)%r, qp%ap(q3)%r, ptf)
 
         do b1=1, dr%n_mode
+            ! Get first phonon
             om1 = dr%iq(q1)%omega(b1)
             if (om1 .lt. lo_freqtol) cycle
+            n1 = lo_planck(temperature, om1)
+            dn1 = lo_planck_deriv(temperature, om1)
+            ddn1 = lo_planck_secondderiv(temperature, om1)
             egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
             do b2=1, dr%n_mode
+                ! Get second phonon
                 om2 = dr%aq(q2)%omega(b2)
                 if (om2 .lt. lo_freqtol) cycle
-
+                n2 = lo_planck(temperature, om2)
+                dn2 = lo_planck_deriv(temperature, om2)
+                ddn2 = lo_planck_secondderiv(temperature, om2)
                 egv2 = dr%aq(q2)%egv(:, b2)/sqrt(om2)
+
+                ! Multiply first and second phonon
                 evp1 = 0.0_r8
                 call zgeru(dr%n_mode, dr%n_mode, (1.0_r8, 0.0_r8), egv2, 1, egv1, 1, evp1, dr%n_mode)
                 do b3=1, dr%n_mode
+                    ! Get third phonon
                     om3 = dr%aq(q3)%omega(b3)
                     if (om3 .lt. lo_freqtol) cycle
+                    n3 = lo_planck(temperature, om3)
+                    dn3 = lo_planck_deriv(temperature, om3)
+                    ddn3 = lo_planck_secondderiv(temperature, om3)
                     egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
 
+                    ! Project on third phonon
                     evp2 = 0.0_r8
                     call zgeru(dr%n_mode, dr%n_mode**2, (1.0_r8, 0.0_r8), egv3, 1, evp1, 1, evp2, dr%n_mode)
                     evp2 = conjg(evp2)
+
+                    ! Compute the scattering matrix element
                     c0 = dot_product(evp2, ptf)
                     psisq = real(conjg(c0)*c0, r8) * prefactor
 
                     if (quantum) then
-                        n1 = lo_planck(temperature, om1)
-                        n2 = lo_planck(temperature, om2)
-                        n3 = lo_planck(temperature, om3)
-
-                        dn1 = lo_planck_deriv(temperature, om1)
-                        dn2 = lo_planck_deriv(temperature, om1)
-                        dn3 = lo_planck_deriv(temperature, om1)
-
-                        ddn1 = lo_planck_secondderiv(temperature, om1)
-                        ddn2 = lo_planck_secondderiv(temperature, om1)
-                        ddn3 = lo_planck_secondderiv(temperature, om1)
+                        ! Get a smearing parameter
+                        sig1 = sigsq(q1, b1)
+                        sig2 = sigsq(qp%ap(q2)%irreducible_index, b2)
+                        sig3 = sigsq(qp%ap(q3)%irreducible_index, b3)
+                        sigma = sqrt(sig1 + sig2 + sig3)
 
                         ! This are the formula to get the free energy
                         f1 = (n1 + 1.0_r8)*(n2 + n3 + 1.0_r8) + n2*n3
                         f2 = n1*n2 + n1*n3 - n2*n3 + 1.0_r8
-
                         ! Here is for the entropy
                         df1 = dn1 * (n2 + n3 + 1.0_r8) + (n1 + 1.0_r8) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
                         df2 = dn1 * n2 + n1 * dn2 + dn1 * n3 + n1 * dn3 - dn2 * n3 - n2 * dn3
-
                         ! And the heat capacity
                         ddf1 = ddn1 * (n2 + n3 + 1.0_r8) + 2.0_r8 * dn1 * (dn2 + dn3) + (n1 + 1.0_r8) * (ddn2 + ddn3) + &
                                ddn2 * n3 + n2 * ddn3 + 2.0_r8 * dn2 * dn3
                         ddf2 = ddn1 * n2 + n1 * ddn2 + 2.0_r8 * dn1 * dn2 + ddn1 * n3 + n1 * ddn3 + 2.0_r8 * dn1 * dn3 - &
                                ddn2 * n3 - n2 * ddn3 - 2.0_r8 * dn2 * dn3
 
-                        f1 = f1/(om1 + om2 + om3)
-                        df1 = df1/(om1 + om2 + om3)
-                        ddf1 = ddf1/(om1 + om2 + om3)
-                        if (abs(om1 + om2 - om3) .lt. lo_freqtol) then
-                            ! Get a smearing parameter
-                            sig1 = dr%default_smearing(b1)
-                            sig2 = dr%default_smearing(b2)
-                            sig3 = dr%default_smearing(b3)
-                            sigma = sqrt(sig1**2 + sig2**2 + sig3**2)
-                            f2 = 3*f2*real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
-                            df2 = 3.0_r8 * df2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
-                            ddf2 = 3.0_r8 * ddf2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
-                        else
-                            f2 = 3.0_r8 * f2 / (om1 + om2 - om3)
-                            df2 = 3.0_r8 * df2 / (om1 + om2 - om3)
-                            ddf2 = 3.0_r8 * ddf2 / (om1 + om2 - om3)
-                        end if
+                        ! Compute the principal values
+                        f1 = f1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
+                        df1 = df1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
+                        ddf1 = ddf1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
+                        f2 = 3*f2*real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
+                        df2 = 3.0_r8 * df2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
+                        ddf2 = 3.0_r8 * ddf2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
+
+                        ! Get everything together
                         f0 = (f1 + f2) / 48.0_r8
                         df0 = (df1 + df2) / 48.0_r8
                         ddf0 = (ddf1 + ddf2) * temperature / 48.0_r8
                     else
+                        ! It's much simpler in the classical case
+                        ! Free energy
                         f0 = (lo_kb_Hartree*temperature)**2 / (om1*om2*om3) / 12.0_r8
+                        ! Entropy
                         df0 = lo_kb_Hartree**2 * temperature / (om1*om2*om3) / 6.0_r8
+                        ! Heat capacity
                         ddf0 = lo_kb_Hartree**2 * temperature / (om1*om2*om3) / 6.0_r8
                     end if
+                    ! And accumulate
                     fe3 = fe3 - f0 * psisq
                     s3 = s3 + df0 * psisq
                     cv3 = cv3 + ddf0 * psisq
@@ -295,9 +331,19 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
     if (mw%talk) then
         call lo_progressbar(' ... third order', qp%n_irr_point, qp%n_irr_point, walltime() - t0)
     end if
-
+    ! Reduce on all ranks
     call mw%allreduce('sum', fe3)
+    call mw%allreduce('sum', s3)
     call mw%allreduce('sum', cv3)
+
+    ! And we can deallocate everything
+    call mem%deallocate(ptf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(evp1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(evp2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(egv3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(sigsq, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 !> Get the Fourier transform of the third order matrix element

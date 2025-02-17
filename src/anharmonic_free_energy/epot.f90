@@ -324,6 +324,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     cumulant_var(3, :) = cumulant_var(3, :) * inverse_kbt**2 / 6.0_r8
     cumcv = cumcv*inverse_kbt/thermo%temperature/real(ss%na, r8)
     cumcv_var = cumcv_var*inverse_kbt/thermo%temperature/real(ss%na, r8)
+
     ! And we can store everything
     thermo%clt_ifc2_1(1) = cumulant(1, 3)
     thermo%clt_ifc2_1(2) = cumulant_var(1, 3)
