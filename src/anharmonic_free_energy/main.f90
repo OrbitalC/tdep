@@ -372,11 +372,11 @@ summary: block
         write(*, opff) vf2_1+vf2_2, vu2_1+vu2_2, vs2_1+vs2_2, vc2_1+vc2_2
 
         if (opts%thirdorder) then
-        write(*, *) ''
-        write(*, *) 'With first order cumulant correction, 2nd+3rd order IFC'
-        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
-        write(*, opff) fharm + f3_1, uharm+u3_1, sharm+s3_1, charm+c3_1
-        write(*, opff) vf3_1, vu3_1, vs3_1, vc3_1
+            write(*, *) ''
+            write(*, *) 'With first order cumulant correction, 2nd+3rd order IFC'
+            write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(*, opff) fharm + f3_1, uharm+u3_1, sharm+s3_1, charm+c3_1
+            write(*, opff) vf3_1, vu3_1, vs3_1, vc3_1
         end if
 
 
