@@ -26,12 +26,10 @@ type lo_thermodynamics
     real(r8) :: cv0, cv3, cv4
     !> The heat capacity at constant pressure
     real(r8) :: cp0, cp3, cp4
-    !> The cumulant contributions
-    real(r8), dimension(2) :: clt_ifc2_1, clt_ifc2_2
-    real(r8), dimension(2) :: clt_ifc3_1, clt_ifc3_2
-    real(r8), dimension(2) :: clt_ifc4_1, clt_ifc4_2
-    !> Also for the heat capacity
-    real(r8), dimension(2) :: cv_ifc2_1
+    !> The cumulant corrections, first dimension is IFC, second is cumulant order
+    real(r8), dimension(3, 4) :: corr_fe=0.0_r8, corr_s=0.0_r8, corr_u=0.0_r8, corr_cv=0.0_r8
+    !> The uncertainty for the cumulant corrections
+    real(r8), dimension(3, 4) :: corr_fe_var=0.0_r8, corr_s_var=0.0_r8, corr_u_var=0.0_r8, corr_cv_var=0.0_r8
     !> The pressure
     real(r8) :: p=-lo_huge
     !> The stress tensor
@@ -42,6 +40,7 @@ type lo_thermodynamics
 end type
 
 contains
+! Symmetrize 3x3 tensors
 subroutine lo_symmetrize_stress(m, uc)
     !> The input matrix
     real(r8), dimension(3, 3), intent(inout) :: m
@@ -58,6 +57,7 @@ subroutine lo_symmetrize_stress(m, uc)
     m = tmp / real(uc%sym%n, r8)
 end subroutine
 
+! Go from full 3x3 real space to 6 voigt notation
 function lo_full_to_voigt(i, j) result(k)
     !> Inputs
     integer, intent(in) :: i
