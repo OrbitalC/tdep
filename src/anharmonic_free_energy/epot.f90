@@ -3,7 +3,7 @@ module epot
 use konstanter, only: r8, lo_pi, lo_twopi, lo_tol, lo_sqtol, lo_status, lo_Hartree_to_eV, lo_kb_hartree
 use gottochblandat, only: tochar, walltime, lo_chop, lo_trueNtimes, lo_progressbar_init, &
                           lo_progressbar, lo_frobnorm, open_file, lo_flattentensor, lo_sqnorm, lo_outerproduct, lo_mean, &
-                          lo_points_on_sphere, lo_mean, lo_stddev
+                          lo_points_on_sphere, lo_mean, lo_stddev, lo_outerproduct
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 !use geometryfunctions, only: lo_inscribed_sphere_in_box
@@ -202,7 +202,7 @@ subroutine setup_potential_energy_differences(pot, uc, ss, fc2, fc3, fc4, mw, ve
     end if
 end subroutine
 
-subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
+subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
     !> container for potential energy differences
     class(lo_energy_differences), intent(in) :: pot
     !> The supercell
@@ -215,29 +215,45 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     integer, intent(in) :: nblocks
     !> MPI
     type(lo_mpi_helper), intent(inout) :: mw
+    !> memory tracker
+    type(lo_mem_helper), intent(inout) :: mem
 
-    real(r8), dimension(3, 5) :: cumulant, cumulant_var, cumcv, cumcv_var
-    real(r8), dimension(3, 3, 5) :: stress_pot, stress_potvar
+    real(r8), dimension(3, 4) :: cumulant, cumulant_var, cumcv, cumcv_var
+    real(r8), dimension(3, 3, 4) :: stress_pot, stress_potvar
+    !> The stress difference between true and ifcs
     real(r8), dimension(:, :, :, :), allocatable :: sdiff
+    !> A little buffer for the stress
     real(r8), dimension(:, :, :), allocatable :: buf_stress
-    real(r8), dimension(:, :), allocatable :: buf
-    real(r8), dimension(:, :), allocatable :: bufcv
+    !> The energy difference between true and ifcs
     real(r8), dimension(:, :), allocatable :: ediff
-    real(r8), dimension(3, 3) :: s3, sk2, sk3, sk4, skp
+    !> Little buffers for the blocks
+    real(r8), dimension(:, :), allocatable :: buf, bufcv
+    !> The third order contribution to the stress
+    real(r8), dimension(3, 3) :: s3
 
+    !> Some buffers: energy, inverse kbt blabla
     real(r8) :: e2, e3, e4, ep, inverse_kbt, f0, f1
+    !> Some integers for do loops
     integer :: i, j, a, b, blocksize, istart, iend
 
+    !> Let's get the inverse temperature
     if (thermo%temperature .gt. 1E-5_r8) then
         inverse_kbt = 1.0_r8/lo_kb_Hartree/thermo%temperature
     else
         inverse_kbt = 0.0_r8
     end if
 
-    allocate(ediff(sim%nt, 5))
-    allocate(sdiff(sim%nt, 3, 3, 2))
+    ! Allocate stuffs
+    call mem%allocate(ediff, [sim%nt, 4], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(sdiff, [sim%nt, 3, 3, 2], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(buf, [3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(bufcv, [3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%allocate(buf_stress, [3, 3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     ediff = 0.0_r8
     sdiff = 0.0_r8
+    buf = 0.0_r8
+    bufcv = 0.0_r8
+    buf_stress = 0.0_r8
 
     if (mw%talk) write(*, *) '... computing energy differences'
 
@@ -247,45 +263,44 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         call pot%energies_and_forces(ss, sim%u(:, :, i), e2, e3, e4, ep, s3)
         ! We store the energy differences
         ediff(i, 1) = sim%stat%potential_energy(i)
-        ediff(i, 2) = sim%stat%potential_energy(i) - e2
-        ediff(i, 3) = sim%stat%potential_energy(i) - e2 - ep
-        ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3
-        ediff(i, 5) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
+        ediff(i, 2) = sim%stat%potential_energy(i) - e2 - ep
+        ediff(i, 3) = sim%stat%potential_energy(i) - e2 - ep - e3
+        ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
 
-        ! But also the stress
+        ! But also the stress differences
         sdiff(i, :, :, 1) = sim%stat%stress(:, :, i)
         sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s3
     end do
+    ! And reduce everything
     call mw%allreduce('sum', ediff)
     call mw%allreduce('sum', sdiff)
 
     if (mw%talk) write(*, *) '... computing free energy correction'
-    allocate(buf(3, nblocks))
-    allocate(bufcv(3, nblocks))
-    allocate(buf_stress(3, 3, nblocks))
 
+    ! Ok now the messy part, here we compute the various correction
+    ! We also estimate the uncertainty through block averaging
+    ! TODO: is there a way to automatize the optimal number of blocks ?
+    ! Need to look what math people think of this
     cumulant = 0.0_r8
     cumulant_var = 0.0_r8
     stress_pot = 0.0_r8
     stress_potvar = 0.0_r8
     blocksize = floor((real(sim%nt, r8)) / real(nblocks))
-    buf = 0.0_r8
-    buf_stress = 0.0_r8
-
-    do i=1, 5
+    do i=1, 4
         ! First, let's compute properties for each blocks
         do j=1, nblocks
+            ! Index for the blocks
             istart = blocksize*j
             iend = min(blocksize*(j+1), sim%nt)
-
+            ! We compute the averages for each block
             f0 = lo_mean(ediff(istart:iend, i))
+            f1 = lo_mean(ediff(istart:iend, 1))
             buf(1, j) = lo_mean(ediff(istart:iend, i))
             buf(2, j) = lo_mean((ediff(istart:iend, i) - f0)**2)
             buf(3, j) = lo_mean((ediff(istart:iend, i) - f0)**3)
-
-            f1 = lo_mean(ediff(istart:iend, 1))
-            bufcv(1, j) = lo_mean(ediff(istart:iend, i)*ediff(istart:iend, i)) - f0*lo_mean(ediff(istart:iend,i))
-
+            bufcv(1, j) = lo_mean(ediff(istart:iend, 1)*ediff(istart:iend, i)) - f1*lo_mean(ediff(istart:iend,i))
+            bufcv(2, j) = lo_mean(ediff(istart:iend, 1)*ediff(istart:iend, i)**2) - f1*lo_mean(ediff(istart:iend,i)**2)
+            ! Including the stress
             do a=1, 3
             do b=1, 3
                 buf_stress(a, b, j) = lo_mean(sdiff(istart:iend, a, b, i))
@@ -301,11 +316,9 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
         ! Third order cumulant
         cumulant(3, i) = lo_mean(buf(3, :))
         cumulant_var(3, i) = sqrt(lo_mean((buf(3, :) - cumulant(3, i))**2))
-
         ! Correction for the heat capacity
         cumcv(1, i) = lo_mean(bufcv(1, :))
         cumcv_var(1, i) = sqrt(lo_mean((bufcv(1, :) - cumcv(1, i))**2))
-
         ! Same for the stress
         if (i .lt. 3) then
         do a=1, 3
@@ -321,31 +334,30 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw)
     cumulant_var = cumulant_var/real(ss%na, r8)
     cumulant(2, :) = 0.5_r8 * cumulant(2, :) * inverse_kbt
     cumulant_var(2, :) = 0.5_r8 * cumulant_var(2, :) * inverse_kbt
+    cumulant(3, :) = cumulant(3, :) * inverse_kbt**2 / 6.0_r8
     cumulant_var(3, :) = cumulant_var(3, :) * inverse_kbt**2 / 6.0_r8
     cumcv = cumcv*inverse_kbt/thermo%temperature/real(ss%na, r8)
     cumcv_var = cumcv_var*inverse_kbt/thermo%temperature/real(ss%na, r8)
 
     ! And we can store everything
-    thermo%clt_ifc2_1(1) = cumulant(1, 3)
-    thermo%clt_ifc2_1(2) = cumulant_var(1, 3)
-    thermo%clt_ifc2_2(1) = cumulant(2, 3)
-    thermo%clt_ifc2_2(2) = cumulant_var(2, 3)
-    thermo%clt_ifc3_1(1) = cumulant(1, 4)
-    thermo%clt_ifc3_1(2) = cumulant_var(1, 4)
-    thermo%clt_ifc3_2(1) = cumulant(2, 4)
-    thermo%clt_ifc3_2(2) = cumulant_var(2, 4)
-    thermo%clt_ifc4_1(1) = cumulant(1, 5)
-    thermo%clt_ifc4_1(2) = cumulant_var(1, 5)
-    thermo%clt_ifc4_2(1) = cumulant(2, 5)
-    thermo%clt_ifc4_2(2) = cumulant_var(2, 5)
-    ! And the cv
-    thermo%cv_ifc2_1(1) = cumcv(1, 3)
-    thermo%cv_ifc2_1(2) = cumcv_var(1, 3)
+    thermo%corr_fe = cumulant
+    thermo%corr_fe_var = cumulant_var
+!   thermo%corr_s = s
+!   thermo%corr_s_var = s_var
+    thermo%corr_cv = cumcv
+    thermo%corr_cv_var = cumcv_var
     ! Stress included
     thermo%stress_pot(:, :) = stress_pot(:, :, 1)
     thermo%stress_potvar(:, :) = stress_potvar(:, :, 1)
     thermo%stress_diff(:, :) = stress_pot(:, :, 2)
     thermo%stress_diffvar(:, :) = stress_potvar(:, :, 2)
+
+    ! And we can deallocate
+    call mem%deallocate(ediff, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(sdiff, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(buf, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(bufcv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call mem%deallocate(buf_stress, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
 end module
