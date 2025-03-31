@@ -146,6 +146,8 @@ refine_structure
 thermal_conductivity
 thermal_conductivity_2023
 anharmonic_free_energy
+extract_forceconstants_disorder
+phonon_dispersion_disorder
 "
 
 # only when we have cgal

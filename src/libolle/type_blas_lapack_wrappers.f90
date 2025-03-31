@@ -1627,4 +1627,25 @@ subroutine lo_dsygvd(a,b,w,itype,jobz,uplo,info)
     endif
 end subroutine
 
+subroutine lo_dposv(a,b,uplo,info)
+    real(flyt), dimension(:, :), intent(inout) :: a
+    real(flyt), dimension(:, :), intent(inout) :: b
+    character(len=1), intent(in), optional :: uplo
+    integer, intent(out), optional :: info
+
+    character(len=1) :: o_uplo
+    integer :: o_info,n,nrhs,lda,ldb,lwork
+
+    if(present(uplo)) then
+        o_uplo = uplo
+    else
+        o_uplo = 'U'
+    endif
+    lda = max(1,size(a,1))
+    ldb = max(1,size(b,1))
+    n = size(a,2)
+    nrhs = size(b,2)
+    call dposv(o_uplo,n,nrhs,a,lda,b,ldb,o_info)
+    if (present(info)) info = o_info
+end subroutine
 end module
