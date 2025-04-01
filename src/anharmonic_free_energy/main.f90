@@ -276,11 +276,12 @@ latdyn4ph: block
         thermo%u4 = (fe4 + opts%temperature * s4)
         thermo%cv4 = cv4
 
-        call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
-        thermo%f4 = thermo%f4 + fe4
-        thermo%s4 = thermo%s4 + s4
-        thermo%u4 = thermo%u4 + (fe4 + opts%temperature * s4)
-        thermo%cv4 = thermo%cv4 + cv4
+        ! TODO set fourthorder, second order cumulant its  own qpoint grid density
+!       call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
+!       thermo%f4 = thermo%f4 + fe4
+!       thermo%s4 = thermo%s4 + s4
+!       thermo%u4 = thermo%u4 + (fe4 + opts%temperature * s4)
+!       thermo%cv4 = thermo%cv4 + cv4
     end if
     call tmr%tock('four-phonon')
 
