@@ -73,7 +73,7 @@ subroutine free_energy_fourthorder(uc, fcf, qp, dr, temperature, df4, s4, cv4, q
 
         prefactor = qp%ip(q1)%integration_weight*qp%ap(q2)%integration_weight/uc%na
         ! pre-transform the matrix element
-        call pretransform_phi4_first(fcf, qp%ap(q1)%r, qp%ap(q2)%r, ptf)
+        call pretransform_phi4_first(fcf, qp%ip(q1)%r, qp%ap(q2)%r, ptf)
 
         do b1=1, dr%n_mode
             om1 = dr%iq(q1)%omega(b1)
