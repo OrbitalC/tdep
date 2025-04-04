@@ -885,10 +885,26 @@ $(OBJECT_PATH)lo_fftgrid_helper.o:\
     $(OBJECT_PATH)lo_randomnumbers.o
 	$(FC) $(FFLAGS) -c lo_fftgrid_helper.f90 -o $@
 
-$(OBJECT_PATH)type_unitcell_disorder_projection.o:
+$(OBJECT_PATH)type_unitcell_disorder_projection.o:\
+    $(OBJECT_PATH)konstanter.o\
+    $(OBJECT_PATH)gottochblandat.o\
+    $(OBJECT_PATH)geometryfunctions.o\
+    $(OBJECT_PATH)mpi_wrappers.o\
+    $(OBJECT_PATH)lo_memtracker.o\
+    $(OBJECT_PATH)type_qpointmesh.o\
+    $(OBJECT_PATH)type_crystalstructure.o
 	$(FC) $(FFLAGS) -c type_unitcell_disorder_projection.f90 $(LIBS) -o $@
 
 $(OBJECT_PATH)type_forceconstant_disorder_secondorder.o:\
+    $(OBJECT_PATH)konstanter.o\
+    $(OBJECT_PATH)gottochblandat.o\
+    $(OBJECT_PATH)mpi_wrappers.o\
+    $(OBJECT_PATH)lo_memtracker.o\
+    $(OBJECT_PATH)hdf5_wrappers.o\
+    $(OBJECT_PATH)type_distancetable.o\
+    $(OBJECT_PATH)type_blas_lapack_wrappers.o\
+    $(OBJECT_PATH)type_qpointmesh.o\
+    $(OBJECT_PATH)type_crystalstructure.o\
     $(OBJECT_PATH)type_unitcell_disorder_projection.o
 	$(FC) $(FFLAGS)  -c type_forceconstant_disorder_secondorder.f90 $(LIBS) -o $@
 

@@ -14,7 +14,7 @@ $(OBJECT_PATH)type_forceconstant_disorder_secondorder_dynamicalmatrix.o
 
 LPATH = -L../../lib $(blaslapackLPATH) $(incLPATHmpi) $(incLPATHhdf)
 IPATH = -I../../inc/libolle -I../../inc/libflap $(blaslapackIPATH) $(incIPATHmpi) $(incIPATHhdf)
-LIBS = -lolle -lflap $(blaslapackLIBS) $(incLIBSmpi) $(incLIBShdf)
+LIBS = ../../lib/libolle.a -lflap $(blaslapackLIBS) $(incLIBSmpi) $(incLIBShdf)
 
 F90 = $(FC) $(LPATH) $(IPATH) $(MODULE_FLAG) $(OBJECT_PATH)
 F90FLAGS = $(OPT) $(MODS) $(LIBS)

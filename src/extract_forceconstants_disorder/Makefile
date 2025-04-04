@@ -11,7 +11,7 @@ $(OBJECT_PATH)fit_helper.o
 
 LPATH = -L../../lib $(blaslapackLPATH) $(incLPATHmpi) $(incLPATHhdf)
 IPATH = -I../../inc/libolle -I../../inc/libflap $(blaslapackIPATH) $(incIPATHmpi) $(incIPATHhdf)
-LIBS = -lolle -lflap $(blaslapackLIBS) $(incLIBSmpi) $(incLIBShdf)
+LIBS = ../../lib/libolle.a -lflap $(blaslapackLIBS) $(incLIBSmpi) $(incLIBShdf)
 
 #OPT = -O0 -fbacktrace -fcheck=all -finit-real=nan -finit-derived
 F90 = $(FC) $(LPATH) $(IPATH) $(MODULE_FLAG) $(OBJECT_PATH) #$(warnings_gcc)
@@ -33,7 +33,6 @@ $(OBJECT_PATH)fit_helper.o
 $(OBJECT_PATH)type_forceconstant_disorder_thirdorder.o:
 	$(F90) $(OPT) $(F90FLAGS) -c type_forceconstant_disorder_thirdorder.f90 $(LIBS) -o $@
 $(OBJECT_PATH)fit_helper.o:\
-	fit_helper.f90\
 	$(OBJECT_PATH)type_forceconstant_disorder_thirdorder.o
 	$(F90) $(OPT) $(F90FLAGS) -c fit_helper.f90 $(LIBS) -o $@
 $(OBJECT_PATH)options.o:
