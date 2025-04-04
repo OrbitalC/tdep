@@ -107,10 +107,10 @@ subroutine free_energy_fourthorder(uc, fcf, qp, dr, temperature, df4, s4, cv4, q
                     f0 = (2.0_r8 * n1 + 1.0_r8) * (2.0_r8 * n2 + 1.0_r8) * psisq * prefactor / 32.0_r8
                     ! The entropy
                     df0 = 2.0_r8 * dn1 * (2.0_r8 * n2 + 1.0_r8) + (2.0_r8 * n1 + 1.0_r8) * 2.0_r8 * dn2
-                    df0 = df0 * psisq * prefactor / 32.0_r8
+                    df0 = df0 / 32.0_r8
                     ddf0 = 2.0_r8 * ddn1 * (2.0_r8 * n2 + 1.0_r8) + 2.0_r8 * ddn2 * (2.0_r8 * n1 + 1.0_r8) + &
                          8.0_r8 * dn1 * dn2
-                    ddf0 = ddf0 * temperature * psisq * prefactor / 32.0_r8
+                    ddf0 = ddf0 * temperature / 32.0_r8
                 else
                     ! Much simpler in the classical case
                     ! Free energy
@@ -123,7 +123,7 @@ subroutine free_energy_fourthorder(uc, fcf, qp, dr, temperature, df4, s4, cv4, q
                 ! And we accumulate
                 df4 = df4 + f0 * psisq * prefactor
                 s4 = s4 - df0 * psisq * prefactor
-                cv4 = cv4 - df0 * psisq * prefactor
+                cv4 = cv4 - ddf0 * psisq * prefactor
             end do
         end do
     end do
