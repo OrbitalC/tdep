@@ -285,7 +285,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
     cumulant_var = 0.0_r8
     stress_pot = 0.0_r8
     stress_potvar = 0.0_r8
-    blocksize = floor((real(sim%nt, r8)) / real(nblocks))
+    blocksize = floor((real(sim%nt, r8)) / real(nblocks, r8))
     do i=1, 4
         ! First, let's compute properties for each blocks
         do j=1, nblocks

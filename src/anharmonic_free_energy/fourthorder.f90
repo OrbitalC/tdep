@@ -329,8 +329,8 @@ subroutine free_energy_fourthorder_secondorder(uc, fcf, qp, dr, temperature, fe4
                             sig = sqrt(sig1 + sig2 + sig3 + sig4)
 
                             f1 = (np1*np2*np3*np4 - n(1)*n(2)*n(3)*n(4)) / real(1.0_r8/(om1+om2+om3+om4+lo_imag*sig), r8)
-                            f2 = 4.0_r8*(n(1)*np2*np3*np4 - np1*n(2)*n(3)*n(4)) * real(1.0/(-om1+om2+om3+om4 + lo_imag*sig))
-                            f3 = 3.0_r8*(n(1)*n(2)*(n(3)+n(4)+1.0_r8) - n(3)*n(4)*(n(1)+n(2)+1.0_r8))*real(1.0/(om1+om2-om3-om4 + lo_imag*sig))
+                            f2 = 4.0_r8*(n(1)*np2*np3*np4 - np1*n(2)*n(3)*n(4)) * real(1.0/(-om1+om2+om3+om4 + lo_imag*sig), r8)
+                            f3 = 3.0_r8*(n(1)*n(2)*(n(3)+n(4)+1.0_r8) - n(3)*n(4)*(n(1)+n(2)+1.0_r8))*real(1.0/(om1+om2-om3-om4 + lo_imag*sig), r8)
 
                             f0 = (f1 + f2 + f3) / 768.0_r8
                         else
