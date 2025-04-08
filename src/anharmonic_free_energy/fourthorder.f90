@@ -64,8 +64,10 @@ subroutine free_energy_fourthorder(uc, fcf, qp, dr, temperature, df4, s4, cv4, q
     t0 = walltime()
 
     df4 = 0.0_r8
+    s4 = 0.0_r8
     cv4 = 0.0_r8
 
+    ctr = 0
     do q1=1, qp%n_irr_point
     do q2=1, qp%n_full_point
         ctr = ctr + 1
@@ -147,7 +149,6 @@ subroutine free_energy_fourthorder(uc, fcf, qp, dr, temperature, df4, s4, cv4, q
     call mem%deallocate(evp3, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv1, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     call mem%deallocate(egv2, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-
 end subroutine
 
 !> Calculate the fourth order free energy
@@ -405,7 +406,7 @@ subroutine pretransform_phi4_first(fcf, q1, q2, ptf)
         rv4 = fcf%atom(a1)%quartet(q)%lv4
 
         iqr = -dot_product(q1, rv2) + dot_product(q2, rv3) - dot_product(q2, rv4)
-        iqr = -iqr*lo_twopi
+        iqr = iqr*lo_twopi
         expiqr = cmplx(cos(iqr), sin(iqr), r8)
         do l = 1, 3
         do k = 1, 3
