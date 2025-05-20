@@ -1,6 +1,7 @@
 #include "precompilerdefinitions"
 module lo_thermodynamic_helpers
 use konstanter, only: r8, lo_huge
+use gottochblandat, only: lo_chop
 use type_crystalstructure, only: lo_crystalstructure
 use type_symmetryoperation, only: lo_operate_on_secondorder_tensor
 
@@ -10,31 +11,27 @@ public :: lo_thermodynamics
 public :: lo_symmetrize_stress
 public :: lo_full_to_voigt
 
+type lo_thermodynamic_contribution
+    ! The different contributions. First dimension is the result, second one the uncertainty
+    real(r8), dimension(2) :: F=0.0_r8
+    real(r8), dimension(2) :: U=0.0_r8
+    real(r8), dimension(2) :: S=0.0_r8
+    real(r8), dimension(2) :: Cv=0.0_r8
+    real(r8), dimension(3, 3, 2) :: stress=0.0_r8
+end type
+
 !> A container for all thermodynamic results
 type lo_thermodynamics
     !> The temperature at which everything is evaluated
     real(r8) :: temperature=-lo_huge
     !> The volume
     real(r8) :: volume=-lo_huge
-    !> The free energies
-    real(r8) :: f0, f3, f4
-    !> The internal energy
-    real(r8) :: u0, u3, u4
-    !> The entropy
-    real(r8) :: s0, s3, s4
-    !> The heat capacity at constant volume
-    real(r8) :: cv0, cv3, cv4
-    !> The heat capacity at constant pressure
-    real(r8) :: cp0, cp3, cp4
-    !> The cumulant corrections, first dimension is IFC, second is cumulant order
-    real(r8), dimension(3, 4) :: corr_fe=0.0_r8, corr_s=0.0_r8, corr_u=0.0_r8, corr_cv=0.0_r8
-    !> The uncertainty for the cumulant corrections
-    real(r8), dimension(3, 4) :: corr_fe_var=0.0_r8, corr_s_var=0.0_r8, corr_u_var=0.0_r8, corr_cv_var=0.0_r8
-    !> The pressure
-    real(r8) :: p=-lo_huge
-    !> The stress tensor
-    real(r8), dimension(3, 3) :: stress_pot, stress_kin, stress_potvar
-    real(r8), dimension(3, 3) :: stress_3ph, stress_diff, stress_diffvar
+    ! The things to hold results
+    type(lo_thermodynamic_contribution) :: harmonic
+    type(lo_thermodynamic_contribution) :: first_order
+    type(lo_thermodynamic_contribution) :: second_order
+    type(lo_thermodynamic_contribution) :: threephonon
+    type(lo_thermodynamic_contribution) :: fourphonon
     !> The thermal expansion
     real(r8), dimension(3, 3) :: alpha
 end type
@@ -55,6 +52,7 @@ subroutine lo_symmetrize_stress(m, uc)
         tmp = tmp + lo_operate_on_secondorder_tensor(uc%sym%op(iop), m)
     end do
     m = tmp / real(uc%sym%n, r8)
+    m = lo_chop(m, sum(abs(m))*1e-6_r8)
 end subroutine
 
 ! Go from full 3x3 real space to 6 voigt notation

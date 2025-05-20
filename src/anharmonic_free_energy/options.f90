@@ -108,11 +108,15 @@ subroutine parse(opts)
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--nblocks', val=opts%nblocks, error=lo_status); errctr = errctr + lo_status
 
-    ! If we have fourthorder we should also have thirdorder
-!   if (opts%fourthorder) opts%thirdorder = .true.
-
     if (errctr .ne. 0) call lo_stop_gracefully(['Failed parsing the command line options'], lo_exitcode_baddim)
 
+    ! If we have MD data, makes no sense to use the high order correction
+    if (.not. opts%stochastic .and. (opts%thirdorder .or. opts%fourthorder)) then
+        write(*, *) 'Makes no sense to use higher order IFC if the configurations are not from a stochastic sampling'
+        stop
+    end if
+
+    ! We have to enable thirdorder to use the qg3ph flag
     if (maxval(opts%qg3ph) .gt. 0 .and. .not. opts%thirdorder) then
         write(*, *) 'You have to enable thirdorder to use a three-phonon q-grid, stopping calculation.'
         stop
@@ -121,6 +125,7 @@ subroutine parse(opts)
         opts%qg3ph = opts%qgrid
     end if
 
+    ! We have to enable fourthorder to use the qg4ph flag
     if (maxval(opts%qg4ph) .gt. 0 .and. .not. opts%fourthorder) then
         write(*, *) 'You have to enable fourthorder to use a four-phonon q-grid, stopping calculation.'
         stop
@@ -129,7 +134,6 @@ subroutine parse(opts)
         write(*, *) opts%qg4ph
         opts%qg4ph = opts%qgrid
     end if
-
 end subroutine
 
 end module
