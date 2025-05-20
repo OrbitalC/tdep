@@ -2,7 +2,7 @@ program anharmonic_free_energy
 !!{!src/anharmonic_free_energy/manual.md!}
 use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, &
                       lo_tol, lo_status
-use gottochblandat, only: open_file, walltime, tochar, lo_does_file_exist, open_file
+use gottochblandat, only: open_file, walltime, tochar, lo_does_file_exist, open_file, lo_trace
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use lo_timetracker, only: lo_timer
@@ -53,17 +53,20 @@ init: block
     call tmr%start()
 
     if (mw%talk) then
+        write(*, *) 'ANHARMONIC FREE ENERGY'
         write(*, *) 'Recap of the parameters governing the calculation'
         write(*, *) ''
-        write (*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
-        write (*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
-        write (*, '(1X,A40,L3)') 'Stochastic sampling                     ', opts%stochastic
-        write (*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
-        write (*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
-        write (*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
+        write(*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
+        write(*, '(1X,A40,I4)') 'Number of blocks                        ', opts%nblocks
+        write(*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
+        write(*, '(1X,A40,L3)') 'Stochastic sampling                     ', opts%stochastic
+        write(*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
+        write(*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
+        write(*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
         write(*, *) ''
     end if
 
+    if (mw%talk) write(*, *) 'INITIALIZATION'
     if (mw%talk) write(*, *) '... reading input files'
     ! Read structure
     call uc%readfromfile('infile.ucposcar', verbosity=opts%verbosity)
@@ -108,7 +111,8 @@ latdyn: block
     end if
 
     if (mw%talk) write(*, *) '... generating q-mesh'
-    call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=.true., headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+    call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=.true., &
+                           headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
     if (mw%talk) write(*, *) '... generating harmonic dispersion'
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
 
@@ -149,10 +153,12 @@ latdyn: block
     if (opts%thirdorder) then
         if (mw%talk) write(*, *) '... computing third order contribution to elastic properties'
 
-        call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), thermo%alpha, opts%quantum, mw, mem)
+        call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), &
+                                thermo%alpha, opts%quantum, mw, mem)
         ! Now we symmetrize
         call lo_symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
         call lo_symmetrize_stress(thermo%alpha, uc)
+        if (opts%stochastic) thermo%first_order%stress = thermo%threephonon%stress
     end if
     call tmr%tock('harmonic properties')
 end block latdyn
@@ -169,7 +175,7 @@ calcepot: block
     if (lo_does_file_exist('infile.sim.hdf5') .or. lo_does_file_exist('infile.meta')) then
     havesim = .true.
 
-    if (mw%talk) write(*, *) 'Computing energy differences'
+    if (mw%talk) write(*, *) 'REAL-SPACE ENERGY CORRECTIONS'
 
     if (mw%talk) write(*, *) '... reading simulation files'
     ! Read the supercell
@@ -204,7 +210,7 @@ calcepot: block
     end if
 
     call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, &
-        opts%thirdorder, opts%fourthorder, opts%thirdorder, mw, mem)
+        opts%stochastic, opts%thirdorder, opts%fourthorder, mw, mem)
     ! We also need to symmetrize the stress tensor
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 1), uc)
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 2), uc)
@@ -237,7 +243,8 @@ latdyn3ph: block
         end if
 
         if (mw%talk) write(*, *) '... generating q-mesh'
-        call lo_generate_qmesh(qp, uc, opts%qg3ph, 'fft', timereversal=.true., headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+        call lo_generate_qmesh(qp, uc, opts%qg3ph, 'fft', timereversal=.true., &
+                               headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
         if (mw%talk) write(*, *) '... generating harmonic dispersion'
         call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
 
@@ -274,7 +281,8 @@ latdyn4ph: block
         end if
 
         if (mw%talk) write(*, *) '... generating q-mesh'
-        call lo_generate_qmesh(qp, uc, opts%qg4ph, 'fft', timereversal=.true., headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+        call lo_generate_qmesh(qp, uc, opts%qg4ph, 'fft', timereversal=.true., &
+                               headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
         if (mw%talk) write(*, *) '... generating harmonic dispersion'
         call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
 
@@ -296,7 +304,6 @@ latdyn4ph: block
 !       call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
     end if
     call tmr%tock('four-phonon')
-
 end block latdyn4ph
 
 summary: block
@@ -304,13 +311,16 @@ summary: block
     real(r8) :: f_unit, e_unit, s_unit, c_unit, p_unit
     !> Buffer for the stress tensor
     real(r8), dimension(3, 3, 2) :: sigma
+    !> Some buffer to print the results
+    real(r8), dimension(4) :: buf, var
     !> The pressure
     real(r8), dimension(2) :: pressure
+    !> To have a pretty logfile
     character(len=1000) :: opfc, opff, opfs
     !> A tolerance to clean-up stress results
     real(r8) :: stol
+    !> Some integers
     integer :: i, u
-    real(r8), dimension(4) :: buf, var
 
     f_unit = lo_Hartree_to_eV
     e_unit = lo_Hartree_to_eV
@@ -321,10 +331,8 @@ summary: block
     ! Get the stress tensor
     sigma = (thermo%harmonic%stress + thermo%first_order%stress + thermo%second_order%stress) * p_unit
     ! And the pressure
-    pressure = 0.0_r8
-    do i=1, 3
-        pressure = pressure + sigma(i, i, :) / 3.0_r8
-    end do
+    pressure(1) = lo_trace(sigma(:, :, 1)) / 3.0_r8
+    pressure(2) = lo_trace(sigma(:, :, 2)) / 3.0_r8
 
     if (mw%talk) then
         u = open_file('out', 'outfile.anharmonic_free_energy')

@@ -1,7 +1,8 @@
 module epot
 !! Deal with many kinds of potential energy differences
 use konstanter, only: r8, lo_kb_hartree
-use gottochblandat, only: tochar, walltime, lo_mean, lo_stddev
+use gottochblandat, only: tochar, walltime, lo_mean, lo_stddev, &
+                          lo_trueNtimes, lo_progressbar_init, lo_progressbar
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -10,6 +11,8 @@ use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_mdsim, only: lo_mdsim
 
+use konstanter, only: lo_Hartree_to_eV
+
 use lo_thermodynamic_helpers, only: lo_thermodynamics, lo_symmetrize_stress
 implicit none
 
@@ -17,11 +20,13 @@ private
 public :: lo_energy_differences
 
 type lo_energy_differences
-    ! forceconstants needed for evaluation
+    !> forceconstants needed for evaluation
     type(lo_forceconstant_secondorder) :: fc2
     type(lo_forceconstant_thirdorder) :: fc3
     type(lo_forceconstant_fourthorder) :: fc4
+    !> Holder for long range part of the force constants
     real(r8), dimension(:, :, :, :), allocatable :: fcp
+    !> Is it a polar material ?
     logical :: polar = .false.
 
 contains
@@ -45,10 +50,15 @@ subroutine energies_and_forces(pot, ss, u, e2, e3, e4, ep, s3)
     !> stress
     real(r8), dimension(3, 3), intent(out) :: s3
 
+    !> Fourth order IFC
     real(r8), dimension(3, 3, 3, 3) :: m4
+    !> Third order IFC
     real(r8), dimension(3, 3, 3) :: m3
+    !> Second order IFC
     real(r8), dimension(3, 3) :: m2
+    !> Forces and displacements
     real(r8), dimension(3) :: v0, u1, u2, u3, u4
+    !> Some integers
     integer :: a1, a2, a3, a4, i1, i2, i3, i4, i5, i
 
     e2 = 0.0_r8
@@ -200,7 +210,7 @@ subroutine setup_potential_energy_differences(pot, uc, ss, fc2, fc3, fc4, mw, ve
     end if
 end subroutine
 
-
+!> Compute the thermodynamic corrections from the data
 subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, thirdorder, fourthorder, mw, mem)
     !> container for potential energy differences
     class(lo_energy_differences), intent(in) :: pot
@@ -240,11 +250,24 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
         real(r8), dimension(3, 3) :: s3
         !> The individual energy contributions
         real(r8) :: e2, e3, e4, ep
+        !> The time
+        real(r8) :: t0
         !> Some integers
-        integer :: i
+        integer :: i, j, ntot
 
+        ! For a nice progressbar, we count the steps
+        ntot = 0
         do i=1, sim%nt
             if (mod(i, mw%n) .ne. mw%r) cycle
+            ntot = ntot + 1
+        end do
+
+        t0 = walltime()
+        if (mw%talk) call lo_progressbar_init()
+        j = 0
+        do i=1, sim%nt
+            if (mod(i, mw%n) .ne. mw%r) cycle
+            j = j + 1
             call pot%energies_and_forces(ss, sim%u(:, :, i), e2, e3, e4, ep, s3)
             ! We store the energy differences
             ediff(i, 1) = sim%stat%potential_energy(i)
@@ -255,14 +278,17 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
             ! But also the stress differences
             sdiff(i, :, :, 1) = sim%stat%stress(:, :, i)
             sdiff(i, :, :, 2) = sim%stat%stress(:, :, i) - s3
+            if (mw%talk .and. lo_trueNtimes(i, 127, ntot)) then
+                call lo_progressbar(' ... computing energy from IFC', j, ntot, walltime() - t0)
+            end if
         end do
+        if (mw%talk) then
+            call lo_progressbar(' ... computing energy from IFC', ntot, ntot, walltime() - t0)
+        end if
         ! And reduce everything
         call mw%allreduce('sum', ediff)
         call mw%allreduce('sum', sdiff)
-
-        if (mw%talk) write(*, *) '... computing energy differences'
     end block energy_computation
-
 
     averaging: block
         !> Buffer for the stress tensor
@@ -278,6 +304,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
         !> Some integers
         integer :: i, j, a, b, istart, iend
 
+        if (mw%talk) write(*, *) '... computing cumulant corrections'
         !> Let's get the inverse temperature
         if (thermo%temperature .gt. 1E-5_r8) then
             inverse_kbt = 1.0_r8/lo_kb_Hartree/thermo%temperature
@@ -285,16 +312,15 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
             inverse_kbt = 0.0_r8
         end if
 
-        call mem%allocate(buf, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        call mem%allocate(bufcv, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        call mem%allocate(buf_stress, [3, 3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        buf = 0.0_r8
-        bufcv = 0.0_r8
-        buf_stress = 0.0_r8
-
         ! We need the length of each block for the block averaging
         blocksize = real(sim%nt, r8) / real(nblocks, r8)
         if (stochastic) then
+            call mem%allocate(buf, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            call mem%allocate(bufcv, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            call mem%allocate(buf_stress, [3, 3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            buf = 0.0_r8
+            bufcv = 0.0_r8
+            buf_stress = 0.0_r8
             ! For the stochastic, what we compute depends on the order included
             do j=1, nblocks
                 ! Index for the block
@@ -303,12 +329,17 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
                 ! Now we compute the average for each block
                 if (fourthorder) then
                     f0 = lo_mean(ediff(istart:iend, 4))
+                    buf(1, j) = f0
+                    buf(2, j) = lo_mean((ediff(istart:iend, 3) - f0)**2)
                 else if (thirdorder) then
                     f0 = lo_mean(ediff(istart:iend, 3))
+                    buf(1, j) = f0
+                    buf(2, j) = lo_mean((ediff(istart:iend, 3) - f0)**2)
                 else
                     f0 = lo_mean(ediff(istart:iend, 2))
+                    buf(1, j) = f0
+                    buf(2, j) = lo_mean((ediff(istart:iend, 2) - f0)**2)
                 end if
-                buf(1, j) = f0
 
                 ! And the stress
                 if (fourthorder .or. thirdorder) then
@@ -330,7 +361,24 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
             U0(2) = sqrt(lo_mean((buf(1, :) - U0(1))**2))
             U0 = U0 / sim%na
             ! Then the
+
+            ! And the stress
+            do a=1, 3
+            do b=1, 3
+                stress(a, b, 1) = lo_mean(buf_stress(a, b, :))
+                stress(a, b, 2) = sqrt(lo_mean((buf_stress(a, b, :) - stress(a, b, 1))**2))
+            end do
+            end do
+
+            thermo%first_order%F = U0
+            thermo%first_order%stress = thermo%first_order%stress + stress
         else
+            call mem%allocate(buf, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            call mem%allocate(bufcv, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            call mem%allocate(buf_stress, [3, 3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+            buf = 0.0_r8
+            bufcv = 0.0_r8
+            buf_stress = 0.0_r8
             do j=1, nblocks
                 ! Index for the block
                 istart = ceiling(blocksize*(j-1) + 1)
