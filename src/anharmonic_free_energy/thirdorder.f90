@@ -13,6 +13,7 @@ use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use type_symmetryoperation, only: lo_operate_on_secondorder_tensor
 use lo_timetracker, only: lo_timer
+use lo_fftgrid_helper, only: fft_third_grid_index
 
 use lo_thermodynamic_helpers, only: lo_full_to_voigt
 
@@ -152,7 +153,6 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
     call mem%deallocate(egv, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
 end subroutine
 
-
 !> Calculate the third order free energy
 subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, quantum, mw, mem)
     !> crystal structure
@@ -220,6 +220,7 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
         end do
     end do
 
+    if (mw%talk) call lo_progressbar_init()
     do q1=1, qp%n_irr_point
     do q2=1, qp%n_full_point
         ctr = ctr + 1
@@ -390,68 +391,4 @@ subroutine pretransform_phi3(fct, q2, q3, ptf)
     end do
     end do
 end subroutine
-
-!> returns the index on the grid that gives q3=-q1-q2
-pure function fft_third_grid_index(i1, i2, dims) result(i3)
-    !> index to q1
-    integer, intent(in) :: i1
-    !> index to q2
-    integer, intent(in) :: i2
-    !> dimensions of the grid
-    integer, dimension(3), intent(in) :: dims
-    !> index to q3
-    integer :: i3
-
-    integer, dimension(3) :: gi1, gi2, gi3
-    integer :: l, k
-
-    ! Convert triplet to singlet
-    gi1 = singlet_to_triplet(i1, dims(2), dims(3))
-    gi2 = singlet_to_triplet(i2, dims(2), dims(3))
-    do l = 1, 3
-        gi3(l) = 3 - gi1(l) - gi2(l)
-    end do
-    do k = 1, 3
-    do l = 1, 3
-        if (gi3(l) .lt. 1) gi3(l) = gi3(l) + dims(l)
-        if (gi3(l) .gt. dims(l)) gi3(l) = gi3(l) - dims(l)
-    end do
-    end do
-    ! convert it back to a singlet
-    i3 = triplet_to_singlet(gi3, dims(2), dims(3))
-
-contains
-    !> convert a linear index to a triplet
-    pure function singlet_to_triplet(l, ny, nz) result(gi)
-        !> linear index
-        integer, intent(in) :: l
-        !> second dimension
-        integer, intent(in) :: ny
-        !> third dimension
-        integer, intent(in) :: nz
-        !> grid-index
-        integer, dimension(3) :: gi
-
-        integer :: i, j, k
-
-        k = mod(l, nz)
-        if (k .eq. 0) k = nz
-        j = mod((l - k)/nz, ny) + 1
-        i = (l - k - (j - 1)*nz)/(nz*ny) + 1
-        gi = [i, j, k]
-    end function
-    !> convert a triplet index to a singlet
-    pure function triplet_to_singlet(gi, ny, nz) result(l)
-        !> grid-index
-        integer, dimension(3), intent(in) :: gi
-        !> second dimension
-        integer, intent(in) :: ny
-        !> third dimension
-        integer, intent(in) :: nz
-        !> linear index
-        integer :: l
-
-        l = (gi(1) - 1)*ny*nz + (gi(2) - 1)*nz + gi(3)
-    end function
-end function
 end module

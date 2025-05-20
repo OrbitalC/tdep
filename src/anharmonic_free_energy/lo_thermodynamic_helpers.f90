@@ -24,8 +24,6 @@ end type
 type lo_thermodynamics
     !> The temperature at which everything is evaluated
     real(r8) :: temperature=-lo_huge
-    !> The volume
-    real(r8) :: volume=-lo_huge
     ! The things to hold results
     type(lo_thermodynamic_contribution) :: harmonic
     type(lo_thermodynamic_contribution) :: first_order
