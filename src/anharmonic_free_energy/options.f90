@@ -1,7 +1,6 @@
 #include "precompilerdefinitions"
 module options
-use konstanter, only: r8, lo_author, lo_version, lo_licence, lo_tiny, lo_status, lo_exitcode_baddim, lo_exitcode_param, &
-                      lo_frequency_Hartree_to_THz, lo_frequency_Hartree_to_icm, lo_frequency_Hartree_to_meV
+use konstanter, only: r8, lo_author, lo_version, lo_licence, lo_status, lo_exitcode_baddim
 use gottochblandat, only: lo_stop_gracefully
 use flap, only: command_line_interface
 implicit none

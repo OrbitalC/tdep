@@ -1,10 +1,8 @@
 program anharmonic_free_energy
 !!{!src/anharmonic_free_energy/manual.md!}
-use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, lo_tol, lo_status, lo_freqtol, &
-lo_twopi, lo_time_au_to_fs
-use gottochblandat, only: open_file, walltime, lo_linspace, lo_progressbar_init, lo_progressbar, tochar, &
-                          lo_does_file_exist, lo_mean, lo_stddev, lo_harmonic_oscillator_internal_energy, lo_chop, &
-                          lo_invert_real_matrix, lo_harmonic_oscillator_cv, tochar
+use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, &
+                      lo_tol, lo_status
+use gottochblandat, only: open_file, walltime, tochar, lo_does_file_exist, open_file
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use lo_timetracker, only: lo_timer
@@ -13,10 +11,9 @@ use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
 use type_mdsim, only: lo_mdsim
-use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh, lo_read_qmesh_from_file, lo_fft_mesh
+use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
 use lo_phonon_bandstructure_on_path, only: lo_phonon_bandstructure
-use type_phonon_dos, only: lo_phonon_dos
 
 use options, only: lo_opts
 use thirdorder, only: free_energy_thirdorder, elastic_thirdorder
@@ -295,12 +292,8 @@ latdyn4ph: block
             thermo%first_order%Cv(1) = thermo%first_order%Cv(1) + thermo%fourphonon%Cv(1)
         end if
 
-        ! TODO set fourthorder, second order cumulant its  own qpoint grid density
+        ! TODO set fourthorder, second order cumulant its  own qpoint grid density, too expensive otherwise
 !       call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
-!       thermo%f4 = thermo%f4 + fe4
-!       thermo%s4 = thermo%s4 + s4
-!       thermo%u4 = thermo%u4 + (fe4 + opts%temperature * s4)
-!       thermo%cv4 = thermo%cv4 + cv4
     end if
     call tmr%tock('four-phonon')
 
@@ -316,7 +309,7 @@ summary: block
     character(len=1000) :: opfc, opff, opfs
     !> A tolerance to clean-up stress results
     real(r8) :: stol
-    integer :: i
+    integer :: i, u
     real(r8), dimension(4) :: buf, var
 
     f_unit = lo_Hartree_to_eV
@@ -334,6 +327,9 @@ summary: block
     end do
 
     if (mw%talk) then
+        u = open_file('out', 'outfile.anharmonic_free_energy')
+        write(u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
+
         opfc = '(4(1X,A24))'
         opff = '(4(1X,F24.12))'
         opfs = '(3(1X,F24.12))'
@@ -349,11 +345,17 @@ summary: block
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) buf
         write(*, opff) var
+        write(u, *) '# Effective harmonic contribution: F = F_harm'
+        write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(u, opff) buf
+        write(u, opff) var
 
+        ! Update the values
         buf(1) = buf(1) + thermo%first_order%F(1) * f_unit
         buf(2) = buf(2) + thermo%first_order%U(1) * e_unit
         buf(3) = buf(3) + thermo%first_order%S(1) * s_unit
         buf(4) = buf(4) + thermo%first_order%Cv(1) * c_unit
+        ! And the uncertainty
         var(1) = var(1) + thermo%first_order%F(2) * f_unit
         var(2) = var(2) + thermo%first_order%U(2) * e_unit
         var(3) = var(3) + thermo%first_order%S(2) * s_unit
@@ -363,11 +365,17 @@ summary: block
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) buf
         write(*, opff) var
+        write(u, *) '# Gibbs-Bogoliubov approximation: F = F_harm + <V-V_harm>'
+        write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(u, opff) buf
+        write(u, opff) var
 
+        ! Update the values
         buf(1) = buf(1) + thermo%second_order%F(1) * f_unit
         buf(2) = buf(2) + thermo%second_order%U(1) * e_unit
         buf(3) = buf(3) + thermo%second_order%S(1) * s_unit
         buf(4) = buf(4) + thermo%second_order%Cv(1) * c_unit
+        ! And the uncertainty
         var(1) = var(1) + thermo%second_order%F(2) * f_unit
         var(2) = var(2) + thermo%second_order%U(2) * e_unit
         var(3) = var(3) + thermo%second_order%S(2) * s_unit
@@ -377,6 +385,10 @@ summary: block
         write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(*, opff) buf
         write(*, opff) var
+        write(u, *) '# Second order cumulant approximation to the free energy'
+        write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(u, opff) buf
+        write(u, opff) var
 
         write(*, *) ''
         write(*, *) 'Elastic properties'
@@ -390,6 +402,7 @@ summary: block
         do i=1, 3
             write(*, opfs) sigma(i, :, 2)
         end do
+        close(u)
     end if
 
     call tmr%stop()
