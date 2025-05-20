@@ -425,17 +425,18 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
 
 
     averaging: block
+        !> Buffer for the stress tensor
+        real(r8), dimension(3, 3, 2) :: stress
+        !> Buffer for the thermodynamic quantities
+        real(r8), dimension(2) :: F, S, Cv, U0
         !> Little buffers for the blocks
         real(r8), dimension(:, :), allocatable :: buf, bufcv
         !> A little buffer for the stress
         real(r8), dimension(:, :, :), allocatable :: buf_stress
         !> Some buffers: energy, inverse kbt blabla
-        real(r8) :: inverse_kbt, f0, f1, f2
+        real(r8) :: inverse_kbt, f0, f1, f2, blocksize
         !> Some integers
-        integer :: i, j, a, b, blocksize, istart, iend
-
-        real(r8), dimension(3, 3, 2) :: stress
-        real(r8), dimension(2) :: F, S, Cv, U0
+        integer :: i, j, a, b, istart, iend
 
         !> Let's get the inverse temperature
         if (thermo%temperature .gt. 1E-5_r8) then
@@ -444,21 +445,21 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
             inverse_kbt = 0.0_r8
         end if
 
-        call mem%allocate(buf, [3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-        call mem%allocate(bufcv, [3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(buf, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(bufcv, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         call mem%allocate(buf_stress, [3, 3, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
         buf = 0.0_r8
         bufcv = 0.0_r8
         buf_stress = 0.0_r8
 
         ! We need the length of each block for the block averaging
-        blocksize = floor((real(sim%nt, r8)) / real(nblocks, r8))
+        blocksize = real(sim%nt, r8) / real(nblocks, r8)
         if (stochastic) then
             ! For the stochastic, what we compute depends on the order included
             do j=1, nblocks
                 ! Index for the block
-                istart = blocksize*j
-                iend = min(blocksize*(j+1), sim%nt)
+                istart = ceiling(blocksize*(j-1) + 1)
+                iend = min(ceiling(blocksize*j), sim%nt)
                 ! Now we compute the average for each block
                 if (fourthorder) then
                     f0 = lo_mean(ediff(istart:iend, 4))
@@ -492,8 +493,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
         else
             do j=1, nblocks
                 ! Index for the block
-                istart = blocksize*j
-                iend = min(blocksize*(j+1), sim%nt)
+                istart = ceiling(blocksize*(j-1) + 1)
+                iend = min(ceiling(blocksize*j), sim%nt)
                 ! Now we compute the average for each block
                 ! This is to get the U0
                 f0 = lo_mean(ediff(istart:iend, 2))
@@ -535,7 +536,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, t
 
             ! And we store the results
             thermo%first_order%F = U0
-            thermo%second_order%F = -thermo%temperature * S
+            thermo%second_order%F(1) = -thermo%temperature * S(1)
+            thermo%second_order%F(2) = thermo%temperature * S(2)
             thermo%first_order%U = U0
             thermo%second_order%S = S
             thermo%second_order%Cv = Cv
