@@ -206,7 +206,8 @@ calcepot: block
         write(*, *)
     end if
 
-    call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, opts%stochastic, mw, mem)
+    call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, &
+        opts%thirdorder, opts%fourthorder, opts%thirdorder, mw, mem)
     ! We also need to symmetrize the stress tensor
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 1), uc)
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 2), uc)
@@ -244,10 +245,18 @@ latdyn3ph: block
         call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
 
         call free_energy_thirdorder(uc, fct, qp, dr, opts%temperature, fe3, s3, cv3, opts%quantum, mw, mem)
-        thermo%threephonon%F = fe3
-        thermo%threephonon%S = s3
-        thermo%threephonon%U = (fe3 + opts%temperature * s3)
-        thermo%threephonon%Cv = cv3
+        thermo%threephonon%F(1) = fe3
+        thermo%threephonon%S(1) = s3
+        thermo%threephonon%U(1) = (fe3 + opts%temperature * s3)
+        thermo%threephonon%Cv(1) = cv3
+        ! If we are in the stochastic mode, we have to add it to the result
+        ! It's a second order correction
+        if (opts%stochastic) then
+            thermo%second_order%F(1) = thermo%second_order%F(1) +thermo%threephonon%F(1)
+            thermo%second_order%S(1) = thermo%second_order%S(1) +thermo%threephonon%S(1)
+            thermo%second_order%U(1) = thermo%second_order%U(1) +thermo%threephonon%U(1)
+            thermo%second_order%Cv(1) = thermo%second_order%Cv(1) + thermo%threephonon%Cv(1)
+        end if
     end if
     call tmr%tock('three-phonon')
 
@@ -277,6 +286,14 @@ latdyn4ph: block
         thermo%fourphonon%S = s4
         thermo%fourphonon%U = (fe4 + opts%temperature * s4)
         thermo%fourphonon%Cv = cv4
+        ! If we are in the stochastic mode, we have to add it to the result
+        ! It's a first order correction
+        if (opts%stochastic) then
+            thermo%first_order%F(1) = thermo%first_order%F(1) + thermo%fourphonon%F(1)
+            thermo%first_order%U(1) = thermo%first_order%U(1) + thermo%fourphonon%U(1)
+            thermo%first_order%S(1) = thermo%first_order%S(1) + thermo%fourphonon%S(1)
+            thermo%first_order%Cv(1) = thermo%first_order%Cv(1) + thermo%fourphonon%Cv(1)
+        end if
 
         ! TODO set fourthorder, second order cumulant its  own qpoint grid density
 !       call free_energy_fourthorder_secondorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)

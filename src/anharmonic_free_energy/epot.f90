@@ -361,7 +361,7 @@ end subroutine
 !   end subroutine
 
 
-subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, mw, mem)
+subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, thirdorder, fourthorder, mw, mem)
     !> container for potential energy differences
     class(lo_energy_differences), intent(in) :: pot
     !> The supercell
@@ -374,6 +374,10 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, m
     integer, intent(in) :: nblocks
     !> Are we within a stochastic sampling approach ?
     logical, intent(in) :: stochastic
+    !> Are we using thirdorder ?
+    logical, intent(in) :: thirdorder
+    !> Are we using fourthorder ?
+    logical, intent(in) :: fourthorder
     !> MPI
     type(lo_mpi_helper), intent(inout) :: mw
     !> memory tracker
@@ -450,6 +454,41 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, stochastic, m
         ! We need the length of each block for the block averaging
         blocksize = floor((real(sim%nt, r8)) / real(nblocks, r8))
         if (stochastic) then
+            ! For the stochastic, what we compute depends on the order included
+            do j=1, nblocks
+                ! Index for the block
+                istart = blocksize*j
+                iend = min(blocksize*(j+1), sim%nt)
+                ! Now we compute the average for each block
+                if (fourthorder) then
+                    f0 = lo_mean(ediff(istart:iend, 4))
+                else if (thirdorder) then
+                    f0 = lo_mean(ediff(istart:iend, 3))
+                else
+                    f0 = lo_mean(ediff(istart:iend, 2))
+                end if
+                buf(1, j) = f0
+
+                ! And the stress
+                if (fourthorder .or. thirdorder) then
+                    do a=1, 3
+                    do b=1, 3
+                        buf_stress(a, b, j) = lo_mean(sdiff(istart:iend, a, b, 2))
+                    end do
+                    end do
+                else
+                    do a=1, 3
+                    do b=1, 3
+                        buf_stress(a, b, j) = lo_mean(sdiff(istart:iend, a, b, 1))
+                    end do
+                    end do
+                end if
+            end do
+            ! First we get the U0 term
+            U0(1) = lo_mean(buf(1, :))
+            U0(2) = sqrt(lo_mean((buf(1, :) - U0(1))**2))
+            U0 = U0 / sim%na
+            ! Then the
         else
             do j=1, nblocks
                 ! Index for the block
