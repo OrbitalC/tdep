@@ -29,6 +29,7 @@ type(lo_forceconstant_secondorder) :: fc
 type(lo_forceconstant_thirdorder) :: fct
 type(lo_forceconstant_fourthorder) :: fcf
 type(lo_phonon_dispersions) :: dr
+type(lo_phonon_dos) :: pd
 type(lo_crystalstructure) :: uc
 class(lo_qpoint_mesh), allocatable :: qp
 type(lo_mpi_helper) :: mw
