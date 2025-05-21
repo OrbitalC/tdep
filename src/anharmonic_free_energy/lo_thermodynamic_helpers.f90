@@ -10,6 +10,8 @@ private
 public :: lo_thermodynamics
 public :: lo_symmetrize_stress
 public :: lo_full_to_voigt
+public :: lo_full_to_voigt_33
+public :: lo_voigt_to_full_33
 
 type lo_thermodynamic_contribution
     ! The different contributions. First dimension is the result, second one the uncertainty
@@ -32,6 +34,12 @@ type lo_thermodynamics
     type(lo_thermodynamic_contribution) :: fourphonon
     !> The thermal expansion
     real(r8), dimension(3, 3) :: alpha
+    !> Is it a stochastic simulation ?
+    logical :: stochastic = .false.
+    !> Do we have third order ?
+    logical :: thirdorder = .false.
+    !> Do we have fourth order ?
+    logical :: fourthorder = .false.
 end type
 
 contains
@@ -73,4 +81,45 @@ function lo_full_to_voigt(i, j) result(k)
     if (d(1) .eq. 1 .and. d(2) .eq. 3) k = 5
     if (d(1) .eq. 2 .and. d(2) .eq. 3) k = 4
 end function
+
+!> Transform a 3x3 tensor in full representation into its Voigt representation
+function lo_full_to_voigt_33(mi) result(mo)
+    !> The input tensor in full notation
+    real(r8), dimension(3, 3), intent(in) :: mi
+    !> The output vector in Voigt notation
+    real(r8), dimension(6) :: mo
+
+    integer :: i, j
+
+    mo = 0.0_r8
+    do i=1, 3
+    do j=i, 3
+        if (i .eq. j) then
+            mo = mi(i, j)
+        else
+            mo = 0.5_r8 * (mi(i, j) + mi(j, i))
+        end if
+    end do
+    end do
+end function
+
+!> Transform a vector in Voigt notation into it's 3x3 full representation
+function lo_voigt_to_full_33(mi) result(mo)
+    !> The input tensor in full notation
+    real(r8), dimension(6), intent(in) :: mi
+    !> The output vector in Voigt notation
+    real(r8), dimension(3, 3) :: mo
+
+    integer :: i, j, k
+
+    mo = 0.0_r8
+    do i=1, 3
+    do j=i, 3
+        k = lo_full_to_voigt(i, j)
+        mo(i, j) = mi(k)
+        mo(j, i) = mi(k)
+    end do
+    end do
+end function
+
 end module

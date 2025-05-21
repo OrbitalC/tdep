@@ -93,6 +93,9 @@ init: block
     timer_init = walltime() - timer_init
 
     thermo%temperature = opts%temperature
+    thermo%stochastic = opts%stochastic
+    thermo%thirdorder = opts%thirdorder
+    thermo%fourthorder = opts%fourthorder
 end block init
 
 latdyn: block
@@ -209,8 +212,7 @@ calcepot: block
         write(*, *)
     end if
 
-    call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, &
-        opts%stochastic, opts%thirdorder, opts%fourthorder, mw, mem)
+    call pot%compute_realspace_thermo(ss, sim, thermo, opts%nblocks, mw, mem)
     ! We also need to symmetrize the stress tensor
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 1), uc)
     call lo_symmetrize_stress(thermo%first_order%stress(:, :, 2), uc)
