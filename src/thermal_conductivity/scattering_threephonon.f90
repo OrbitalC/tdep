@@ -37,7 +37,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     !> The qpoints and the dimension of the qgrid
     real(r8), dimension(3) :: qv2, qv3
     !> Frequencies, bose-einstein occupation and scattering strength and some other buffer
-    real(r8) :: sigma, om1, om2, om3, n1, n2, n3, psisq, f0, f1, plf0, plf1, perm
+    real(r8) :: sigma, om1, om2, om3, n2, n3, psisq, f0, f1, plf0, plf1, perm
     !>
     real(r8) :: delta0, delta1
     !> The complex threephonon matrix element
@@ -137,12 +137,10 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                     sigma = dr%iq(qp%ap(q2)%irreducible_index)%linewidth(b2) + dr%iq(qp%ap(q3)%irreducible_index)%linewidth(b3)
                     sigma = sigma * 2.0_r8  ! We need a factor two because of the definition used in lo_lorentz
 
-                    n1 = sr%be(q1, b1)
-
-                    f0 = n2 * n3 / n1 * lo_lorentz(om1, om2 + om3, sigma) + &
-                         (n2 + 1) * (n3 + 1) / n1 * lo_lorentz(om1, -om2 - om3, sigma) + &
-                         (n2 + 1) * n3 / n1 * lo_lorentz(om1, -om2 + om3, sigma) + &
-                         n2 * (n3 + 1) / n1 * lo_lorentz(om1, om2 - om3, sigma)
+                    f0 = (n2 - n3) * lo_lorentz(om1, -om2 + om3, sigma) -&
+                         (n2 - n3) * lo_lorentz(om1, om2 - om3, sigma) +&
+                         (n2 + n3 + 1) * lo_lorentz(om1, om2 + om3, sigma) -&
+                         (n2 + n3 + 1) * lo_lorentz(om1, -om2 - om3, sigma)
                 case default
                     call lo_stop_gracefully(['integrationtype not implemented'], &
                                             lo_exitcode_param, __FILE__, __LINE__)
