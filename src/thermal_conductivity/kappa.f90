@@ -361,7 +361,7 @@ subroutine iterative_solution(sr, dr, qp, uc, temperature, niter, tol, classical
     ! set some things and make space
     init: block
         real(r8), dimension(3, 3) :: m0
-        mixingparameter = 0.95_r8
+        mixingparameter = 0.75_r8
         call mem%allocate(Fnb, [3, dr%n_mode, qp%n_irr_point], persistent=.false., &
                           scalable=.false., file=__FILE__, line=__LINE__)
         call mem%allocate(Fbb, [3, dr%n_mode*qp%n_full_point], persistent=.false., &

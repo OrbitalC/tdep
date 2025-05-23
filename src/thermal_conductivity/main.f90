@@ -1,8 +1,10 @@
 #include "precompilerdefinitions"
 program thermal_conductivity
-use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, lo_m_to_Bohr, lo_emu_to_amu
-use gottochblandat, only: walltime, tochar, open_file
-use mpi_wrappers, only: lo_mpi_helper
+use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
+                      lo_m_to_Bohr, lo_emu_to_amu, lo_exitcode_io, lo_huge, &
+                      lo_frequency_Hartree_to_meV, lo_tol
+use gottochblandat, only: walltime, tochar, open_file, lo_does_file_exist, lo_frobnorm
+use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
@@ -15,7 +17,7 @@ use lo_timetracker, only: lo_timer
 
 use options, only: lo_opts
 use kappa, only: get_kappa, get_kappa_offdiag, iterative_solution, symmetrize_kappa
-use scattering, only: lo_scattering_rates
+use scattering, only: lo_scattering_rates, distribute_linewidths, reweight_lw
 use cumulative_kappa, only: lo_cumulative_kappa
 
 implicit none
@@ -69,9 +71,13 @@ initharmonic: block
         select case (opts%integrationtype)
         case (1)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
+            write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
         case (2)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
-        write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
+        case (7)
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Lorentzian'
+        case (8)
+            write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Fluctuation-dissipation Lorentzian'
         end select
         write (*, '(1X,A40,2X,I4)') 'Number of mfp point for cumulative kappa ', opts%mfppts
         write (*, '(1X,A40,2X,I4)') 'Number of freq point for spectral kappa ', opts%freqpts
@@ -132,6 +138,13 @@ initharmonic: block
         if (mw%talk) write (*, *) '... read fourth order forceconstant'
     end if
 
+    if (opts%read_lw) then
+        if (.not. lo_does_file_exist('infile.thermal_conductivity_grid.hdf5')) then
+            call lo_stop_gracefully(['No infile.thermal_conductivity_grid.hdf5 file found'], &
+                                    lo_exitcode_io, __FILE__, __LINE__)
+        end if
+    end if
+
     call tmr_init%tock('read input files')
 
     if (mw%talk) write (*, *) '... generating q-point mesh'
@@ -181,6 +194,19 @@ initharmonic: block
 end block initharmonic
 
 get_scattering_rates: block
+    !> The linewidths
+    real(r8), dimension(:, :), allocatable :: lw
+    !> Buffer to keep track of the previous input linewidths and residual for the Anderson acceleration
+    real(r8), dimension(:, :, :), allocatable :: hist_lw, hist_res_lw
+    !> Thermal conductivity tensor to keep track of the convergence
+    real(r8), dimension(3, 3) :: m0, m1
+    !> The value of the thing to converge
+    real(r8) :: f0, f1, f2
+    !> Some integers for the loop
+    integer :: i, q1, b1, j, iter, a, b
+    !> Keep track of the convergence during steps
+    real(r8), dimension(:), allocatable :: scfcheck, kappacheck
+
     call tmr_scat%start()
     if (mw%talk) then
         write (*, *) ''
@@ -188,7 +214,111 @@ get_scattering_rates: block
     end if
 
     t0 = walltime()
-    call sr%generate(qp, dr, uc, fct, fcf, opts, tmr_scat, mw, mem)
+
+    call mem%allocate(lw, [qp%n_irr_point, dr%n_mode], &
+                      persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+    ! We start by generating the scattering rate types, which takes care of the MPI distribution
+    call sr%generate(qp, dr, uc, opts, tmr_scat, mw, mem)
+    ! And now we can compute the scattering
+    call sr%compute_scattering(qp, dr, uc, fct, fcf, tmr_scat, lw, mw, mem)
+    ! And distribute the linewidths and so on
+    call distribute_linewidths(qp, dr, lw)
+
+    ! Maybe we have to compute the linewidths self-consistently
+    if (opts%nsc_lw .gt. 0) then
+        ! We compute the SMA kappa to have give a better idea of the convergence
+        call get_kappa(dr, qp, uc, opts%temperature, opts%classical, m0)
+        call symmetrize_kappa(m0, uc)
+        m0 = m0 * lo_kappa_au_to_SI
+        ! Start talking about what is happening
+        if (mw%talk) then
+            write(*, *) ' ... Starting self-consistent iterations for the linewidths'
+            write(*, *) ' ... Integrationtype changed to Lorentzian broadening'
+            if (opts%lw_itertol .lt. 1e5_r8) then
+                write(*, *) ' Tolerance for the linewidths: '//tochar(opts%lw_itertol, frmt='(E12.5)')
+            end if
+            if (opts%lw_kappatol .lt. 1e5_r8) then
+                write(*, *) ' Tolerance for the thermal conductivity: '//tochar(opts%lw_kappatol, frmt='(E12.5)')
+            end if
+            write(*, *) ''
+            write(*, *) 'Iteration 0:'
+            write(*, *) 'Thermal conductivity at the single mode approximation level'
+            write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+            write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        end if
+
+        call mem%allocate(hist_lw, [opts%nlw_mix+1, qp%n_irr_point, dr%n_mode], &
+                          persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(hist_res_lw, [opts%nlw_mix+1, qp%n_irr_point, dr%n_mode], &
+                          persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(scfcheck, opts%nsc_lw, &
+                          persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%allocate(kappacheck, opts%nsc_lw, &
+                          persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+
+        hist_lw = 0.0_r8
+        hist_lw(1, :, :) = lw
+        hist_res_lw = 0.0_r8
+        scfcheck = 0.0_r8
+        kappacheck = 0.0_r8
+        ! We have to update the integration type for the fluctuation dissipation one
+        sr%integrationtype = 8
+        sc_loop: do iter=1, opts%nsc_lw
+            if (mw%talk) then
+                write(*, *) ''
+                write(*, *) 'Iteration '//tochar(iter)//':'
+            end if
+
+            ! We have to recompute the scattering matrix
+            sr%sigsq = lw
+            call sr%compute_scattering(qp, dr, uc, fct, fcf, tmr_scat, lw, mw, mem)
+            ! And distribute it where it should go,
+            ! we do it there to make sure that the scattering matrix is consistent with the linewidths
+            call distribute_linewidths(qp, dr, lw)
+
+            ! To have a sense of the convergence, let's compute the SMA kappa
+            call get_kappa(dr, qp, uc, opts%temperature, opts%classical, m1)
+            call symmetrize_kappa(m1, uc)
+            m1 = m1 * lo_kappa_au_to_SI
+            f2 = lo_frobnorm(m1 - m0) / lo_frobnorm(m1)
+            kappacheck(iter) = f2
+            m0 = m1
+
+            ! We mix linewidths between iterations, takes care also of updating the arrays
+            ! We do it after distributing so that the linewidth and scattering matrix are consistents
+            call reweight_lw(qp, dr, lw, hist_lw, hist_res_lw, opts%nlw_mix, iter, f0, f1, mem)
+            scfcheck(iter) = f0
+
+            if (mw%talk) then
+                write(*, *) 'Max rel. diff. of linewidths between iterations: '//tochar(f0,frmt="(E12.5)")
+                write(*, *) 'Avg. rel. diff. of linewidths between iterations: '//tochar(f1,frmt="(E12.5)")
+                write(*, *) 'Rel. Froeb. diff. of thermal conductivity between iterations: '//tochar(f2,frmt="(E12.5)")
+                write(*, *) 'Thermal conductivity at the single mode approximation level [W/m/K]'
+                write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
+                write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+            end if
+
+            ! And we check convergence, looking at the last two previous step
+            if (iter .gt. 3) then
+                f0 = sum(scfcheck(iter-2:iter))
+                f1 = sum(kappacheck(iter-2:iter))
+                if (f0 .lt. opts%lw_itertol .and. f1 .lt. opts%lw_kappatol) then
+                    if (mw%talk) write(*, *) 'Converged after '//tochar(iter)//' iterations'
+                    exit sc_loop
+                end if
+            end if
+        end do sc_loop
+        call mem%deallocate(hist_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%deallocate(hist_res_lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%deallocate(scfcheck, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+        call mem%deallocate(kappacheck, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    end if
+
+    ! Now that everything is done, we can symmetrize the scattering matrix
+    call sr%symmetrize_scattering_matrix(qp, dr, uc, tmr_scat, mw, mem)
+
+    call mem%deallocate(lw, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
     t0 = walltime() - t0
 
     call tmr_scat%stop()
@@ -198,8 +328,9 @@ get_scattering_rates: block
 end block get_scattering_rates
 
 blockkappa: block
+    !> The thermal conductivity tensors
     real(r8), dimension(3, 3) :: kappa_iter, kappa_offdiag, kappa_sma, m0
-    real(r8) :: t0
+    !> Some integers
     integer :: i, u, q1, b1
 
     call tmr_kappa%start()

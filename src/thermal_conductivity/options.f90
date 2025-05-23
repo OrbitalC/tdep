@@ -1,6 +1,7 @@
 #include "precompilerdefinitions"
 module options
-use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr, lo_hugeint
+use konstanter, only: flyt, lo_status, lo_author, lo_version, lo_licence, lo_m_to_bohr, &
+                      lo_huge, lo_hugeint, lo_tol
 use flap, only: command_line_interface
 implicit none
 private
@@ -17,18 +18,23 @@ type lo_opts
     real(flyt) :: mfp_max            !< add a length as boundary scattering
     real(flyt) :: itertol            !< tolerance for the iterative solution
     real(flyt) :: dossigma           !< scaling factor for the spectral integration
+    real(flyt) :: lw_itertol         !< Tolerance for the linewidth iterative solution
+    real(flyt) :: lw_kappatol        !< Tolerance for the linewidth iterative solution
     integer :: itermaxsteps          !< Number of iteration for the Boltzmann equation
     logical :: classical             !< Use a classical formulation
     logical :: readiso               !< read isotope distribution from file
     logical :: thirdorder            !< use fourth order contribution
     logical :: fourthorder           !< use fourth order contribution
     logical :: isotopescattering     !< use isotope scattering
+    logical :: read_lw               !< Read the linewidths from file
     integer :: integrationtype       !< adaptive or standard gaussian integration
     integer :: dosintegrationtype    !< integration for the spectral thermal conductivity
     integer :: seed                  !< seed for the Monte-Carlo grid
     integer :: mfppts                !< Number of points for the mfp plots
     integer :: freqpts               !< Number of frequency point for the spectral things
-    character(len=3) :: unit                !< unit for the spectral kappa
+    integer :: nsc_lw                !< Number of iteration for self-consistent linewidths
+    integer :: nlw_mix               !< Number of iteration to take for the mixing of the linewidth
+    character(len=3) :: unit         !< unit for the spectral kappa
 
     ! Debugging things
     logical :: timereversal
@@ -71,8 +77,8 @@ subroutine parse(opts)
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--integrationtype', switch_ab='-it', &
-                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian.', &
-                 required=.false., act='store', def='2', choices='1,2,6', error=lo_status)
+                 help='Type of integration for the phonon DOS. 1 is Gaussian, 2 adaptive Gaussian, 7 is Lorentzian.', &
+                 required=.false., act='store', def='2', choices='1,2,6,7,8', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nothirdorder', &
                  help='Do not consider third order contributions to the scattering.', &
@@ -145,6 +151,26 @@ subroutine parse(opts)
                  help='Scaling factor for the spectral thermal conductivity wth Gaussian integration. The default is determined procedurally, and scaled by this number.', &
                  required=.false., act='store', def='1.0', error=lo_status)
     if (lo_status .ne. 0) stop
+    call cli%add(switch='--read_linewidths', switch_ab='-read_lw', &
+                 help='Read the linewidths from an infile.thermal_conductivity_grid.hdf5 file.', &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--nsc_linewidths', switch_ab='-nsc_lw', &
+                 help='Max number of iterations for the self consistent linewidths', &
+                 required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--nmix_linewidths', switch_ab='-nlw_mix', &
+                 help='Max number of iterations to mix for the self consistent linewidths', &
+                 required=.false., act='store', def='3', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--linewidths_itertol', switch_ab='-lwtol', &
+                 help='Tolerance for the convergence of the self-consistent linewidths', &
+                 required=.false., act='store', def='-1', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--linewidths_kappatol', switch_ab='-lwktol', &
+                 help='Tolerance on the thermal conductivity for the convergence of the self-consistent linewidths', &
+                 required=.false., act='store', def='1e-2', error=lo_status)
+    if (lo_status .ne. 0) stop
 
     ! hidden
     call cli%add(switch='--tau_boundary', hidden=.true., &
@@ -200,6 +226,11 @@ subroutine parse(opts)
     call cli%get(switch='--dosintegrationtype', val=opts%dosintegrationtype)
     call cli%get(switch='--freqpts', val=opts%freqpts)
     call cli%get(switch='--dossigma', val=opts%dossigma)
+    call cli%get(switch='--read_linewidths', val=opts%read_lw)
+    call cli%get(switch='--nsc_linewidths', val=opts%nsc_lw)
+    call cli%get(switch='--nmix_linewidths', val=opts%nlw_mix)
+    call cli%get(switch='--linewidths_itertol', val=opts%lw_itertol)
+    call cli%get(switch='--linewidths_kappatol', val=opts%lw_kappatol)
     ! stuff that's not really an option
     call cli%get(switch='--notr', val=dumlog)
     opts%timereversal = .not. dumlog
@@ -214,9 +245,12 @@ subroutine parse(opts)
     call cli%get(switch='--noisotope', val=dumlog)
     opts%isotopescattering = .not. dumlog
 
+    ! Now we get everything right
+
     ! Get things to atomic units
     opts%mfp_max = opts%mfp_max*lo_m_to_Bohr
 
+    ! Check that the four-phonon Monte-Carlo grid is asked only if fourphonon is enabled
     if (maxval(opts%qg4ph) .gt. 0 .and. .not. opts%fourthorder) then
         write(*, *) 'You have to enable fourthorder to use a fourth order Monte-Carlo grid, stopping calculation.'
         stop
@@ -234,6 +268,14 @@ subroutine parse(opts)
         end do
     end if
 
-end subroutine
+    ! Checks for the self-consistent linewidths
+    if (opts%read_lw) then
+        opts%integrationtype = 8
+    end if
 
+    ! We set the tolerance for the self-consistent linewidths to a huge number if negative
+    if (opts%lw_itertol .lt. 0) opts%lw_itertol = lo_huge
+    if (opts%lw_kappatol .lt. 0) opts%lw_kappatol = lo_huge
+
+end subroutine
 end module

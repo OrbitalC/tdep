@@ -1,6 +1,5 @@
 
-subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
-                                          g0, integrationtype, smearing, mw, mem)
+subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, g0, mw, mem)
     ! The qpoint and mode indices considered here
     integer, intent(in) :: il
     !> The scattering amplitudes
@@ -8,21 +7,13 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     !> The qpoint mesh
     class(lo_qpoint_mesh), intent(in) :: qp
     ! Harmonic dispersions
-    type(lo_phonon_dispersions), intent(inout) :: dr
+    type(lo_phonon_dispersions), intent(in) :: dr
     !> structure
     type(lo_crystalstructure), intent(in) :: uc
     !> Third order force constants
     type(lo_forceconstant_thirdorder), intent(in) :: fct
-    !> The monte-carlo grid
-    type(lo_montecarlo_grid), intent(in) :: mcg
-    !> The random number generator
-    type(lo_mersennetwister), intent(inout) :: rng
     !> The linewidth for this mode
     real(r8), intent(inout) :: g0
-    !> what kind of integration are we doing
-    integer, intent(in) :: integrationtype
-    !> The smearing width
-    real(r8), intent(in) :: smearing
     !> Mpi helper
     type(lo_mpi_helper), intent(inout) :: mw
     !> Memory helper
@@ -66,12 +57,12 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     om1 = dr%iq(q1)%omega(b1)
     egv1 = dr%iq(q1)%egv(:, b1)/sqrt(om1)
 
-    call mem%allocate(qgridfull, mcg%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
-    call mcg%generate_grid(qgridfull, rng)
+    call mem%allocate(qgridfull, sr%mcg3%npoints, persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
+    call sr%mcg3%generate_grid(qgridfull, sr%rng)
 
-    compute_loop: do qi = 1, mcg%npoints
+    compute_loop: do qi = 1, sr%mcg3%npoints
         q2 = qgridfull(qi)
-        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, mcg%full_dims)
+        q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, sr%mcg3%full_dims)
         if (q3 .lt. q2) cycle
         call triplet_is_irreducible(qp, uc, q1, q2, q3, isred, red_triplet, mw, mem)
         if (isred) cycle
@@ -102,7 +93,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 egv3 = dr%aq(q3)%egv(:, b3)/sqrt(om3)
 
                 ! Get the weight for each processes
-                call get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, integrationtype, d0, d1)
+                call get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, d0, d1)
 
                 ! This is the multiplication of eigv of phonons 1 and 2 and now 3
                 evp2 = 0.0_r8
@@ -110,7 +101,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
                 evp2 = conjg(evp2)
                 ! And with this, we have the scattering matrix element coming in
                 c0 = dot_product(evp2, ptf)
-                psisq = threephonon_prefactor*abs(c0*conjg(c0))*mcg%weight
+                psisq = threephonon_prefactor*abs(c0*conjg(c0))*sr%mcg3%weight
 
                 ! Let's get the Bose-Einstein distributions
                 n2 = sr%be(qp%ap(q2)%irreducible_index, b2)
@@ -153,7 +144,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
         integer :: j, k, i2
 
         ! Let's average the off diagonal term
-        allq2: do qi = 1, mcg%npoints
+        allq2: do qi = 1, sr%mcg3%npoints
             q2 = qgridfull(qi)
             buf_xi = 0.0_r8
             nn = 0
@@ -216,7 +207,7 @@ subroutine compute_threephonon_scattering(il, sr, qp, dr, uc, fct, mcg, rng, &
     if (allocated(red_triplet)) deallocate (red_triplet)
 
     contains
-subroutine get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, integrationtype, d0, d1)
+subroutine get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, d0, d1)
     !> The scattering amplitudes
     type(lo_scattering_rates), intent(in) :: sr
     !> The qpoint mesh
@@ -227,8 +218,6 @@ subroutine get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, integrationtype, d0, d1
     integer, intent(in) :: q1, q2, q3
     !> The modes
     integer, intent(in) :: b1, b2, b3
-    !> THe integration type
-    integer, intent(in) :: integrationtype
     !> The approximated dirac
     real(r8), intent(out) :: d0, d1
 
@@ -239,17 +228,29 @@ subroutine get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, integrationtype, d0, d1
     !> An integer for the do loop
     integer :: i, j
 
-    select case (integrationtype)
-    ! Gaussian smearing with fixed width
+    select case (sr%integrationtype)
     case (1)
+        ! Gaussian smearing with fixed width
         sigma = sr%sigma
-    ! Adaptive Gaussian smearing with smeared frequency approach
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+
+        d0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+        d1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
     case (2)
+        ! Adaptive Gaussian smearing with smeared frequency approach
         sigma = sqrt(sr%sigsq(q1, b1) + &
                      sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                      sr%sigsq(qp%ap(q3)%irreducible_index, b3))
-    ! Adaptive Gaussian smearing with velocity difference approach
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+
+        d0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+        d1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
     case (6)
+        ! Adaptive Gaussian smearing with velocity difference approach
         allsig = 0.0_r8
         allsig(:, 1) = matmul(dr%iq(q1)%vel(:, b1) - dr%aq(q2)%vel(:, b2), sr%reclat)**2
         allsig(:, 2) = matmul(dr%iq(q1)%vel(:, b1) - dr%aq(q3)%vel(:, b3), sr%reclat)**2
@@ -260,14 +261,42 @@ subroutine get_dirac(sr, qp, dr, q1, q2, q3, b1, b2, b3, integrationtype, d0, d1
             sigma = sigma + sqrt(maxval(allsig(:, i)) * 0.5_r8) / 3.0_r8
         end do
         sigma = sigma + sr%thresh_sigma
+
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+
+        d0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
+        d1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
+
+    case (7)
+        ! Adaptive Lorentzian smearing with smeared frequency approach
+        sigma = sqrt(sr%sigsq(q1, b1) + &
+                     sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                     sr%sigsq(qp%ap(q3)%irreducible_index, b3))
+        ! We need this because of the definition of the Lorentz function in libolle
+        sigma = sigma * 2.0_r8
+
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+
+        d0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
+        d1 = lo_lorentz(om1, om2 + om3, sigma) - lo_lorentz(om1, -om2 - om3, sigma)
+
+    case (8)
+        ! Adaptive Lorentzian smearing for self-consistent linewidths
+        sigma = sr%sigsq(qp%ap(q2)%irreducible_index, b2) + sr%sigsq(qp%ap(q3)%irreducible_index, b3)
+        ! We need this because of the definition of the Lorentz function in libolle
+        sigma = sigma * 2.0_r8
+
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+
+        d0 = lo_lorentz(om1, -om2 + om3, sigma) - lo_lorentz(om1, om2 - om3, sigma)
+        d1 = lo_lorentz(om1, om2 + om3, sigma) - lo_lorentz(om1, -om2 - om3, sigma)
     end select
-
-    om1 = dr%iq(q1)%omega(b1)
-    om2 = dr%aq(q2)%omega(b2)
-    om3 = dr%aq(q3)%omega(b3)
-
-    d0 = lo_gauss(om1, -om2 + om3, sigma) - lo_gauss(om1, om2 - om3, sigma)
-    d1 = lo_gauss(om1, om2 + om3, sigma) - lo_gauss(om1, -om2 - om3, sigma)
 end subroutine
 end subroutine
 
