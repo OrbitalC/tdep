@@ -276,6 +276,10 @@ get_scattering_rates: block
             ! And distribute it where it should go,
             ! we do it there to make sure that the scattering matrix is consistent with the linewidths
             call distribute_linewidths(qp, dr, lw)
+            if (mw%talk) then
+                write(*, *) '... writing outfile.thermal_conductivity_grid.hdf5 file to allow for restart'
+                call dr%write_to_hdf5(qp, uc, 'outfile.thermal_conductivity_grid.hdf5', mem, opts%temperature)
+            end if
 
             ! To have a sense of the convergence, let's compute the SMA kappa
             call get_kappa(dr, qp, uc, opts%temperature, opts%classical, m1)
