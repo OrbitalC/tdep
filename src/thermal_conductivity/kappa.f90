@@ -2,7 +2,8 @@
 module kappa
 use konstanter, only: r8, lo_sqtol, lo_kb_hartree, lo_freqtol, lo_kappa_au_to_SI, &
                       lo_groupvel_Hartreebohr_to_ms, lo_twopi
-use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_harmonic_oscillator_cv
+use gottochblandat, only: lo_sqnorm, lo_planck, lo_outerproduct, lo_chop, lo_harmonic_oscillator_cv, &
+                          tochar
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use type_crystalstructure, only: lo_crystalstructure
@@ -478,6 +479,7 @@ subroutine iterative_solution(sr, dr, qp, uc, temperature, niter, tol, classical
             if (iter .ge. 3) then
                 g0 = sum(scfcheck(iter - 2:iter))
                 if (g0 .lt. tol) then
+                    if (mw%talk) write(*, *) 'Converged after '//tochar(iter)//' iterations'
                     exit scfloop
                 end if
             end if
