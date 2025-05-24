@@ -22,7 +22,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, g0, mw, mem)
     !> For the broadening calculation
     real(r8), dimension(3) :: allsig
     ! prefactor and phonon buffers
-    real(r8) :: om1, om2, sigma, psisq, prefactor, f0, deltaf
+    real(r8) :: om1, om2, sigma, psisq, prefactor, deltaf
     ! Integers for do loops
     integer :: q1, b1, q2, b2, i2, niso
 
@@ -74,15 +74,7 @@ subroutine compute_isotope_scattering(il, sr, qp, dr, uc, g0, mw, mem)
             egviso(:, 2) = dr%aq(q2)%egv(:, b2)
             psisq = isotope_scattering_strength(uc, egviso)*prefactor
 
-            ! Get the scattering
-            f0 = psisq * om1 * om2 * deltaf
-
-            ! Update the linewidth
-            g0 = g0 + f0
-
-            ! The off-diagonal component of the scattering matrix
-            i2 = (q2 - 1)*dr%n_mode + b2
-            sr%Xi(il, i2) = sr%Xi(il, i2) + f0 * om2 / om1
+            g0 = g0 + psisq * om1 * om2 * deltaf
         end do
     end do
 end subroutine

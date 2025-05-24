@@ -66,12 +66,14 @@ initharmonic: block
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 3rd order q-point grid      ', opts%qg3ph
         write (*, '(1X,A40,I4,I4,I4)') 'Monte-Carlo 4th order q-point grid      ', opts%qg4ph
         write (*, '(1X,A40,I5)') 'Max number of iteration                 ', opts%itermaxsteps
-        write (*, '(1X,A40,E20.12)') 'Max mean free path (in m)               ', opts%mfp_max/lo_m_to_Bohr
-        write (*, '(1X,A40,E20.12)') 'Tolerance for the iterative solution    ', opts%itertol
+        if (opts%mfp_max .gt. 0) then
+            write (*, '(1X,A40,ES20.12)') 'Max mean free path (in m)               ', opts%mfp_max/lo_m_to_Bohr
+        end if
+        write (*, '(1X,A40,ES20.12)') 'Tolerance for the iterative solution    ', opts%itertol
         select case (opts%integrationtype)
         case (1)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Gaussian with fixed broadening'
-            write (*, '(1X,A40,E20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
+            write (*, '(1X,A40,ES20.12)') 'Sigma factor for gaussian smearing      ', opts%sigma
         case (2)
             write (*, '(1X,A40,2X,A)') 'Integration type                        ', 'Adaptive Gaussian'
         case (7)
@@ -89,7 +91,7 @@ initharmonic: block
         case(3)
             write (*, '(1X,A40,2X,A)') 'Integration type for spectral kappa       ', 'Tetrahedron'
         end select
-        write (*, '(1X,A40,E20.12)') 'Sigma factor for spectral integration   ', opts%dossigma
+        write (*, '(1X,A40,ES20.12)') 'Sigma factor for spectral integration   ', opts%dossigma
         write (*, '(1X,A40,I10)') 'Number of MPI ranks                     ', mw%n
         if (opts%seed .gt. 0) write(*, '(1X,A40,I10)') 'Random seed                             ', opts%seed
         write (*, *) ''
@@ -236,10 +238,10 @@ get_scattering_rates: block
             write(*, *) ' ... Starting self-consistent iterations for the linewidths'
             write(*, *) ' ... Integrationtype changed to Lorentzian broadening'
             if (opts%lw_itertol .lt. 1e5_r8) then
-                write(*, *) ' Tolerance for the linewidths: '//tochar(opts%lw_itertol, frmt='(E12.5)')
+                write(*, *) ' Tolerance for the linewidths: '//tochar(opts%lw_itertol, frmt='(ES12.5)')
             end if
             if (opts%lw_kappatol .lt. 1e5_r8) then
-                write(*, *) ' Tolerance for the thermal conductivity: '//tochar(opts%lw_kappatol, frmt='(E12.5)')
+                write(*, *) ' Tolerance for the thermal conductivity: '//tochar(opts%lw_kappatol, frmt='(ES12.5)')
             end if
             write(*, *) ''
             write(*, *) 'Iteration 0:'
@@ -295,9 +297,9 @@ get_scattering_rates: block
             scfcheck(iter) = f0
 
             if (mw%talk) then
-                write(*, *) 'Max rel. diff. of linewidths between iterations: '//tochar(f0,frmt="(E12.5)")
-                write(*, *) 'Avg. rel. diff. of linewidths between iterations: '//tochar(f1,frmt="(E12.5)")
-                write(*, *) 'Rel. Froeb. diff. of thermal conductivity between iterations: '//tochar(f2,frmt="(E12.5)")
+                write(*, *) 'Max rel. diff. of linewidths between iterations: '//tochar(f0,frmt="(ES12.5)")
+                write(*, *) 'Avg. rel. diff. of linewidths between iterations: '//tochar(f1,frmt="(ES12.5)")
+                write(*, *) 'Rel. Froeb. diff. of thermal conductivity between iterations: '//tochar(f2,frmt="(ES12.5)")
                 write(*, *) 'Thermal conductivity at the single mode approximation level [W/m/K]'
                 write (*, "(1X,A4,6(1X,A14))") '', 'kxx   ', 'kyy   ', 'kzz   ', 'kxy   ', 'kxz   ', 'kyz   '
                 write (*, "(5X,6(1X,F14.4))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
@@ -382,7 +384,7 @@ blockkappa: block
         ! First we write in the standard output
         u = open_file('out', 'outfile.thermal_conductivity')
         write (u, '(A2,A5,15X,A)') '# ', 'Unit:', 'W/m/K'
-        write (u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
+        write (u, '(A2,A12,8X,ES20.12)') '# ', 'Temperature:', opts%temperature
 
         write (*, *) ''
         write (*, "(1X,A52)") 'Decomposition of the thermal conductivity (in W/m/K)'
@@ -394,7 +396,7 @@ blockkappa: block
         ! Then in the outfile
         write (u, "(A)") '# Single mode approximation'
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
-        write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (u, "(1X,6(1X,ES24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
         m0 = (kappa_iter - kappa_sma)*lo_kappa_au_to_SI
         ! First in the standard output
@@ -404,7 +406,7 @@ blockkappa: block
         ! Then in the outfile
         write (u, "(A)") '# Collective contribution'
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
-        write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (u, "(1X,6(1X,ES24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
         m0 = kappa_offdiag*lo_kappa_au_to_SI
         ! First in the standard output
@@ -414,7 +416,7 @@ blockkappa: block
         ! Then in the outfile
         write (u, "(A)") '# Off diagonal (coherence) contribution'
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
-        write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (u, "(1X,6(1X,ES24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
         m0 = (kappa_iter + kappa_offdiag)*lo_kappa_au_to_SI
         ! First in the standard output
@@ -424,7 +426,7 @@ blockkappa: block
         ! Then in the outfile
         write (u, "(A28)") '# Total thermal conductivity'
         write (u, "(A1,6(1X,A24))") '#', 'kxx', 'kyy', 'kzz', 'kxy', 'kxz', 'kyz'
-        write (u, "(1X,6(1X,E24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
+        write (u, "(1X,6(1X,ES24.12))") m0(1, 1), m0(2, 2), m0(3, 3), m0(1, 2), m0(1, 3), m0(2, 3)
 
         close (u)
         write(*, *) ''
