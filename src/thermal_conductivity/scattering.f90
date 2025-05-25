@@ -506,7 +506,7 @@ subroutine read_linewidths(fname, qp, dr, lw, mem, mw)
         allocate(freq(dr%n_mode, qp%n_full_point))
         allocate(qptin(3, qp%n_full_point))
     end if
-    call mw%bcast(lw, from=readrnk)
+    call mw%bcast(lw_full, from=readrnk)
     call mw%bcast(freq, from=readrnk)
     call mw%bcast(qptin, from=readrnk)
 
