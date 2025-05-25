@@ -2,7 +2,7 @@
 program thermal_conductivity
 use konstanter, only: r8, lo_temperaturetol, lo_status, lo_kappa_au_to_SI, lo_freqtol, &
                       lo_m_to_Bohr, lo_emu_to_amu, lo_exitcode_io, lo_huge, &
-                      lo_frequency_Hartree_to_meV, lo_tol
+                      lo_frequency_Hartree_to_meV, lo_tol, lo_exitcode_mpi
 use gottochblandat, only: walltime, tochar, open_file, lo_does_file_exist, lo_frobnorm
 use mpi_wrappers, only: lo_mpi_helper, lo_stop_gracefully
 use lo_memtracker, only: lo_mem_helper
@@ -167,6 +167,11 @@ initharmonic: block
         call mpi_barrier(mw%comm, mw%error)
         call mpi_finalize(lo_status)
         stop
+    end if
+    if (mw%n .gt. qp%n_irr_point*dr%n_mode-3) then
+        call lo_stop_gracefully(['There is more MPI processes than the parallelization allows for. '// &
+                                 'Reduce the number of MPI processes to at most '//tochar(qp%n_irr_point*dr%n_mode-3)], &
+                                lo_exitcode_mpi, __FILE__, __LINE__)
     end if
 
     ! Make some space to keep intermediate values
