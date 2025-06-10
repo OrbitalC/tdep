@@ -338,21 +338,7 @@ subroutine get_dirac(sr, qp, dr, q1, q2, q3, q4, b1, b2, b3, b4, d0, d1, d2, d3)
                      sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
                      sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
                      sr%sigsq(qp%ap(q4)%irreducible_index, b4))
-
-        om1 = dr%iq(q1)%omega(b1)
-        om2 = dr%aq(q2)%omega(b2)
-        om3 = dr%aq(q3)%omega(b3)
-        om4 = dr%aq(q4)%omega(b4)
-
-        d0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
-        d1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
-        d2 = lo_gauss(om1, om2 - om3 + om4, sigma) - lo_gauss(om1, -om2 + om3 - om4, sigma)
-        d3 = lo_gauss(om1, om2 + om3 - om4, sigma) - lo_gauss(om1, -om2 - om3 + om4, sigma)
-    case (8)
-        ! Lorentzian broadening for self-consistent linewidths
-        sigma = sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
-                sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
-                sr%sigsq(qp%ap(q4)%irreducible_index, b4)
+        ! The Lorentzian is defined with a factor 1/2 in libolle
         sigma = sigma * 2.0_r8
 
         om1 = dr%iq(q1)%omega(b1)
@@ -360,10 +346,27 @@ subroutine get_dirac(sr, qp, dr, q1, q2, q3, q4, b1, b2, b3, b4, d0, d1, d2, d3)
         om3 = dr%aq(q3)%omega(b3)
         om4 = dr%aq(q4)%omega(b4)
 
-        d0 = lo_gauss(om1, om2 + om3 + om4, sigma) - lo_gauss(om1, -om2 - om3 - om4, sigma)
-        d1 = lo_gauss(om1, -om2 + om3 + om4, sigma) - lo_gauss(om1, om2 - om3 - om4, sigma)
-        d2 = lo_gauss(om1, om2 - om3 + om4, sigma) - lo_gauss(om1, -om2 + om3 - om4, sigma)
-        d3 = lo_gauss(om1, om2 + om3 - om4, sigma) - lo_gauss(om1, -om2 - om3 + om4, sigma)
+        d0 = lo_lorentz(om1, om2 + om3 + om4, sigma) - lo_lorentz(om1, -om2 - om3 - om4, sigma)
+        d1 = lo_lorentz(om1, -om2 + om3 + om4, sigma) - lo_lorentz(om1, om2 - om3 - om4, sigma)
+        d2 = lo_lorentz(om1, om2 - om3 + om4, sigma) - lo_lorentz(om1, -om2 + om3 - om4, sigma)
+        d3 = lo_lorentz(om1, om2 + om3 - om4, sigma) - lo_lorentz(om1, -om2 - om3 + om4, sigma)
+    case (8)
+        ! Lorentzian broadening for self-consistent linewidths
+        sigma = sr%sigsq(qp%ap(q2)%irreducible_index, b2) + &
+                sr%sigsq(qp%ap(q3)%irreducible_index, b3) + &
+                sr%sigsq(qp%ap(q4)%irreducible_index, b4)
+        ! The Lorentzian is defined with a factor 1/2 in libolle
+        sigma = sigma * 2.0_r8
+
+        om1 = dr%iq(q1)%omega(b1)
+        om2 = dr%aq(q2)%omega(b2)
+        om3 = dr%aq(q3)%omega(b3)
+        om4 = dr%aq(q4)%omega(b4)
+
+        d0 = lo_lorentz(om1, om2 + om3 + om4, sigma) - lo_lorentz(om1, -om2 - om3 - om4, sigma)
+        d1 = lo_lorentz(om1, -om2 + om3 + om4, sigma) - lo_lorentz(om1, om2 - om3 - om4, sigma)
+        d2 = lo_lorentz(om1, om2 - om3 + om4, sigma) - lo_lorentz(om1, -om2 + om3 - om4, sigma)
+        d3 = lo_lorentz(om1, om2 + om3 - om4, sigma) - lo_lorentz(om1, -om2 - om3 + om4, sigma)
     end select
 
 end subroutine
