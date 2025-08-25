@@ -77,6 +77,7 @@ init: block
     fh%alpha_pos = opts%alpha_pos
     fh%nsteps = opts%nsteps
     fh%update_pos = opts%update_pos
+    fh%verbosity = opts%verbosity
 
     ! Stuffs for the third order
     fh%alpha_thirdorder = opts%alpha_thirdorder

@@ -42,6 +42,8 @@ type lo_fit_helper
     real(r8) :: thresh
     !> Do we update positions
     logical :: update_pos
+    !> Verbosity
+    integer :: verbosity
 contains
     !> Prefit the forceconstants by doing fit on individual atoms
     procedure :: prefit_secondorder
@@ -109,19 +111,11 @@ subroutine prefit_secondorder(fh, fc, mem, mw)
 
         ! And we can distribute. The 0.5 is to average because the coefficient will appear for ij and ji
         do j=1, fc%atom(iat)%n
-            ! First the transpose
             ic = fc%atom(iat)%ic(j)
-            if (ic .lt. 0) then
-                do b=1, 3
-                    idx = 3 * (j - 1) + b
-                    fc%m(b, :, abs(ic)) = fc%m(b, :, abs(ic)) + 0.5_r8 * yvec(idx, :)
-                end do
-            else
-                do b=1, 3
-                    idx = 3 * (j - 1) + b
-                    fc%m(:, b, ic) = fc%m(:, b, ic) + 0.5_r8 * yvec(idx, :)
-                end do
-            end if
+            do b=1, 3
+                idx = 3 * (j - 1) + b
+                fc%m(b, :, abs(ic)) = fc%m(b, :, abs(ic)) + 0.5_r8 * yvec(idx, :)
+            end do
         end do
     end do
     ! And we can average everything together
@@ -152,6 +146,8 @@ subroutine optimize_secondorder(fh, fc, uc, mw, mem)
     real(r8) :: maxgrad, maxavgf, loss, l0, rel_loss, gam, gampos
     !> Integers for do loop
     integer :: istep, itest, iat, a
+    !> Do we exit the loop ?
+    logical :: converged, speak
     !> For better print
     character(len=1000) :: opf1, opf2
 
@@ -196,6 +192,7 @@ subroutine optimize_secondorder(fh, fc, uc, mw, mem)
     end if
 
     ! And let's do the conjugated gradient descent
+    converged = .false.
     gradloop: do istep=1, fh%nsteps
         ! We keep track of the previous loss
         l0 = loss
@@ -230,11 +227,14 @@ subroutine optimize_secondorder(fh, fc, uc, mw, mem)
         maxgrad = maxval(abs(grad))
         maxavgf = maxval(abs(fdiff)) * lo_force_HartreeBohr_to_eVA
         rel_loss = sqrt(abs(loss - l0)) / sqrt(l0)
+
+        if (maxgrad .lt. fh%thresh .or. rel_loss .lt. 1e-12_r8) converged = .true.
+        speak = .false.
+        if (converged .or. istep .eq. fh%nsteps .or. lo_trueNtimes(istep, 10, fh%nsteps) .or. fh%verbosity .eq. 2) speak = .true.
+
         ! We print 10 steps in total or if we have to exit the loop
-        if (istep .eq. fh%nsteps .or. lo_trueNtimes(istep, 10, fh%nsteps) .or. maxgrad .lt. fh%thresh .or. rel_loss .lt. 1e-12) then
-            if (mw%talk) then
-                write(lo_iou, opf2) istep, maxgrad * lo_Hartree_to_eV, maxavgf, sqrt(loss) * lo_force_HartreeBohr_to_eVA, rel_loss
-            end if
+        if (speak .and. mw%talk) then
+            write(lo_iou, opf2) istep, maxgrad * lo_Hartree_to_eV, maxavgf, sqrt(loss) * lo_force_HartreeBohr_to_eVA, rel_loss
         end if
         ! And maybe we can exit ?
         if (maxgrad .lt. fh%thresh .or. rel_loss .lt. 1e-12_r8) exit gradloop
