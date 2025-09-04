@@ -14,6 +14,9 @@ use type_projected_phonons, only: lo_projected_phonons
 use type_qpointmesh, only: lo_qpoint_mesh
 use type_projected_phonons_bandstructure, only: lo_projected_phonons_bandstructure
 
+use gottochblandat, only: lo_gauss, lo_linspace
+use konstanter, only: lo_frequency_hartree_to_meV
+
 use options, only: lo_opts
 
 implicit none
@@ -126,6 +129,38 @@ ucell_proj: block
         t0 = walltime()
         call ph_rs%generate(fc2, ss, mem, mw)
         if (mw%talk) write(lo_iou, *) 'done in '//tochar(walltime() - t0)//' s'
+
+
+        ddooss: block
+            real(r8), dimension(:), allocatable :: x, y
+            real(r8) :: f0
+            integer :: i, j, n
+
+            n = 1000
+            allocate(x(n))
+            allocate(y(n))
+
+            call lo_linspace(ph_rs%omega_min*1.1, ph_rs%omega_max*1.1, x)
+
+            do i=1, n
+                do j=1, ph_rs%nmodes
+                    y(i) = y(i) + lo_gauss(x(i), ph_rs%omega(j), 0.1_r8 * ph_rs%default_smearing) / ph_rs%nmodes
+                end do
+            end do
+
+            f0 = 0.0_r8
+            do i=1, n
+                f0 = f0 + y(i) * (x(2) - x(1))
+            end do
+            y = y / f0
+
+            open(666, file='dos.dat', status='replace')
+            do i=1, n
+                write(666, '(7(1X,F25.12))') x(i) * lo_frequency_hartree_to_meV, y(i)
+            end do
+            close(666)
+
+        end block ddooss
 
         ! Stop if we have imaginary frequencies
         if (minval(ph_rs%omega) .lt. 0.0_r8) then

@@ -369,10 +369,10 @@ subroutine lo_dgelss(a,b,rank,s,rcond,info)
     else
         o_rcond = 100*epsilon(1.0_flyt)
     endif
-    lda = max(1,size(a,1))
-    ldb = max(1,size(b,1))
     m = size(a,1)
     n = size(a,2)
+    lda = max(1, m)
+    ldb = max(1, max(m, n))
     nrhs = size(b,2)
     l_stat_alloc = 0
     if(present(s)) then

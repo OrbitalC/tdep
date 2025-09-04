@@ -111,10 +111,10 @@ subroutine prefit_secondorder(fh, fc, mem, mw)
 
         ! And we can distribute. The 0.5 is to average because the coefficient will appear for ij and ji
         do j=1, fc%atom(iat)%n
-            ic = fc%atom(iat)%ic(j)
+            ic = abs(fc%atom(iat)%ic(j))
             do b=1, 3
                 idx = 3 * (j - 1) + b
-                fc%m(b, :, abs(ic)) = fc%m(b, :, abs(ic)) + 0.5_r8 * yvec(idx, :)
+                fc%m(b, :, ic) = fc%m(b, :, ic) + 0.5_r8 * yvec(idx, :)
             end do
         end do
     end do
