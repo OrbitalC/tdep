@@ -273,6 +273,9 @@ subroutine generate(sr, qp, dr, uc, fct, fcf, opts, tmr, mw, mem)
 
         ! Reduce the linewidth
         call mw%allreduce('sum', buf_lw)
+        call mw%allreduce('sum', buf_lwi)
+        call mw%allreduce('sum', buf_lw3)
+        call mw%allreduce('sum', buf_lw4)
 
         ! Distribute it after fixing the degeneracies
         do q1 = 1, qp%n_irr_point
