@@ -47,7 +47,13 @@ jobs:
           # https://github.com/mesonbuild/meson/issues/11088
           export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
           export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
-          sudo apt-get install -y pkg-config
+          # sudo apt-get install -y pkg-config # this version is too old... manual install
+          wget https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
+          tar -xf pkgconf-2.5.1.tar.xz
+          cd pkgconf-2.5.1
+          ./configure --prefix=/usr
+          make
+          sudo make install
       - name: compile TDEP with debug flags
         id: compile_debug
         run: |
