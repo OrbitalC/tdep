@@ -47,13 +47,16 @@ jobs:
           # https://github.com/mesonbuild/meson/issues/11088
           export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
           export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
-          # sudo apt-get install -y pkg-config # this version is too old... manual install
-          wget https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
-          tar -xf pkgconf-2.5.1.tar.xz
-          cd pkgconf-2.5.1
-          ./configure --prefix=/usr
-          make
-          sudo make install
+          export PKG_CONFIG_PATH="/usr/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
+          sudo apt-get install -y pkg-config # this version is too old... manual install
+          # wget https://distfiles.ariadne.space/pkgconf/pkgconf-2.5.1.tar.xz
+          # tar -xf pkgconf-2.5.1.tar.xz
+          # cd pkgconf-2.5.1
+          # ./configure --prefix=/usr
+          # make
+          # sudo make install
+          # sudo ln -s pkgconf /usr/bin/pkg-config
+          # cd ..
       - name: compile TDEP with debug flags
         id: compile_debug
         run: |
@@ -67,10 +70,12 @@ jobs:
         if: steps.compile_debug.outcome == 'success'
         id: compile_meson
         run: |
+          ./setup_git_version.sh
           meson setup build
           cd build
           meson compile
           meson install
+          cd ..
           rm -r build # clean build dir
       - name: compile TDEP production
         if: steps.compile_meson.outcome == 'success'
