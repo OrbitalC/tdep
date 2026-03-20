@@ -93,6 +93,7 @@ subroutine parse(opts)
     call cli%get(switch='--quantum', val=opts%quantum, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--nothirdorder', val=opts%nothirdorder, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--nofourthorder', val=opts%nofourthorder, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--qpoint_harmonic', val=opts%qgh, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph, error=lo_status); errctr = errctr + lo_status
 

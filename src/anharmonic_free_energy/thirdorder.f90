@@ -183,7 +183,7 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
     !> Frequencies, bose-einstein occupation and scattering strength and some other buffer
     real(r8) :: sigma, om1, om2, om3, n2, n3, psisq, f0, f1, plf0, plf1, perm, f2, n1, pref, t0, prefactor
     !>
-    real(r8) :: sig1, sig2, sig3, mult, dn1, dn2, dn3, ddn1, ddn2, ddn3, df1, df2, ddf1, ddf2, df0, ddf0
+    real(r8) :: sig1, sig2, sig3, dn1, dn2, dn3, ddn1, ddn2, ddn3, df1, df2, ddf1, ddf2, df0, ddf0
     !> The complex threephonon matrix element
     complex(r8) :: c0
     !> Integers for do loops and counting
@@ -227,16 +227,9 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
         ctr = ctr + 1
         if (mod(ctr, mw%n) .ne. mw%r) cycle
         q3 = fft_third_grid_index(qp%ip(q1)%full_index, q2, dims)
-        if (q3 .lt. q2) cycle
+       
 
-        ! The prefactor to take into account what we are skipping
-        if (q2 .eq. q3) then
-            mult = 1.0_r8
-        else
-            mult = 2.0_r8
-        end if
-
-        prefactor = qp%ip(q1)%integration_weight*qp%ap(q2)%integration_weight*mult/uc%na
+        prefactor = qp%ip(q1)%integration_weight*qp%ap(q2)%integration_weight/uc%na
         ! pre-transform the matrix element
         call pretransform_phi3(fct, qp%ap(q2)%r, qp%ap(q3)%r, ptf)
 
