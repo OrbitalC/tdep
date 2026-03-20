@@ -12,9 +12,7 @@ type lo_opts
     integer, dimension(3) :: qgrid, qg3ph, qg4ph
     integer :: integrationtype
     integer :: verbosity
-    integer :: nblocks
     logical :: quantum = .false.
-    logical :: stochastic = .false.
     logical :: thirdorder = .false.
     logical :: fourthorder = .false.
 contains
@@ -61,10 +59,6 @@ subroutine parse(opts)
                  help='Use Bose-Einstein occupations to compute the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--stochastic', &
-                 help='Add second order cumulant contribution to the free energy with a minus sign for self-consistent sampling', &
-                 required=.false., act='store_true', def='.false.', error=lo_status)
-    if (lo_status .ne. 0) stop
     call cli%add(switch='--thirdorder', &
                  help='Compute third order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
@@ -72,10 +66,6 @@ subroutine parse(opts)
     call cli%add(switch='--fourthorder', &
                  help='Compute fourth order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--nblocks', &
-                 help='Number of blocks used to compute uncertainty', &
-                 required=.false., act='store', def='10', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_manpage
     cli_verbose
@@ -99,21 +89,12 @@ subroutine parse(opts)
     call cli%get(switch='--temperature', val=opts%temperature, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid', val=opts%qgrid, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--quantum', val=opts%quantum, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--stochastic', val=opts%stochastic, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--thirdorder', val=opts%thirdorder, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--fourthorder', val=opts%fourthorder, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--nblocks', val=opts%nblocks, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--nblocks', val=opts%nblocks, error=lo_status); errctr = errctr + lo_status
 
     if (errctr .ne. 0) call lo_stop_gracefully(['Failed parsing the command line options'], lo_exitcode_baddim)
-
-    ! If we have MD data, makes no sense to use the high order correction
-    if (.not. opts%stochastic .and. (opts%thirdorder .or. opts%fourthorder)) then
-        write(*, *) 'Makes no sense to use higher order IFC if the configurations are not from a stochastic sampling'
-        stop
-    end if
 
     ! We have to enable thirdorder to use the qg3ph flag
     if (maxval(opts%qg3ph) .gt. 0 .and. .not. opts%thirdorder) then
