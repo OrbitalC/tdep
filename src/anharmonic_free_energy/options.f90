@@ -9,12 +9,12 @@ public :: lo_opts
 
 type lo_opts
     real(r8) :: temperature
-    integer, dimension(3) :: qgrid, qg3ph, qg4ph
+    integer, dimension(3) :: qgh, qg3ph, qg4ph
     integer :: integrationtype
     integer :: verbosity
     logical :: quantum = .false.
-    logical :: thirdorder = .false.
-    logical :: fourthorder = .false.
+    logical :: nothirdorder = .false.
+    logical :: nofourthorder = .false.
 contains
     procedure :: parse
 end type
@@ -42,14 +42,17 @@ subroutine parse(opts)
                   epilog=new_line('a')//"...")
 
     ! Specify some options
-    cli_qpoint_grid
+    call cli%add(switch='--qpoint_harmonic', switch_ab='-qgh', &
+                 help='Dimension of the q-grid for harmonic contributions', &
+                 nargs='3', required=.false., act='store', def='25 25 25', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--qpoint_grid3ph', switch_ab='-qg3ph', &
                  help='Dimension of the q-grid for three phonon contribution', &
-                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
+                 nargs='3', required=.false., act='store', def='20 20 20', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--qpoint_grid4ph', switch_ab='-qg4ph', &
                  help='Dimension of the q-grid for four phonon contribution', &
-                 nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
+                 nargs='3', required=.false., act='store', def='20 20 20', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--temperature', &
                  help='The temperature at which the thermodynamic properties are computed', &
@@ -59,12 +62,12 @@ subroutine parse(opts)
                  help='Use Bose-Einstein occupations to compute the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--thirdorder', &
-                 help='Compute third order anharmonic correction to the free energy', &
+    call cli%add(switch='--nothirdorder', &
+                 help='Do NOT compute third order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--fourthorder', &
-                 help='Compute fourth order anharmonic correction to the free energy', &
+    call cli%add(switch='--nofourthorder', &
+                 help='Do NOT compute fourth order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_manpage
@@ -87,33 +90,22 @@ subroutine parse(opts)
 
     ! get real options
     call cli%get(switch='--temperature', val=opts%temperature, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--qpoint_grid', val=opts%qgrid, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--quantum', val=opts%quantum, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--thirdorder', val=opts%thirdorder, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--fourthorder', val=opts%fourthorder, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--nothirdorder', val=opts%nothirdorder, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--nofourthorder', val=opts%nofourthorder, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph, error=lo_status); errctr = errctr + lo_status
 
     if (errctr .ne. 0) call lo_stop_gracefully(['Failed parsing the command line options'], lo_exitcode_baddim)
 
-    ! We have to enable thirdorder to use the qg3ph flag
-    if (maxval(opts%qg3ph) .gt. 0 .and. .not. opts%thirdorder) then
-        write(*, *) 'You have to enable thirdorder to use a three-phonon q-grid, stopping calculation.'
-        stop
-    end if
-    if (minval(opts%qg3ph) .le. 0 .and. opts%thirdorder) then
-        opts%qg3ph = opts%qgrid
+    if (maxval(opts%qg3ph) .gt. 0 .and. opts%nothirdorder) then
+        write(*, *) 'WARNING: You turned off thirdorder but still specified a three-phonon q-grid.'
     end if
 
-    ! We have to enable fourthorder to use the qg4ph flag
-    if (maxval(opts%qg4ph) .gt. 0 .and. .not. opts%fourthorder) then
-        write(*, *) 'You have to enable fourthorder to use a four-phonon q-grid, stopping calculation.'
-        stop
+    if (maxval(opts%qg4ph) .gt. 0 .and. opts%nofourthorder) then
+        write(*, *) 'WARNING: You turned off fourthorder but still specified a four-phonon q-grid.'
     end if
-    if (minval(opts%qg4ph) .le. 0 .and. opts%fourthorder) then
-        write(*, *) opts%qg4ph
-        opts%qg4ph = opts%qgrid
-    end if
+
 end subroutine
 
 end module

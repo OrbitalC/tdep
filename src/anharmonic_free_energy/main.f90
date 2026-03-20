@@ -30,7 +30,6 @@ type(lo_timer) :: tmr
 
 type(lo_thermodynamics) :: thermo
 real(r8) :: timer_init, timer_total
-logical :: havehighorder
 
 ! Init MPI, timers and options
 call mw%init()
@@ -51,7 +50,7 @@ init: block
         write(*, *) ''
         write(*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
         write(*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
-        write(*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgrid
+        write(*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgh
         write(*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
         write(*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
         write(*, *) ''
@@ -68,24 +67,22 @@ init: block
     call fc%readfromfile(uc, 'infile.forceconstant', mem, verbosity=-1)
     if (mw%talk) write (*, *) '... read second order forceconstant'
 
-    if (opts%thirdorder) then
+    if (.not. opts%nothirdorder) then
         call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
         if (mw%talk) write (*, *) '... read third order forceconstant'
     end if
-    if (opts%fourthorder) then
+    if (.not. opts%nofourthorder) then
         call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
         if (mw%talk) write (*, *) '... read fourth order forceconstant'
     end if
-    havehighorder = .false.
-    if (opts%thirdorder .or. opts%fourthorder) havehighorder = .true.
 
     call tmr%tock('reading input')
 
     timer_init = walltime() - timer_init
 
     thermo%temperature = opts%temperature
-    thermo%thirdorder = opts%thirdorder
-    thermo%fourthorder = opts%fourthorder
+    thermo%thirdorder = .not. opts%nothirdorder
+    thermo%fourthorder = .not. opts%nofourthorder
 end block init
 
 latdyn: block
@@ -104,7 +101,7 @@ latdyn: block
     end if
 
     if (mw%talk) write(*, *) '... generating q-mesh'
-    call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=.true., &
+    call lo_generate_qmesh(qp, uc, opts%qgh, 'fft', timereversal=.true., &
                            headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
     if (mw%talk) write(*, *) '... generating harmonic dispersion'
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
@@ -128,30 +125,30 @@ latdyn: block
         thermo%harmonic%S(1) = dr%phonon_entropy(temperature)
         thermo%harmonic%U(1) = thermo%harmonic%F(1) + temperature * thermo%harmonic%S(1)
         thermo%harmonic%Cv(1) = dr%phonon_cv(temperature)
-        call dr%phonon_kinetic_stress(qp, uc, temperature, thermo%harmonic%stress(:, :, 1))
+        ! call dr%phonon_kinetic_stress(qp, uc, temperature, thermo%harmonic%stress(:, :, 1))
     else
         thermo%harmonic%F(1) = dr%phonon_free_energy_classical(temperature)
         thermo%harmonic%U(1) = 3.0_r8 * lo_kb_Hartree * temperature
         thermo%harmonic%S(1) = (thermo%harmonic%U(1) - thermo%harmonic%F(1)) / temperature
         thermo%harmonic%Cv(1) = 3.0_r8 * lo_kb_Hartree
         thermo%harmonic%stress = 0.0_r8
-        do i=1, 3
-            thermo%harmonic%stress(i, i, 1) = lo_kb_Hartree * temperature * uc%na / uc%volume
-        end do
+        ! do i=1, 3
+        !     thermo%harmonic%stress(i, i, 1) = lo_kb_Hartree * temperature * uc%na / uc%volume
+        ! end do
     end if
     ! Usually not needed here, but always a good idea to clean
-    call lo_symmetrize_stress(thermo%harmonic%stress(:, :, 1), uc)
+    ! call lo_symmetrize_stress(thermo%harmonic%stress(:, :, 1), uc)
 
     ! If we have third order IFC, might as well compute elastic things
-    if (opts%thirdorder) then
-        if (mw%talk) write(*, *) '... computing third order contribution to elastic properties'
+    ! if (opts%thirdorder) then
+    !     if (mw%talk) write(*, *) '... computing third order contribution to elastic properties'
 
-        call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), &
-                                thermo%alpha, opts%quantum, mw, mem)
-        ! Now we symmetrize
-        call lo_symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
-        call lo_symmetrize_stress(thermo%alpha, uc)
-    end if
+    !     call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), &
+    !                             thermo%alpha, opts%quantum, mw, mem)
+    !     ! Now we symmetrize
+    !     call lo_symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
+    !     call lo_symmetrize_stress(thermo%alpha, uc)
+    ! end if
     call tmr%tock('harmonic properties')
 end block latdyn
 
@@ -167,7 +164,7 @@ latdyn3ph: block
     real(r8) :: fe3, s3, cv3
 
 
-    if (opts%thirdorder) then
+    if (.not. opts%nothirdorder) then
         if (mw%talk) then
             write(*, *) ''
             write(*, *) 'THREE PHONONS CONTRIBUTION'
@@ -197,7 +194,7 @@ latdyn4ph: block
     !> The third order contribution
     real(r8) :: fe4, s4, cv4
 
-    if (opts%fourthorder) then
+    if (.not. opts%nofourthorder) then
         if (mw%talk) then
             write(*, *) ''
             write(*, *) 'FOUR PHONONS CONTRIBUTION'
@@ -236,14 +233,14 @@ summary: block
     e_unit = lo_Hartree_to_eV
     s_unit = 1.0 / lo_kb_Hartree
     c_unit = 1.0 / lo_kb_Hartree
-    p_unit = lo_pressure_HartreeBohr_to_GPa
+    ! p_unit = lo_pressure_HartreeBohr_to_GPa
 
     ! Get the stress tensor (harmonic + threephonon only)
-    sigma = (thermo%harmonic%stress(:, :, 1) + thermo%threephonon%stress(:, :, 1)) * p_unit
-    pressure = lo_trace(sigma) / 3.0_r8
+    ! sigma = (thermo%harmonic%stress(:, :, 1) + thermo%threephonon%stress(:, :, 1)) * p_unit
+    ! pressure = lo_trace(sigma) / 3.0_r8
 
     if (mw%talk) then
-        u = open_file('out', 'outfile.anharmonic_free_energy')
+        u = open_file('out', 'outfile.anharmonic_thermodynamics')
         write(u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
 
         opfc = '(4(1X,A24))'
@@ -266,7 +263,7 @@ summary: block
         write(u, opff) buf
 
         ! Third order (three-phonon) contribution
-        if (opts%thirdorder) then
+        if (.not. opts%nothirdorder) then
             buf3(1) = thermo%threephonon%F(1) * f_unit
             buf3(2) = thermo%threephonon%U(1) * e_unit
             buf3(3) = thermo%threephonon%S(1) * s_unit
@@ -281,7 +278,7 @@ summary: block
         end if
 
         ! Fourth order (four-phonon) contribution
-        if (opts%fourthorder) then
+        if (.not. opts%nofourthorder) then
             buf4(1) = thermo%fourphonon%F(1) * f_unit
             buf4(2) = thermo%fourphonon%U(1) * e_unit
             buf4(3) = thermo%fourphonon%S(1) * s_unit
@@ -295,27 +292,6 @@ summary: block
             write(u, opff) buf4
         end if
 
-        ! Total anharmonic free energy
-        write(*, *) ''
-        write(*, *) 'Total: F = F_harm + F3 + F4'
-        buf(1) = buf(1) + thermo%threephonon%F(1) * f_unit + thermo%fourphonon%F(1) * f_unit
-        buf(2) = buf(2) + thermo%threephonon%U(1) * e_unit + thermo%fourphonon%U(1) * e_unit
-        buf(3) = buf(3) + thermo%threephonon%S(1) * s_unit + thermo%fourphonon%S(1) * s_unit
-        buf(4) = buf(4) + thermo%threephonon%Cv(1) * c_unit + thermo%fourphonon%Cv(1) * c_unit
-        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
-        write(*, opff) buf
-        write(u, *) '# Total: F = F_harm + F3 + F4'
-        write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
-        write(u, opff) buf
-
-        write(*, *) ''
-        write(*, *) 'Elastic properties'
-        write(*, '(1X,A24)') 'Pressure [GPa]'
-        write(*, '(1X,F24.12)') -pressure
-        write(*, *) 'Stress tensor [GPa]'
-        do i=1, 3
-            write(*, opfs) sigma(i, :)
-        end do
         close(u)
     end if
 
