@@ -1,5 +1,7 @@
 
-This code calculates the anharmonic Helmholtz free energy. It includes the contributions from baseline shifts, renormalized phonons and higher order terms.
+This code calculates the anharmonic Helmholtz free energy, internal energy, entropy and heat capacity. It includes the contributions from baseline shifts, renormalized phonons and higher order terms. This program must use force constants from sTDEP/SSCHA (self-consistent phonons). Force cosntants fit to MD/PIMD data are incompatible with this theory.
+
+Only the first and second-cumulant corrections are computed by this code. The constant corrections (i.e., $U_0$ and its derivatives) must be implemented elsewhere as it requires interfacing with a force-calculator like LAMMPS. Please refer to CITATION and a reference implementation [here](https://github.com/ejmeitz/CumulantAnalysis.jl). 
 
 ### Longer summary
 

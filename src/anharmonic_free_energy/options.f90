@@ -37,7 +37,7 @@ subroutine parse(opts)
                   version=lo_version, &
                   license=lo_licence, &
                   help='Usage: ', &
-                  description='Calculates the anharmonic free energy.', &
+                  description='Calculates the anharmonic free energy given sTDEP force constants.', &
                   examples=["mpirun anharmonic_free_energy"], &
                   epilog=new_line('a')//"...")
 

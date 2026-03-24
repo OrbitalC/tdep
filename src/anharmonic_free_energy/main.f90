@@ -262,21 +262,6 @@ summary: block
         write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
         write(u, opff) buf
 
-        ! Third order (three-phonon) contribution
-        if (.not. opts%nothirdorder) then
-            buf3(1) = thermo%threephonon%F(1) * f_unit
-            buf3(2) = thermo%threephonon%U(1) * e_unit
-            buf3(3) = thermo%threephonon%S(1) * s_unit
-            buf3(4) = thermo%threephonon%Cv(1) * c_unit
-            write(*, *) ''
-            write(*, *) 'Third order contribution (F3)'
-            write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
-            write(*, opff) buf3
-            write(u, *) '# Third order contribution (F3)'
-            write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
-            write(u, opff) buf3
-        end if
-
         ! Fourth order (four-phonon) contribution
         if (.not. opts%nofourthorder) then
             buf4(1) = thermo%fourphonon%F(1) * f_unit
@@ -284,12 +269,27 @@ summary: block
             buf4(3) = thermo%fourphonon%S(1) * s_unit
             buf4(4) = thermo%fourphonon%Cv(1) * c_unit
             write(*, *) ''
-            write(*, *) 'Fourth order contribution (F4)'
+            write(*, *) 'First Cumulant Contribution'
             write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
             write(*, opff) buf4
-            write(u, *) '# Fourth order contribution (F4)'
+            write(u, *) '# First Cumulant Contribution'
             write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
             write(u, opff) buf4
+        end if
+
+        ! Third order (three-phonon) contribution
+        if (.not. opts%nothirdorder) then
+            buf3(1) = thermo%threephonon%F(1) * f_unit
+            buf3(2) = thermo%threephonon%U(1) * e_unit
+            buf3(3) = thermo%threephonon%S(1) * s_unit
+            buf3(4) = thermo%threephonon%Cv(1) * c_unit
+            write(*, *) ''
+            write(*, *) 'Second Cumulant Contribution'
+            write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(*, opff) buf3
+            write(u, *) '# Second Cumulant Contribution'
+            write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(u, opff) buf3
         end if
 
         close(u)
