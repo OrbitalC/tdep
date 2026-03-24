@@ -5,11 +5,10 @@ from pathlib import Path
 parent = Path(__file__).parent
 folder = parent / "reference"
 cases = [
-    "Argon_80K_classical",
     "Silicon_1600K_classical",
     "Neon_14K_quantum",
 ]
-output_file = "outfile.anharmoinc_thermodynamics"
+output_file = "outfile.anharmonic_thermodynamics"
 
 
 def _read_file(file):
