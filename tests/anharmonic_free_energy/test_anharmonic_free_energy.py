@@ -9,6 +9,7 @@ cases = [
     "Neon_14K_quantum",
 ]
 output_file = "outfile.anharmonic_thermodynamics"
+decimals = 7 # my ground-truth data just has this many decimals
 
 
 def _read_file(file):
@@ -32,7 +33,11 @@ def test_output(case):
     data_new = _read_file(file_new)
 
     assert data_ref.shape == data_new.shape, file_new.absolute()
-    np.testing.assert_allclose(data_ref, data_new, err_msg=file_new.absolute())
+    np.testing.assert_array_equal(
+        np.round(data_ref, decimals=decimals),
+        np.round(data_new, decimals=decimals),
+        err_msg=file_new.absolute(),
+    )
 
 
 if __name__ == "__main__":
