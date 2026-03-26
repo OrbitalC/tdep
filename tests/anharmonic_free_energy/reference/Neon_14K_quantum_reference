@@ -1,6 +1,10 @@
-# Harmonic (F,U,S,Cv)
-0.0072576 0.0077620 0.4181343 0.9870306
-# First-Cumulant Part (F,U,S,Cv) 
-0.0000755 0.0000628 -0.0105287 -0.0262279    
-# Second-Cumulant Part (F,U,S,Cv)
--0.0002033 -0.0000349 0.1395437 0.2610684
+# Temperature:          0.140000000000E+02
+ # Harmonic contribution
+    # Free energy [eV/at]  Internal energy [eV/at]             Entropy [kB]       Heat capacity [kB]
+           0.007257533994           0.007761992603           0.418142934371           0.987045346630
+ # First Cumulant Contribution
+    # Free energy [eV/at]  Internal energy [eV/at]             Entropy [kB]       Heat capacity [kB]
+           0.000075474136           0.000062771925          -0.010528792426          -0.026228049607
+ # Second Cumulant Contribution
+    # Free energy [eV/at]  Internal energy [eV/at]             Entropy [kB]       Heat capacity [kB]
+          -0.000204142906          -0.000033607872           0.141355540918           0.264402508187

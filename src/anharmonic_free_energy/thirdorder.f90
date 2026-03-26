@@ -282,20 +282,20 @@ subroutine free_energy_thirdorder(uc, fct, qp, dr, temperature, fe3, s3, cv3, qu
                         f1 = (n1 + 1.0_r8)*(n2 + n3 + 1.0_r8) + n2*n3
                         f2 = n3*(n1 + n2 + 1.0_r8) - n1*n2
                         ! Here is for the entropy
-                        df1 = dn1 * (n2 + n3 + 1.0_r8) + (n1 + 1.0_r8) * (dn2 + dn3) + dn2 * n3 + n2 * dn3
-                        df2 = dn3 * (n1 + n2 + 1.0_r8) + dn1 * (n3 - n2) + dn2 * (n3 - n1)
+                        df1 = dn1 * (n2 + n3 + 1.0_r8) + (n1 + 1.0_r8) * (dn2 + dn3) + (dn2 * n3) + (n2 * dn3)
+                        df2 = dn3 * (n1 + n2 + 1.0_r8) + (dn1 * (n3 - n2)) + (dn2 * (n3 - n1))
                         ! And the heat capacity
                         ddf1 = ddn1 * (n2 + n3 + 1.0_r8) + 2.0_r8 * dn1 * (dn2 + dn3) + (n1 + 1.0_r8) * (ddn2 + ddn3) + &
                                ddn2 * n3 + n2 * ddn3 + 2.0_r8 * dn2 * dn3
-                        ddf2 = ddn3 * (n1 + n2 + 1.0_r8) + dn3 * (dn1 + dn2) + &
-                               ddn1 * (n3 - n2) + dn1 * (dn3 - dn2) + &
-                               ddn2 * (n3 - n1) + dn2 * (dn3 - dn1)
+                        ddf2 = (ddn3 * (n1 + n2 + 1.0_r8)) + (dn3 * (dn1 + dn2)) + &
+                               (ddn1 * (n3 - n2)) + (dn1 * (dn3 - dn2)) + &
+                               (ddn2 * (n3 - n1)) + (dn2 * (dn3 - dn1))
 
                         ! Compute the principal values
                         f1 = f1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
                         df1 = df1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
                         ddf1 = ddf1*real(1.0_r8/(om1 + om2 + om3 + lo_imag*sigma), r8)
-                        f2 = 3*f2*real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
+                        f2 = 3.0_r8*f2*real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
                         df2 = 3.0_r8 * df2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
                         ddf2 = 3.0_r8 * ddf2 * real(1.0/(om1 + om2 - om3 + lo_imag*sigma), r8)
 
