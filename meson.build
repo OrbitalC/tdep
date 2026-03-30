@@ -15,6 +15,7 @@ dep_mpi = dependency('mpi', language: 'fortran')
 # linear algebra
 dep_linalg_found = false
 # 1) try accelerate framework for macos (if wanted)
+#    enabled via -Daccfrmwrk=true
 if build_machine.system() == 'darwin' and get_option('accfrmwrk') == true
   dep_linalg = dependency('appleframeworks', modules : 'accelerate', required: false)
   dep_linalg_found = dep_linalg.found()

@@ -1,7 +1,7 @@
 Installation with the Meson build system
 ===
 
-Alternativaly to the `build_things.sh` script, there is also the possibility to use [Meson](https://mesonbuild.com/). It is a build automation tool, and  it supports incremental builds. The dependencies should be installed in standard locations (e.g. `/usr/local/`) or specified in the `PKG_CONFIG_PATH`.
+Alternativaly to the `build_things.sh` script, there is also the possibility to use [Meson](https://mesonbuild.com/). It is a build automation tool, and  it supports incremental builds (similarly to autotools and CMake). The dependencies should be installed in standard locations (e.g. `/usr/local/`) or specified in the `PKG_CONFIG_PATH`.
 
 First setup the git version for the code:
 ```setup_git_version.sh```
@@ -16,8 +16,16 @@ meson install
 
 If some dependencies are not found, please make sure that they are in your PKG_CONFIG_PATH. For example, put a line of the form in your `.bashrc` / `.bash_profile` :
 ```export PKG_CONFIG_PATH="/path/to/your/hdf5/:${PKG_CONFIG_PATH}"```
-Depending on the method used to install the required libraries, they may not be automatically put inside the search path (Homebrew is known to not always do it).
-You can make sure that `pkg-config` is able to find the dependencies by running: `pkg-config --libs hdf5`
+Depending on the method used to install the required libraries, they may not be automatically put inside the search path (Homebrew is known to not always do it). You may also have to set the environment variables `PKG_CONFIG_ALLOW_SYSTEM_LIBS` and `PKG_CONFIG_ALLOW_SYSTEM_CFLAGS` to 1:
+```
+export PKG_CONFIG_ALLOW_SYSTEM_LIBS=1
+export PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1
+```
+You can make sure that `pkg-config` is able to find the dependencies and proper compilation/linking flags by running:
+```
+pkg-config --libs hdf5
+pkg-config --cflags hdf5
+```
 Meson will first try to find dependencies via `pkg-config`. If it does not find them, it will try to use CMake (if installed/loaded).
 
-Once the configuration step is done, everything should go smoothly. The binaries will be in build/bin/executable_name.
+Once the configuration step is done, everything should go smoothly. The binaries will be in bin/executable_name.
