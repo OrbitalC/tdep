@@ -4,7 +4,7 @@
           -0.515229485446           0.413631854400           6.736869972408           3.000000000000
  # First Cumulant Contribution
     # Free energy [eV/at]  Internal energy [eV/at]             Entropy [kB]       Heat capacity [kB]
-          -0.000573215900           0.000573215900           0.008314870736           0.008314870736
+          -0.000543896863           0.000543896863           0.007889578969           0.007889578969
  # Second Cumulant Contribution
     # Free energy [eV/at]  Internal energy [eV/at]             Entropy [kB]       Heat capacity [kB]
-          -0.002535207816           0.002535207816           0.036774843951           0.036774843951
+          -0.002515013780           0.002515013780           0.036481916272           0.036481916272
