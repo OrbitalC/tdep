@@ -21,6 +21,7 @@ type lo_opts
     logical :: thirdorder = .false.
     logical :: fourthorder = .false.
     logical :: fourthorder_real = .false.
+    logical :: mct = .false.
     logical :: slightsmearing = .false.
     integer :: integrationtype = -lo_hugeint
     logical :: readiso = .false.
@@ -101,11 +102,11 @@ subroutine parse(opts)
     if (lo_status .ne. 0) stop
     cli_readpath
     cli_nq_on_path
-    call cli%add(switch='--dos',hidden=.true., &
+    call cli%add(switch='--dos', hidden=.true., &
                  help='Calculate the broadened and shifted phonon DOS.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--dos_qpoint_grid',hidden=.true., &
+    call cli%add(switch='--dos_qpoint_grid', hidden=.true., &
                  help='Interpolate to a (preferrably) denser q-mesh when calculating the DOS.', &
                  nargs='3', required=.false., act='store', def='-1 -1 -1', error=lo_status)
     if (lo_status .ne. 0) stop
@@ -131,6 +132,10 @@ subroutine parse(opts)
                  required=.false., act='store_true', def='.false.', error=lo_status)
     call cli%add(switch='--fourthorder', &
                  help='Consider four-phonon contributions to the dynamic part of the self-energy.', hidden=.true., &
+                 required=.false., act='store_true', def='.false.', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--remove_static_selfenergy', &
+                 help='Remove the static contribution to the self-energy as in the mode-coupling theory.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     call cli%add(switch='--nondiagonal', &
@@ -175,7 +180,7 @@ subroutine parse(opts)
                  help='Calculate somewhat self-consistent lineshapes and stuff.', hidden=.true., &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--geninterp',hidden=.true., &
+    call cli%add(switch='--geninterp', hidden=.true., &
                  help='First rule of interpolation is you do not talk about interpolation.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
@@ -183,7 +188,7 @@ subroutine parse(opts)
                  help='Cutoff for forceconstant interpolation.', &
                  required=.false., act='store', def='5.0', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--fancyinterp',hidden=.true., &
+    call cli%add(switch='--fancyinterp', hidden=.true., &
                  help='Second rule of interpolation is you do not talk about interpolation.', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
@@ -238,6 +243,7 @@ subroutine parse(opts)
     opts%thirdorder = .not. dumlog
     call cli%get(switch='--fourthorder_real', val=opts%fourthorder_real)
     call cli%get(switch='--fourthorder', val=opts%fourthorder)
+    call cli%get(switch='--remove_static_selfenergy', val=opts%mct)
     call cli%get(switch='--nondiagonal', val=dumlog)
     opts%diagonal = .not. dumlog
     call cli%get(switch='--minsmear', val=opts%minsmear)
@@ -320,6 +326,24 @@ subroutine parse(opts)
             write (*, *) 'Makes no sense to specify a dos q-grid and a single point simultaneously'
             stop
         end if
+    end if
+
+    ! avoid using --readpath when not calculating a path, see #64
+    if (opts%readpathfromfile) then
+        if (.not. opts%qpointpath) then
+            write (*, *) '*** Makes no sense to specify --readpath when not calculating a path (--path).'
+            stop
+        end if
+        if (opts%dumpgrid) then
+            write (*, *) '*** Makes no sense to specify --readpath when calculating on grid (--dumpgrid).'
+            stop
+        end if
+    end if
+
+    ! If we are in the mode-coupling approach, the real part four phonon makes no sense
+    if (opts%mct .and. opts%fourthorder) then
+        write(*, *) 'There is no real part from the fourth order in the mode-coupling theory'
+        stop
     end if
 
     ! Not really options
