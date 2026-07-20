@@ -397,7 +397,7 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
 
     real(r8), dimension(:), allocatable :: buf
     real(r8) :: psisquare
-    real(r8) :: sigma, om1, om2, om3, om4, invf, s2, s3, s4
+    real(r8) :: sigma, dom, om2, om3, om4, invf, s2, s3, s4
     real(r8) :: plf1, plf2, t0, pref
     real(r8) :: n2, n3, n4
     integer :: q2, q3, ctr, i, ii, jj, b1, b2, b3, b4, ilo, ihi
@@ -442,7 +442,6 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
                             sigma = sqrt(s2**2 + s3**2 + s4**2)
                         end select
                         ! Fetch frequencies
-                        om1 = wp%omega(b1)
                         om2 = dr%aq(q2)%omega(b2)
                         om3 = dr%aq(q3)%omega(b3)
                         om4 = sr%omega4(b4, q2, q3)
@@ -454,40 +453,26 @@ subroutine fourphonon_imaginary_selfenergy_gaussian(wp, se, sr, qp, dr, temperat
 
                         plf1 = (n2 + 1) * (n3 + 1) * (n4 + 1)
                         plf2 = n2 * n3 * n4
+                        dom = om2 + om3 + om4
                         ! Delta(BigOmega - om2 - om3 - om4)
-                        ii = max(floor((om2 + om3 + om4 - 4 * sigma)*invf), 1)
-                        jj = min(ceiling((om2 + om3 + om4 + 4 * sigma) * invf), se%n_energy)
+                        ii = max(floor((dom - 4 * sigma)*invf), 1)
+                        jj = min(ceiling((dom + 4 * sigma) * invf), se%n_energy)
                         ilo = min(ilo, ii)
                         ihi = max(ihi, jj)
                         do i = ii, jj
-                            buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), om2 + om3 + om4, sigma)
-                        end do
-                        ! Delta(BigOmega + om2 + om3 + om4)
-                        ii = max(floor((om2 - om3 - om4 - 4 * sigma)*invf), 1)
-                        jj = min(ceiling((om2 - om3 - om4 + 4 * sigma) * invf), se%n_energy)
-                        ilo = min(ilo, ii)
-                        ihi = max(ihi, jj)
-                        do i = ii, jj
-                            buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), -om2 - om3 - om4, sigma)
+                            buf(i) = buf(i) + (plf1 - plf2) * lo_gauss(se%energy_axis(i), dom, sigma)
                         end do
 
                         plf1 = n2 * (n3 + 1) * (n4 + 1)
                         plf2 = (n2 + 1) * n3 * n4
+                        dom = -om2 + om3 + om4
                         ! Delta(BigOmega - om2 + om3 + om4)
-                        ii = max(floor((om2 - om3 - om4 - 4 * sigma)*invf), 1)
-                        jj = min(ceiling((om2 - om3 - om4 + 4 * sigma)*invf), se%n_energy)
+                        ii = max(floor((dom - 4 * sigma)*invf), 1)
+                        jj = min(ceiling((dom + 4 * sigma)*invf), se%n_energy)
                         ilo = min(ilo, ii)
                         ihi = max(ihi, jj)
                         do i = ii, jj
-                            buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), om2 - om3 - om4, sigma)
-                        end do
-                        ! Delta(BigOmega - om2 + om3 + om4)
-                        ii = max(floor((-om2 + om3 + om4 - 4 * sigma)*invf), 1)
-                        jj = min(ceiling((-om2 + om3 + om4 + 4 * sigma)*invf), se%n_energy)
-                        ilo = min(ilo, ii)
-                        ihi = max(ihi, jj)
-                        do i = ii, jj
-                            buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), -om2 + om3 + om4, sigma)
+                            buf(i) = buf(i) + 3 * (plf1 - plf2) * lo_gauss(se%energy_axis(i), dom, sigma)
                         end do
 
                         ! Increment the self-energy
