@@ -722,7 +722,7 @@ module subroutine longrange_elastic_constant_bracket( ew, p, born_effective_char
         real(r8), dimension(3) :: vB
         real(r8), dimension(3, 3) :: mu,m0,m1
         real(r8), dimension(3) :: Kvec, tauvec, Keps, vw
-        real(r8) :: expLambdaKnorm,f0,inv4lambda2, partialChi, knorm, invknorm, ikr, Kx, Ky, Kz, expikr, Chi
+        real(r8) :: expLambdaKnorm,f0,inv4lambda2, partialChi, knorm, invknorm, ikr, Kx, Ky, Kz, cosikr, sinikr, Chi_c, Chi_s
         integer :: ialpha,ibeta,igamma,idelta,i,j,ii,jj
         integer :: a1,a2,ig
 
@@ -811,13 +811,16 @@ module subroutine longrange_elastic_constant_bracket( ew, p, born_effective_char
             do a2=1,p%na
                 tauvec = lo_chop(p%rcart(:, a1) - p%rcart(:, a2), lo_sqtol)
                 ikr = dot_product(Kvec, tauvec)
-                expikr = real( cmplx(cos(ikr), sin(ikr), r8), r8)
-                Chi = partialChi*expikr
+                !AA: the first-derivative (rotational) bracket is purely imaginary so we need that phase term
+                cosikr = cos(ikr)
+                sinikr = sin(ikr)
+                Chi_c = partialChi*cosikr
+                Chi_s = partialChi*sinikr
 
-                !vw= tauvec*lo_imag -2*Keps*(invknorm + inv4lambda2)
+                !vw= tauvec*lo_imag -2*Keps*(invknorm + inv4lambda2) 
                 vw= -2*Keps*(invknorm + inv4lambda2)
-                vB = Chi*vw
-                mC = mu*Chi + lo_outerproduct(vw,vw)*Chi
+                vB = Chi_c*vw
+                mC = mu*Chi_c + lo_outerproduct(vw,vw)*Chi_c
 
                 brk1=0.0_r8
                 do igamma=1,3
@@ -826,7 +829,7 @@ module subroutine longrange_elastic_constant_bracket( ew, p, born_effective_char
                     m0=0.0_r8
                     do ialpha=1,3
                     do ibeta=1,3
-                        m0(ialpha,ibeta) = Chi*tE(ialpha,ibeta,igamma,idelta) + &
+                        m0(ialpha,ibeta) = Chi_c*tE(ialpha,ibeta,igamma,idelta) + &
                                            tD(ialpha,ibeta,igamma)*vB(idelta) + &
                                            tD(ialpha,ibeta,idelta)*vB(igamma) + &
                                            mA(ialpha,ibeta)*mC(igamma,idelta)
@@ -859,7 +862,7 @@ module subroutine longrange_elastic_constant_bracket( ew, p, born_effective_char
                     m0=0.0_r8
                     do ialpha=1,3
                     do ibeta=1,3
-                        m0(ialpha,ibeta) = tD(ialpha,ibeta,igamma)*Chi + mA(ialpha,ibeta)*vB(igamma)
+                        m0(ialpha,ibeta) = tD(ialpha,ibeta,igamma)*Chi_s + mA(ialpha,ibeta)*vw(igamma)*Chi_s
                     enddo
                     enddo
                     ! multiply in charges
@@ -893,6 +896,8 @@ module subroutine longrange_elastic_constant_bracket( ew, p, born_effective_char
         brk0=brk0*f0
 
         bracket=-real(brk0,r8)
+        !AA: same convention as the huang term (actually depends on how we define invariance violations in ifc_solvers )
+        rottensor=-rottensor*f0
 
         if (verbosity .gt. 0) then
             call lo_progressbar('... long-range elastic constants', ew%n_Gvector, ew%n_Gvector, walltime() - timer)
