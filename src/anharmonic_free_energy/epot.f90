@@ -219,7 +219,7 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
     !> The simulation
     type(lo_mdsim), intent(in) :: sim
     !> The thermodynamic helper
-    type(lo_thermodynamics), intent(inout) :: thermo
+    type(thermodynamics), intent(inout) :: thermo
     !> Number of blocks
     integer, intent(in) :: nblocks
     !> MPI
@@ -269,8 +269,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
             ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
 
             ! But also the stress differences, in Voigt notation
-            sdiff(i, :, 1) = lo_full_to_voigt_33(sim%stat%stress(:, :, i))
-            sdiff(i, :, 2) = lo_full_to_voigt_33(sim%stat%stress(:, :, i) - s3)
+            sdiff(i, :, 1) = full_to_voigt_33(sim%stat%stress(:, :, i))
+            sdiff(i, :, 2) = full_to_voigt_33(sim%stat%stress(:, :, i) - s3)
             if (mw%talk .and. lo_trueNtimes(i, 127, ntot)) then
                 call lo_progressbar(' ... computing energy from IFC', j, ntot, walltime() - t0)
             end if
@@ -356,8 +356,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
             end do
 
             thermo%first_order%F = U0
-            thermo%first_order%stress(:, :, 1) = thermo%first_order%stress(:, :, 1) +  lo_voigt_to_full_33(stress_voigt(:, 1))
-            thermo%first_order%stress(:, :, 2) = thermo%first_order%stress(:, :, 2) + lo_voigt_to_full_33(stress_voigt(:, 2))
+            thermo%first_order%stress(:, :, 1) = thermo%first_order%stress(:, :, 1) +  voigt_to_full_33(stress_voigt(:, 1))
+            thermo%first_order%stress(:, :, 2) = thermo%first_order%stress(:, :, 2) + voigt_to_full_33(stress_voigt(:, 2))
         else
             call mem%allocate(buf, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
             call mem%allocate(bufcv, [2, nblocks], persistent=.false., scalable=.false., file=__FILE__, line=__LINE__)
@@ -417,8 +417,8 @@ subroutine compute_realspace_thermo(pot, ss, sim, thermo, nblocks, mw, mem)
             thermo%first_order%U = U0
             thermo%second_order%S = S
             thermo%second_order%Cv = Cv
-            thermo%first_order%stress(:,: , 1) = lo_voigt_to_full_33(stress_voigt(:, 1))
-            thermo%first_order%stress(:,: , 2) = lo_voigt_to_full_33(stress_voigt(:, 2))
+            thermo%first_order%stress(:,: , 1) = voigt_to_full_33(stress_voigt(:, 1))
+            thermo%first_order%stress(:,: , 2) = voigt_to_full_33(stress_voigt(:, 2))
         end if
     end block averaging
 end subroutine

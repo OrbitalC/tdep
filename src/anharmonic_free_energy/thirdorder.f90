@@ -141,8 +141,8 @@ subroutine elastic_thirdorder(uc, fc, fct, qp, dr, temperature, p3ph, alpha, qua
     do j=1, 3
     do k=1, 3
     do l=1, 3
-        ivoigt = lo_full_to_voigt(i, j)
-        jvoigt = lo_full_to_voigt(k, l)
+        ivoigt = full_to_voigt(i, j)
+        jvoigt = full_to_voigt(k, l)
 
         ! That's simply the formula
         alpha(i, j) = alpha(i, j) + sij(ivoigt, jvoigt) * bufalpha(k, l) / uc%volume
