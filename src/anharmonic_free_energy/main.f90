@@ -15,7 +15,7 @@ use type_phonon_dispersions, only: lo_phonon_dispersions
 use options, only: lo_opts
 use thirdorder, only: free_energy_thirdorder, elastic_thirdorder
 use fourthorder, only: free_energy_fourthorder
-use lo_thermodynamic_helpers, only: lo_thermodynamics, lo_symmetrize_stress
+use thermodynamic_helpers, only: thermodynamics, symmetrize_stress
 
 implicit none
 
@@ -28,7 +28,7 @@ type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
 type(lo_timer) :: tmr
 
-type(lo_thermodynamics) :: thermo
+type(thermodynamics) :: thermo
 real(r8) :: timer_init, timer_total
 
 ! Init MPI, timers and options
@@ -137,7 +137,7 @@ latdyn: block
         ! end do
     end if
     ! Usually not needed here, but always a good idea to clean
-    ! call lo_symmetrize_stress(thermo%harmonic%stress(:, :, 1), uc)
+    ! call symmetrize_stress(thermo%harmonic%stress(:, :, 1), uc)
 
     ! If we have third order IFC, might as well compute elastic things
     ! if (opts%thirdorder) then
@@ -146,8 +146,8 @@ latdyn: block
     !     call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), &
     !                             thermo%alpha, opts%quantum, mw, mem)
     !     ! Now we symmetrize
-    !     call lo_symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
-    !     call lo_symmetrize_stress(thermo%alpha, uc)
+    !     call symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
+    !     call symmetrize_stress(thermo%alpha, uc)
     ! end if
     call tmr%tock('harmonic properties')
 end block latdyn

@@ -13,7 +13,7 @@ use type_mdsim, only: lo_mdsim
 
 use konstanter, only: lo_Hartree_to_eV
 
-use lo_thermodynamic_helpers, only: lo_thermodynamics, lo_full_to_voigt_33, lo_voigt_to_full_33
+use thermodynamic_helpers, only: thermodynamics, full_to_voigt_33, voigt_to_full_33
 implicit none
 
 private

@@ -15,7 +15,7 @@ use type_symmetryoperation, only: lo_operate_on_secondorder_tensor
 use lo_timetracker, only: lo_timer
 use lo_fftgrid_helper, only: fft_third_grid_index
 
-use lo_thermodynamic_helpers, only: lo_full_to_voigt
+use thermodynamic_helpers, only: full_to_voigt
 
 implicit none
 private

@@ -1,7 +1,7 @@
 
 This code calculates the anharmonic part of the Helmholtz free energy, internal energy, entropy and heat capacity. It includes the contributions from baseline shifts, renormalized phonons and higher order terms. This program must use force constants from sTDEP/SSCHA (self-consistent phonons). Force cosntants fit to MD/PIMD data are incompatible with this theory.
 
-Only the first and second-cumulant corrections are computed by this code. The constant corrections (i.e., $U_0$ and its derivatives) must be implemented elsewhere as it requires interfacing with a force-calculator like LAMMPS. Please refer to CITATION and a reference implementation [here](https://github.com/ejmeitz/CumulantAnalysis.jl). 
+Only the first and second-cumulant corrections are computed by this code. The constant corrections (i.e., $U_0$ and its derivatives) must be implemented elsewhere as it requires interfacing with a force-calculator like LAMMPS. Please refer to [^Meitz2026] and a reference implementation [here](https://github.com/ejmeitz/CrystalCumulants.jl).
 
 ### Longer summary
 
@@ -81,6 +81,7 @@ $$
 \end{equation}
 $$
 
+[^Meitz2026]: [Meitz, E., Castellano, A., Wang, G. J. & McGaughey, A. J. H. (2026) Quantum Anharmonic Phonon Thermodynamics from the Free Energy Cumulant Expansion. npj Computational Materials (in review)](https://www.researchsquare.com/article/rs-10541555/v1)
 
 [^Leibfried1961]: Leibfried, G. & Ludwig, W. (1961) Theory of Anharmonic Effects in Crystals. Solid State Phys 12, 275–444.
 

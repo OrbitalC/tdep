@@ -1,5 +1,5 @@
 #include "precompilerdefinitions"
-module lo_thermodynamic_helpers
+module thermodynamic_helpers
 use konstanter, only: r8, lo_huge
 use gottochblandat, only: lo_chop
 use type_crystalstructure, only: lo_crystalstructure
@@ -7,13 +7,13 @@ use type_symmetryoperation, only: lo_operate_on_secondorder_tensor
 
 implicit none
 private
-public :: lo_thermodynamics
-public :: lo_symmetrize_stress
-public :: lo_full_to_voigt
-public :: lo_full_to_voigt_33
-public :: lo_voigt_to_full_33
+public :: thermodynamics
+public :: symmetrize_stress
+public :: full_to_voigt
+public :: full_to_voigt_33
+public :: voigt_to_full_33
 
-type lo_thermodynamic_contribution
+type thermodynamic_contribution
     ! The different contributions. First dimension is the result, second one the uncertainty
     real(r8), dimension(2) :: F=0.0_r8
     real(r8), dimension(2) :: U=0.0_r8
@@ -23,15 +23,15 @@ type lo_thermodynamic_contribution
 end type
 
 !> A container for all thermodynamic results
-type lo_thermodynamics
+type thermodynamics
     !> The temperature at which everything is evaluated
     real(r8) :: temperature=-lo_huge
     ! The things to hold results
-    type(lo_thermodynamic_contribution) :: harmonic
-    type(lo_thermodynamic_contribution) :: first_order
-    type(lo_thermodynamic_contribution) :: second_order
-    type(lo_thermodynamic_contribution) :: threephonon
-    type(lo_thermodynamic_contribution) :: fourphonon
+    type(thermodynamic_contribution) :: harmonic
+    type(thermodynamic_contribution) :: first_order
+    type(thermodynamic_contribution) :: second_order
+    type(thermodynamic_contribution) :: threephonon
+    type(thermodynamic_contribution) :: fourphonon
     !> The thermal expansion
     real(r8), dimension(3, 3) :: alpha
     !> Is it a stochastic simulation ?
@@ -44,7 +44,7 @@ end type
 
 contains
 ! Symmetrize 3x3 tensors
-subroutine lo_symmetrize_stress(m, uc)
+subroutine symmetrize_stress(m, uc)
     !> The input matrix
     real(r8), dimension(3, 3), intent(inout) :: m
     !> The unitcell
@@ -62,7 +62,7 @@ subroutine lo_symmetrize_stress(m, uc)
 end subroutine
 
 ! Go from full 3x3 real space to 6 voigt notation
-function lo_full_to_voigt(i, j) result(k)
+function full_to_voigt(i, j) result(k)
     !> Inputs
     integer, intent(in) :: i
     integer, intent(in) :: j
@@ -83,7 +83,7 @@ function lo_full_to_voigt(i, j) result(k)
 end function
 
 !> Transform a 3x3 tensor in full representation into its Voigt representation
-function lo_full_to_voigt_33(mi) result(mo)
+function full_to_voigt_33(mi) result(mo)
     !> The input tensor in full notation
     real(r8), dimension(3, 3), intent(in) :: mi
     !> The output vector in Voigt notation
@@ -104,7 +104,7 @@ function lo_full_to_voigt_33(mi) result(mo)
 end function
 
 !> Transform a vector in Voigt notation into it's 3x3 full representation
-function lo_voigt_to_full_33(mi) result(mo)
+function voigt_to_full_33(mi) result(mo)
     !> The input tensor in full notation
     real(r8), dimension(6), intent(in) :: mi
     !> The output vector in Voigt notation
@@ -115,7 +115,7 @@ function lo_voigt_to_full_33(mi) result(mo)
     mo = 0.0_r8
     do i=1, 3
     do j=i, 3
-        k = lo_full_to_voigt(i, j)
+        k = full_to_voigt(i, j)
         mo(i, j) = mi(k)
         mo(j, i) = mi(k)
     end do
