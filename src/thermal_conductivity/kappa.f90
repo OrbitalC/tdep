@@ -95,7 +95,7 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
     real(r8), dimension(3, 3), intent(out) :: kappa_offdiag
 
     !> The off diagonal group velocity
-    real(r8), dimension(:, :, :), allocatable :: buf_vel
+    complex(r8), dimension(:, :, :), allocatable :: buf_vel
     !> The off diagonal group velocity, squared
     real(r8), dimension(:, :, :, :), allocatable :: buf_velsq
     !> The qpoint
@@ -116,7 +116,7 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
             complex(r8), dimension(:, :, :), allocatable :: buf_grad_dynmat
             complex(r8), dimension(:, :), allocatable :: kronegv, buf_egv, buf_egw, buf_cm0, buf_cm1, buf_cm2
             complex(r8), dimension(3) :: cv0
-            real(r8), dimension(3) :: v0, v1
+            complex(r8), dimension(3) :: v0, v1
             integer :: a1, a2, ia, ib, ic, ix, iy, iz, k, iop, i, ii, j, jj
 
             ! Some buffers
@@ -207,9 +207,12 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
                 cv0 = buf_cm2(ii, :)
                 ! remove tiny numbers.
                 cv0 = lo_chop(cv0, 1E-10/(lo_groupvel_Hartreebohr_to_ms/1000))
-                ! I can take the real part since at the end we sum over
-                ! both modes and the imaginary components disappear.
-                buf_vel(:, i, j) = real(cv0, r8)
+                ! Keep the full complex velocity. The imaginary parts do cancel
+                ! in sum_ij v_ij, but the quantity accumulated below is quadratic
+                ! and sum_ij Im v^a Im v^b does not vanish. Discarding it makes
+                ! kappa_offdiag depend on the arbitrary phases of the eigenvectors
+                ! returned by zheev.
+                buf_vel(:, i, j) = cv0
             end do
             end do
 
@@ -226,7 +229,10 @@ subroutine get_kappa_offdiag(dr, qp, uc, fc, temperature, classical, mem, mw, ka
                 do k = 1, qp%ip(iq)%n_full_point
                     iop = qp%ip(iq)%operation_full_point(k)
                     v1 = matmul(uc%sym%op(abs(iop))%m, v0)
-                    buf_velsq(:, :, i, j) = buf_velsq(:, :, i, j) + lo_outerproduct(v1, v1)
+                    ! lo_outerproduct conjugates its first argument, so the real part
+                    ! here is Re v^a Re v^b + Im v^a Im v^b, the gauge invariant form.
+                    buf_velsq(:, :, i, j) = buf_velsq(:, :, i, j) + &
+                                            real(lo_outerproduct(v1, v1), r8)
                 end do
             end do
             end do
