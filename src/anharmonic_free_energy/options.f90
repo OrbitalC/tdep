@@ -1,7 +1,6 @@
 #include "precompilerdefinitions"
 module options
-use konstanter, only: r8, lo_author, lo_version, lo_licence, lo_tiny, lo_status, lo_exitcode_baddim, lo_exitcode_param, &
-                      lo_frequency_Hartree_to_THz, lo_frequency_Hartree_to_icm, lo_frequency_Hartree_to_meV
+use konstanter, only: r8, lo_author, lo_version, lo_licence, lo_status, lo_exitcode_baddim
 use gottochblandat, only: lo_stop_gracefully
 use flap, only: command_line_interface
 implicit none
@@ -9,13 +8,13 @@ private
 public :: lo_opts
 
 type lo_opts
-    integer, dimension(3) :: qgrid
+    real(r8) :: temperature
+    integer, dimension(3) :: qgh, qg3ph, qg4ph
     integer :: integrationtype
     integer :: verbosity
     logical :: quantum = .false.
-    logical :: stochastic = .false.
-    logical :: thirdorder = .false.
-    logical :: fourthorder = .false.
+    logical :: nothirdorder = .false.
+    logical :: nofourthorder = .false.
 contains
     procedure :: parse
 end type
@@ -38,26 +37,37 @@ subroutine parse(opts)
                   version=lo_version, &
                   license=lo_licence, &
                   help='Usage: ', &
-                  description='Calculates the anharmonic free energy.', &
+                  description='Calculates the anharmonic free energy given sTDEP force constants.', &
                   examples=["mpirun anharmonic_free_energy"], &
                   epilog=new_line('a')//"...")
 
     ! Specify some options
-    cli_qpoint_grid
+    call cli%add(switch='--qpoint_harmonic', switch_ab='-qgh', &
+                 help='Dimension of the q-grid for harmonic contributions', &
+                 nargs='3', required=.false., act='store', def='25 25 25', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--qpoint_grid3ph', switch_ab='-qg3ph', &
+                 help='Dimension of the q-grid for three phonon contribution', &
+                 nargs='3', required=.false., act='store', def='20 20 20', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--qpoint_grid4ph', switch_ab='-qg4ph', &
+                 help='Dimension of the q-grid for four phonon contribution', &
+                 nargs='3', required=.false., act='store', def='20 20 20', error=lo_status)
+    if (lo_status .ne. 0) stop
+    call cli%add(switch='--temperature', &
+                 help='The temperature at which the thermodynamic properties are computed', &
+                 required=.false., act='store', def='300', error=lo_status)
+    if (lo_status .ne. 0) stop
     call cli%add(switch='--quantum', &
                  help='Use Bose-Einstein occupations to compute the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--stochastic', &
-                 help='Add second order cumulant contribution to the free energy with a minus sign for self-consistent sampling', &
+    call cli%add(switch='--nothirdorder', &
+                 help='Do NOT compute third order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
-    call cli%add(switch='--thirdorder', &
-                 help='Compute third order anharmonic correction to the free energy', &
-                 required=.false., act='store_true', def='.false.', error=lo_status)
-    if (lo_status .ne. 0) stop
-    call cli%add(switch='--fourthorder', &
-                 help='Compute fourth order anharmonic correction to the free energy', &
+    call cli%add(switch='--nofourthorder', &
+                 help='Do NOT compute fourth order anharmonic correction to the free energy', &
                  required=.false., act='store_true', def='.false.', error=lo_status)
     if (lo_status .ne. 0) stop
     cli_manpage
@@ -79,16 +89,23 @@ subroutine parse(opts)
     call cli%get(switch='--verbose', val=dumlog, error=lo_status); errctr = errctr + lo_status; if (dumlog) opts%verbosity = 2
 
     ! get real options
-    call cli%get(switch='--qpoint_grid', val=opts%qgrid, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--temperature', val=opts%temperature, error=lo_status); errctr = errctr + lo_status
     call cli%get(switch='--quantum', val=opts%quantum, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--stochastic', val=opts%stochastic, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--thirdorder', val=opts%thirdorder, error=lo_status); errctr = errctr + lo_status
-    call cli%get(switch='--fourthorder', val=opts%fourthorder, error=lo_status); errctr = errctr + lo_status
-
-    ! If we have fourthorder we should also have thirdorder
-    if (opts%fourthorder) opts%thirdorder = .true.
+    call cli%get(switch='--nothirdorder', val=opts%nothirdorder, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--nofourthorder', val=opts%nofourthorder, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--qpoint_harmonic', val=opts%qgh, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--qpoint_grid3ph', val=opts%qg3ph, error=lo_status); errctr = errctr + lo_status
+    call cli%get(switch='--qpoint_grid4ph', val=opts%qg4ph, error=lo_status); errctr = errctr + lo_status
 
     if (errctr .ne. 0) call lo_stop_gracefully(['Failed parsing the command line options'], lo_exitcode_baddim)
+
+    if (maxval(opts%qg3ph) .gt. 0 .and. opts%nothirdorder) then
+        write(*, *) 'WARNING: You turned off thirdorder but still specified a three-phonon q-grid.'
+    end if
+
+    if (maxval(opts%qg4ph) .gt. 0 .and. opts%nofourthorder) then
+        write(*, *) 'WARNING: You turned off fourthorder but still specified a four-phonon q-grid.'
+    end if
 
 end subroutine
 
