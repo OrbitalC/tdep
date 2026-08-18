@@ -1,8 +1,7 @@
 program anharmonic_free_energy
 !!{!src/anharmonic_free_energy/manual.md!}
-use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa
-use gottochblandat, only: open_file, walltime, lo_linspace, lo_progressbar_init, lo_progressbar, tochar, &
-                          lo_does_file_exist, lo_mean, lo_stddev
+use konstanter, only: r8, lo_Hartree_to_eV, lo_kb_Hartree, lo_pressure_HartreeBohr_to_GPa, lo_status
+use gottochblandat, only: open_file, walltime, lo_trace
 use mpi_wrappers, only: lo_mpi_helper
 use lo_memtracker, only: lo_mem_helper
 use lo_timetracker, only: lo_timer
@@ -10,15 +9,13 @@ use type_crystalstructure, only: lo_crystalstructure
 use type_forceconstant_secondorder, only: lo_forceconstant_secondorder
 use type_forceconstant_thirdorder, only: lo_forceconstant_thirdorder
 use type_forceconstant_fourthorder, only: lo_forceconstant_fourthorder
-use type_mdsim, only: lo_mdsim
-use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh, lo_read_qmesh_from_file, lo_fft_mesh
+use type_qpointmesh, only: lo_qpoint_mesh, lo_generate_qmesh
 use type_phonon_dispersions, only: lo_phonon_dispersions
-use lo_phonon_bandstructure_on_path, only: lo_phonon_bandstructure
-use type_phonon_dos, only: lo_phonon_dos
 
 use options, only: lo_opts
-use energy, only: perturbative_anharmonic_free_energy
-use epot, only: lo_energy_differences
+use thirdorder, only: free_energy_thirdorder, elastic_thirdorder
+use fourthorder, only: free_energy_fourthorder
+use thermodynamic_helpers, only: thermodynamics, symmetrize_stress
 
 implicit none
 
@@ -26,18 +23,13 @@ type(lo_opts) :: opts
 type(lo_forceconstant_secondorder) :: fc
 type(lo_forceconstant_thirdorder) :: fct
 type(lo_forceconstant_fourthorder) :: fcf
-type(lo_phonon_dispersions) :: dr
 type(lo_crystalstructure) :: uc
-class(lo_qpoint_mesh), allocatable :: qp
 type(lo_mpi_helper) :: mw
 type(lo_mem_helper) :: mem
 type(lo_timer) :: tmr
-type(lo_mdsim) :: sim
 
-real(r8), dimension(3, 5) :: cumulant
+type(thermodynamics) :: thermo
 real(r8) :: timer_init, timer_total
-real(r8) :: U0, U1, energy_unit_factor
-logical :: havehighorder
 
 ! Init MPI, timers and options
 call mw%init()
@@ -46,13 +38,26 @@ timer_init = walltime()
 call opts%parse()
 call tmr%start()
 
-! set up all possible meshes and get all dispersions
 init: block
-    integer :: t, u
-
+    call mw%init()
     ! only be verbose on the first rank
     if (.not. mw%talk) opts%verbosity = -10
+    call tmr%start()
 
+    if (mw%talk) then
+        write(*, *) 'ANHARMONIC FREE ENERGY'
+        write(*, *) 'Recap of the parameters governing the calculation'
+        write(*, *) ''
+        write(*, '(1X,A40,F20.12)') 'Temperature                             ', opts%temperature
+        write(*, '(1X,A40,L3)') 'Quantum limit                           ', opts%quantum
+        write(*, '(1X,A40,I4,I4,I4)') 'Q-point grid Harmonic                   ', opts%qgh
+        write(*, '(1X,A40,I4,I4,I4)') 'Third order q-point grid                ', opts%qg3ph
+        write(*, '(1X,A40,I4,I4,I4)') 'Fourth order q-point grid               ', opts%qg4ph
+        write(*, *) ''
+    end if
+
+    if (mw%talk) write(*, *) 'INITIALIZATION'
+    if (mw%talk) write(*, *) '... reading input files'
     ! Read structure
     call uc%readfromfile('infile.ucposcar', verbosity=opts%verbosity)
     call uc%classify('wedge', timereversal=.true.)
@@ -62,23 +67,46 @@ init: block
     call fc%readfromfile(uc, 'infile.forceconstant', mem, verbosity=-1)
     if (mw%talk) write (*, *) '... read second order forceconstant'
 
-    if (opts%thirdorder) call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
-    if (opts%fourthorder) call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
-    havehighorder = .false.
-    if (opts%thirdorder .or. opts%fourthorder) havehighorder = .true.
+    if (.not. opts%nothirdorder) then
+        call fct%readfromfile(uc, 'infile.forceconstant_thirdorder')
+        if (mw%talk) write (*, *) '... read third order forceconstant'
+    end if
+    if (.not. opts%nofourthorder) then
+        call fcf%readfromfile(uc, 'infile.forceconstant_fourthorder')
+        if (mw%talk) write (*, *) '... read fourth order forceconstant'
+    end if
 
     call tmr%tock('reading input')
 
-    ! Get a q-mesh for the integrations. Always an FFT mesh.
-    if (mw%talk) write (*, *) '... generating q-mesh'
-    call lo_generate_qmesh(qp, uc, opts%qgrid, 'fft', timereversal=.true., headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+    timer_init = walltime() - timer_init
 
-    ! Dispersions for everyone!
+    thermo%temperature = opts%temperature
+    thermo%thirdorder = .not. opts%nothirdorder
+    thermo%fourthorder = .not. opts%nofourthorder
+end block init
+
+latdyn: block
+    !> The phonon dispersion relation
+    type(lo_phonon_dispersions) :: dr
+    !> The qpoint mesh
+    class(lo_qpoint_mesh), allocatable :: qp
+    !> Some stuffs
+    real(r8) :: temperature
+    !> Some integers for do loops
+    integer :: i
+
+    if (mw%talk) then
+        write(*, *) ''
+        write(*, *) 'HARMONIC CONTRIBUTION'
+    end if
+
+    if (mw%talk) write(*, *) '... generating q-mesh'
+    call lo_generate_qmesh(qp, uc, opts%qgh, 'fft', timereversal=.true., &
+                           headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+    if (mw%talk) write(*, *) '... generating harmonic dispersion'
     call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
-    if (mw%talk) write (*, *) '... got the full dispersion relations'
-    call tmr%tock('harmonic properties')
 
-    ! Check for imaginary modes right away
+    ! Little sanity check
     if (dr%omega_min .lt. 0.0_r8) then
         ! Dump the free energies
         if (mw%talk) then
@@ -87,163 +115,192 @@ init: block
         call mw%destroy()
         stop
     end if
-    timer_init = walltime() - timer_init
 
-end block init
+    temperature = opts%temperature
 
-! We start with the potential energy terms since those are much faster
-epotthings: block
-    type(lo_energy_differences) :: pot
-    type(lo_crystalstructure) :: ss
-
-    real(r8), dimension(:, :), allocatable :: f2, f3, f4, fp
-    real(r8), dimension(:, :), allocatable :: ediff
-
-    real(r8) :: e2, e3, e4, ep, inverse_kbt
-    integer :: i
-
-    call ss%readfromfile('infile.ssposcar')
-    call ss%classify('supercell', uc)
-    call pot%setup(uc, ss, fc, fct, fcf, mw, opts%verbosity + 1)
-
-    ! Fetch simulation data from file
-    if (lo_does_file_exist('infile.sim.hdf5')) then
-        call sim%read_from_hdf5('infile.sim.hdf5', verbosity=opts%verbosity + 2, stride=-1)
-    else
-        call sim%read_from_file(verbosity=opts%verbosity + 2, stride=1, magnetic=.false., dielectric=.false., nrand=-1, mw=mw)
-    end if
-
-    allocate (f2(3, ss%na))
-    allocate (f3(3, ss%na))
-    allocate (f4(3, ss%na))
-    allocate (fp(3, ss%na))
-
-    ! Calculate the baseline energy
-    allocate (ediff(sim%nt, 5))
-    ediff = 0.0_r8
-
-    do i = 1, sim%nt
-        if (mod(i, mw%n) .ne. mw%r) cycle
-        call pot%energies_and_forces(sim%u(:, :, i), e2, e3, e4, ep, f2, f3, f4, fp)
-        ediff(i, 1) = sim%stat%potential_energy(i)
-        ediff(i, 2) = sim%stat%potential_energy(i) - e2
-        ediff(i, 3) = sim%stat%potential_energy(i) - e2 - ep
-        ediff(i, 4) = sim%stat%potential_energy(i) - e2 - ep - e3
-        ediff(i, 5) = sim%stat%potential_energy(i) - e2 - ep - e3 - e4
-    end do
-    call mw%allreduce('sum', ediff)
-
-    if (sim%temperature_thermostat .gt. 1E-5_r8) then
-        inverse_kbt = 1.0_r8/lo_kb_Hartree/sim%temperature_thermostat
-    else
-        inverse_kbt = 0.0_r8
-    end if
-
-    ! Compute the first and second order cumulants
-    do i = 1, 5
-        cumulant(1, i) = lo_mean(ediff(:, i))
-        cumulant(2, i) = lo_mean((ediff(:, i) - cumulant(1, i))**2)
-        cumulant(2, i) = cumulant(2, i)*inverse_kbt*0.5_r8
-        cumulant(3, i) = lo_mean((ediff(:, i) - cumulant(1, i))**3)
-        cumulant(3, i) = cumulant(3, i)*inverse_kbt**2/6.0_r8
-    end do
-
-    ! And normalize it to be per atom
-    cumulant = cumulant/real(ss%na, r8)
-
-    if (mw%talk) then
-        write (*, *) 'Temperature (K) (from infile.meta): ', sim%temperature_thermostat
-        write (*, *) 'Potential energy:'
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '                  input: ', cumulant(1, 1)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 1)*lo_Hartree_to_eV
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '                  E-fc2: ', cumulant(1, 2)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 2)*lo_Hartree_to_eV
-        write (*, "(1X,A,E21.14,1X,A,F21.14)") '            E-fc2-polar: ', cumulant(1, 3)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 3)*lo_Hartree_to_eV
-        if (opts%thirdorder) then
-            write (*, "(1X,A,E21.14,1X,A,F21.14)") '        E-fc2-polar-fc3: ', cumulant(1, 4)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 4)*lo_Hartree_to_eV
-        end if
-        if (opts%fourthorder) then
-            write (*, "(1X,A,E21.14,1X,A,F21.14)") '    E-fc2-polar-fc3-fc4: ', cumulant(1, 5)*lo_Hartree_to_eV, ' upper bound:', cumulant(2, 5)*lo_Hartree_to_eV
-        end if
-    end if
-end block epotthings
-
-! Calculate the actual free energy
-getenergy: block
-    real(r8) :: f_ph, ah3, ah4, fe2_1, fe2_2, fe3_1, fe3_2, fe4_1, fe4_2, pref
-    integer :: u
-    character(len=1000) :: opf
-
-    ! Some heuristics to figure out what the temperature is.
+    if (mw%talk) write(*, *) '... computing thermodynamic properties with harmonic dispersion'
+    ! We start by computing everything we can from the harmonic phonons
     if (opts%quantum) then
-        f_ph = dr%phonon_free_energy(sim%temperature_thermostat)
+        thermo%harmonic%F(1) = dr%phonon_free_energy(temperature)
+        thermo%harmonic%S(1) = dr%phonon_entropy(temperature)
+        thermo%harmonic%U(1) = thermo%harmonic%F(1) + temperature * thermo%harmonic%S(1)
+        thermo%harmonic%Cv(1) = dr%phonon_cv(temperature)
+        ! call dr%phonon_kinetic_stress(qp, uc, temperature, thermo%harmonic%stress(:, :, 1))
     else
-        f_ph = dr%phonon_free_energy_classical(sim%temperature_thermostat)
+        thermo%harmonic%F(1) = dr%phonon_free_energy_classical(temperature)
+        thermo%harmonic%U(1) = 3.0_r8 * lo_kb_Hartree * temperature
+        thermo%harmonic%S(1) = (thermo%harmonic%U(1) - thermo%harmonic%F(1)) / temperature
+        thermo%harmonic%Cv(1) = 3.0_r8 * lo_kb_Hartree
+        thermo%harmonic%stress = 0.0_r8
+        ! do i=1, 3
+        !     thermo%harmonic%stress(i, i, 1) = lo_kb_Hartree * temperature * uc%na / uc%volume
+        ! end do
     end if
+    ! Usually not needed here, but always a good idea to clean
+    ! call symmetrize_stress(thermo%harmonic%stress(:, :, 1), uc)
 
-    if (havehighorder) then
-        select type (qp); type is (lo_fft_mesh)
-            call perturbative_anharmonic_free_energy(uc, fct, fcf, qp, dr, sim%temperature_thermostat, ah3, ah4, &
-                                                     opts%fourthorder, opts%quantum, mw, mem, opts%verbosity + 1)
-        end select
-    else
-        ah3 = 0.0_r8
-        ah4 = 0.0_r8
-    end if
+    ! If we have third order IFC, might as well compute elastic things
+    ! if (opts%thirdorder) then
+    !     if (mw%talk) write(*, *) '... computing third order contribution to elastic properties'
 
-    if (opts%stochastic) then
-        pref = -1.0_r8
-    else
-        pref = 1.0_r8
+    !     call elastic_thirdorder(uc, fc, fct, qp, dr, opts%temperature, thermo%threephonon%stress(:, :, 1), &
+    !                             thermo%alpha, opts%quantum, mw, mem)
+    !     ! Now we symmetrize
+    !     call symmetrize_stress(thermo%threephonon%stress(:, :, 1), uc)
+    !     call symmetrize_stress(thermo%alpha, uc)
+    ! end if
+    call tmr%tock('harmonic properties')
+end block latdyn
+
+! Skipping cumulant/real-space corrections - only computing phonon contributions
+
+
+latdyn3ph: block
+    !> The phonon dispersion relation
+    type(lo_phonon_dispersions) :: dr
+    !> The qpoint mesh
+    class(lo_qpoint_mesh), allocatable :: qp
+    !> The third order contribution
+    real(r8) :: fe3, s3, cv3
+
+
+    if (.not. opts%nothirdorder) then
+        if (mw%talk) then
+            write(*, *) ''
+            write(*, *) 'THREE PHONONS CONTRIBUTION'
+        end if
+
+        if (mw%talk) write(*, *) '... generating q-mesh'
+        call lo_generate_qmesh(qp, uc, opts%qg3ph, 'fft', timereversal=.true., &
+                               headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+        if (mw%talk) write(*, *) '... generating harmonic dispersion'
+        call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
+
+        call free_energy_thirdorder(uc, fct, qp, dr, opts%temperature, fe3, s3, cv3, opts%quantum, mw, mem)
+        thermo%threephonon%F(1) = fe3
+        thermo%threephonon%S(1) = s3
+        thermo%threephonon%U(1) = (fe3 + opts%temperature * s3)
+        thermo%threephonon%Cv(1) = cv3
     end if
+    call tmr%tock('three-phonon')
+
+end block latdyn3ph
+
+latdyn4ph: block
+    !> The phonon dispersion relation
+    type(lo_phonon_dispersions) :: dr
+    !> The qpoint mesh
+    class(lo_qpoint_mesh), allocatable :: qp
+    !> The third order contribution
+    real(r8) :: fe4, s4, cv4
+
+    if (.not. opts%nofourthorder) then
+        if (mw%talk) then
+            write(*, *) ''
+            write(*, *) 'FOUR PHONONS CONTRIBUTION'
+        end if
+
+        if (mw%talk) write(*, *) '... generating q-mesh'
+        call lo_generate_qmesh(qp, uc, opts%qg4ph, 'fft', timereversal=.true., &
+                               headrankonly=.false., mw=mw, mem=mem, verbosity=opts%verbosity)
+        if (mw%talk) write(*, *) '... generating harmonic dispersion'
+        call dr%generate(qp, fc, uc, mw=mw, mem=mem, verbosity=opts%verbosity)
+
+        call free_energy_fourthorder(uc, fcf, qp, dr, opts%temperature, fe4, s4, cv4, opts%quantum, mw, mem)
+        thermo%fourphonon%F(1) = fe4
+        thermo%fourphonon%S(1) = s4
+        thermo%fourphonon%U(1) = (fe4 + opts%temperature * s4)
+        thermo%fourphonon%Cv(1) = cv4
+    end if
+    call tmr%tock('four-phonon')
+end block latdyn4ph
+
+summary: block
+    !> Unit conversion factor
+    real(r8) :: f_unit, e_unit, s_unit, c_unit, p_unit
+    !> Buffer for the stress tensor
+    real(r8), dimension(3, 3) :: sigma
+    !> Some buffer to print the results
+    real(r8), dimension(4) :: buf, buf3, buf4
+    !> The pressure
+    real(r8) :: pressure
+    !> To have a pretty logfile
+    character(len=1000) :: opfc, opff, opfs
+    !> Some integers
+    integer :: i, u
+
+    f_unit = lo_Hartree_to_eV
+    e_unit = lo_Hartree_to_eV
+    s_unit = 1.0 / lo_kb_Hartree
+    c_unit = 1.0 / lo_kb_Hartree
+    ! p_unit = lo_pressure_HartreeBohr_to_GPa
+
+    ! Get the stress tensor (harmonic + threephonon only)
+    ! sigma = (thermo%harmonic%stress(:, :, 1) + thermo%threephonon%stress(:, :, 1)) * p_unit
+    ! pressure = lo_trace(sigma) / 3.0_r8
+
     if (mw%talk) then
-        opf = '(1X,A23,1X,F20.7)'
-        ! Write on a file
-        u = open_file('out', 'outfile.anharmonic_free_energy')
-        fe2_1 = (cumulant(1, 3) + f_ph)*lo_Hartree_to_eV
-        fe2_2 = (cumulant(1, 3) + f_ph + pref*cumulant(2, 3))*lo_Hartree_to_eV
-        write (u, "(1X, A17, F8.2, 1X, A17)") '# Free energy at ', sim%temperature_thermostat, 'K, unit : eV/atom'
-        write (u, *) '# Lowest order (1st order cumulant, 2nd order cumulant)'
-        write (u, "(1X, 2(F25.10,' '))") fe2_1, fe2_2
-        write (*, *) ''
-        write (*, *) 'Lowest order approximation to the free energy (eV/atom):'
-        write (*, *) 'Calculated as <U - U_second - U_polar> + F_phonon'
-        write (*, opf) 'F =', fe2_1
-        write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
-        write (*, opf) 'Second order cumulant =', cumulant(2, 3)*lo_Hartree_to_eV
-        write (*, opf) 'Third order cumulant =', cumulant(3, 3)*lo_Hartree_to_eV
-        if (opts%thirdorder .or. opts%fourthorder) then
-            fe3_1 = (cumulant(1, 4) + f_ph + ah3)*lo_Hartree_to_eV
-            fe3_2 = (cumulant(1, 4) + f_ph + ah3 + pref*cumulant(2, 4))*lo_Hartree_to_eV
-            write (u, *) '# Third order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
-            write (u, "(1X, 2(F25.10,' '))") fe3_1, fe3_2
-            write (*, *) ''
-            write (*, *) 'Free energy with third order anharmonic corrections (eV/atom):'
-            write (*, *) 'Calculated as <U - U_second - U_polar - U_third> + F_phonon + F_3'
-            write (*, opf) 'F =', fe3_1
-            write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
-            write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
-            write (*, opf) 'Second order cumulant =', cumulant(2, 4)*lo_Hartree_to_eV
-            write (*, opf) 'Third order cumulant =', cumulant(3, 4)*lo_Hartree_to_eV
+        u = open_file('out', 'outfile.anharmonic_thermodynamics')
+        write(u, '(A2,A12,8X,E20.12)') '# ', 'Temperature:', opts%temperature
+
+        opfc = '(4(1X,A24))'
+        opff = '(4(1X,F24.12))'
+        opfs = '(3(1X,F24.12))'
+
+        ! Harmonic contribution
+        buf(1) = thermo%harmonic%F(1) * f_unit
+        buf(2) = thermo%harmonic%U(1) * e_unit
+        buf(3) = thermo%harmonic%S(1) * s_unit
+        buf(4) = thermo%harmonic%Cv(1) * c_unit
+        write(*, *) ''
+        write(*, *) 'SUMMARY OF RESULTS'
+        write(*, *) ''
+        write(*, *) 'Harmonic contribution'
+        write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(*, opff) buf
+        write(u, *) '# Harmonic contribution'
+        write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+        write(u, opff) buf
+
+        ! Fourth order (four-phonon) contribution
+        if (.not. opts%nofourthorder) then
+            buf4(1) = thermo%fourphonon%F(1) * f_unit
+            buf4(2) = thermo%fourphonon%U(1) * e_unit
+            buf4(3) = thermo%fourphonon%S(1) * s_unit
+            buf4(4) = thermo%fourphonon%Cv(1) * c_unit
+            write(*, *) ''
+            write(*, *) 'First Cumulant Contribution'
+            write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(*, opff) buf4
+            write(u, *) '# First Cumulant Contribution'
+            write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(u, opff) buf4
         end if
-        if (opts%fourthorder) then
-            fe4_1 = (cumulant(1, 5) + f_ph + ah3 + ah4)*lo_Hartree_to_eV
-            fe4_2 = (cumulant(1, 5) + f_ph + ah3 + ah4 + pref*cumulant(2, 5))*lo_Hartree_to_eV
-            write (u, *) '# Fourth order anharmonic corrections (1st order cumulant, 2nd order cumulant)'
-            write (u, "(1X, 2(F25.10,' '))") fe4_1, fe4_2
-            write (*, *) ''
-            write (*, *) 'Free energy with fourth order anharmonic corrections (eV/atom):'
-            write (*, *) 'Calculated as <U - U_second - U_polar - U_third - U_fourth> + F_phonon + F_3 + F_4'
-            write (*, opf) 'F  =', fe4_1
-            write (*, opf) 'F_phonon =', f_ph*lo_Hartree_to_eV
-            write (*, opf) 'F_3 =', ah3*lo_Hartree_to_eV
-            write (*, opf) 'F_4 =', ah4*lo_Hartree_to_eV
-            write (*, opf) 'Second order cumulant =', cumulant(2, 5)*lo_Hartree_to_eV
-            write (*, opf) 'Third order cumulant =', cumulant(3, 5)*lo_Hartree_to_eV
+
+        ! Third order (three-phonon) contribution
+        if (.not. opts%nothirdorder) then
+            buf3(1) = thermo%threephonon%F(1) * f_unit
+            buf3(2) = thermo%threephonon%U(1) * e_unit
+            buf3(3) = thermo%threephonon%S(1) * s_unit
+            buf3(4) = thermo%threephonon%Cv(1) * c_unit
+            write(*, *) ''
+            write(*, *) 'Second Cumulant Contribution'
+            write(*, opfc) 'Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(*, opff) buf3
+            write(u, *) '# Second Cumulant Contribution'
+            write(u, opfc) '# Free energy [eV/at]', 'Internal energy [eV/at]', 'Entropy [kB]', 'Heat capacity [kB]'
+            write(u, opff) buf3
         end if
+
+        close(u)
     end if
 
-end block getenergy
+    call tmr%stop()
+    if (mw%talk) write(*, *) ''
+    call tmr%dump(mw, 'Timings:')
+end block summary
 
-! Kill MPI
-call mw%destroy()
-
+! And we are done!
+call mpi_barrier(mw%comm, mw%error)
+call mpi_finalize(lo_status)
 end program

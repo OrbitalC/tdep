@@ -327,6 +327,27 @@ module elemental function lo_harmonic_oscillator_entropy(temp,omega) result(s)
     endif
 end function
 
+module elemental function lo_classical_harmonic_oscillator_entropy(temp, omega) result(s)
+    !> Temperature in K
+    real(flyt), intent(in) :: temp
+    !> Angular frequency in hartree
+    real(flyt), intent(in) :: omega
+    !> The entropy in Hartreee/K
+    real(flyt) :: s
+
+    if ( omega .lt. lo_freqtol ) then
+        s=0.0_flyt
+        return
+    endif
+
+    if ( temp .lt. lo_temperaturetol ) then
+        s=0.0_flyt
+        return
+    endif
+
+    s=lo_kb_Hartree*(1.0_r8 - log(omega/lo_kb_Hartree/temp))
+end function
+
 !> Heat capacity (Cv) for a single harmonic oscillator in eV/K
 module elemental function lo_harmonic_oscillator_cv(temp,omega) result(cv)
     !> Temperature in K
