@@ -218,9 +218,8 @@ contains
     clasg_list_new(Ng)%description = descriptiond
     clasg_list_new(Ng)%group       = group
     clasg_list_new(Ng)%m_exclude   = excluded
-    deallocate(self%clasg)
-    allocate(self%clasg(0:Ng))
-    self%clasg = clasg_list_new
+    if (allocated(self%clasg)) deallocate(self%clasg)
+    allocate(self%clasg(lbound(clasg_list_new,1):ubound(clasg_list_new,1)), source=clasg_list_new)
     deallocate(clasg_list_new)
   endif
   return
@@ -1707,7 +1706,7 @@ contains
   !---------------------------------------------------------------------------------------------------------------------------------
   endsubroutine errored
 
-  elemental subroutine cli_assign_cli(lhs, rhs)
+  subroutine cli_assign_cli(lhs, rhs)
   !---------------------------------------------------------------------------------------------------------------------------------
   !< Assignment operator.
   !---------------------------------------------------------------------------------------------------------------------------------
@@ -1719,7 +1718,10 @@ contains
   ! object members
   call lhs%assign_object(rhs)
   ! command_line_interface members
-  if (allocated(rhs%clasg   )) lhs%clasg      = rhs%clasg
+  if (allocated(rhs%clasg)) then
+    if (allocated(lhs%clasg)) deallocate(lhs%clasg)
+    allocate(lhs%clasg(lbound(rhs%clasg,1):ubound(rhs%clasg,1)), source=rhs%clasg)
+  endif
   if (allocated(rhs%examples)) lhs%examples   = rhs%examples
                                lhs%disable_hv = rhs%disable_hv
   return
