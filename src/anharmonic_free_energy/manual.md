@@ -1,5 +1,7 @@
 
-This code calculates the anharmonic Helmholtz free energy. It includes the contributions from baseline shifts, renormalized phonons and higher order terms.
+This code calculates the anharmonic part of the Helmholtz free energy, internal energy, entropy and heat capacity. It includes the contributions from baseline shifts, renormalized phonons and higher order terms. This program must use force constants from sTDEP/SSCHA (self-consistent phonons). Force cosntants fit to MD/PIMD data are incompatible with this theory.
+
+Only the first and second-cumulant corrections are computed by this code. The constant corrections (i.e., $U_0$ and its derivatives) must be implemented elsewhere as it requires interfacing with a force-calculator like LAMMPS. Please refer to [^Meitz2026] and a reference implementation [here](https://github.com/ejmeitz/CrystalCumulants.jl).
 
 ### Longer summary
 
@@ -38,7 +40,7 @@ $$
 \end{equation}
 $$
 
-where $F_{\textrm{ph}}$ is the usual phonon free energy and $U_0$ the renormalized baseline free energy given by
+where $F_{\textrm{ph}}$ is the phonon free energy and $U_0$ the renormalized baseline free energy. However, since the derivations of $\Delta F^{3\mathrm{ph}}$ and $\Delta F^{4\mathrm{ph}}$ assume self-consistent phonons the average is with respect to harmonic dynamics (i.e., $\langle \cdot \rangle_\mathrm{H}$). The expression is given by
 
 $$
 \begin{equation}
@@ -57,7 +59,7 @@ u_i^\alpha u_j^\beta u_k^\gamma -
 	}}
 \Phi_{ijkl}^{\alpha\beta\gamma\delta}
 u_i^\alpha u_j^\beta u_k^\gamma u_l^\delta
-    \right\rangle
+    \right\rangle_\mathrm{H}
 \end{equation}
 $$
 
@@ -65,26 +67,8 @@ Here it is important to note that we have to subtract the long-ranged polar inte
 
 $$
 \begin{equation}%\label{eq:deltaF3}
-	\Delta F^{3\textrm{ph}} =
-	-6
-	\sum_{\lambda\lambda'\lambda''}
-	\left|
-		\Phi_{\lambda\lambda'\lambda''}
-	\right|^2
-	%
-	\left(
-	%\Bigg{\{}
-	\frac{3n_{\lambda} n_{\lambda'} + 3n_{\lambda} + 1}
-	{(\omega_{\lambda}+\omega_{\lambda'}+\omega_{\lambda''})_p}
-	+
-	\frac{ 6n_{\lambda} n_{\lambda''} - 3 n_{\lambda} n_{\lambda'} + 3n_{\lambda''}}
-	{(\omega_{\lambda}+\omega_{\lambda'}-\omega_{\lambda''})_p}
-	\right)
-	%\Bigg{\}}
-	%
-	+9\Phi_{\lambda\bar{\lambda}\lambda''}\Phi_{\lambda'\bar{\lambda}'\bar{\lambda}''}
-	\frac{4 n_{\lambda}( n_{\lambda'}+1)+1}
-	{(\omega_{\lambda''})_p}\,,
+	\Delta F^{3\textrm{ph}} = -\frac{\hbar^2}{48N}\sum_{\substack{\bm k\bm k^\prime \bm k^{\prime\prime} \\ \lambda\lambda^\prime\lambda^{\prime\prime}}}\frac{\left|\Phi_{\lambda \lambda^\prime \lambda^{\prime\prime}} ^ {\bm k \bm k^\prime \bm k^{\prime\prime}}\right|^2}{\omega\omega^\prime\omega^{\prime\prime}}  \left[\frac{(n+1)(n^\prime + n^{\prime\prime} + 1) + n^\prime n^{\prime\prime}}{\omega + \omega^\prime + \omega^{\prime\prime}}
+    + 3\frac{n^{\prime\prime}(n+n^\prime+1)-nn^\prime}{\omega + \omega^\prime - \omega^{\prime\prime}}\right]
 \end{equation}
 $$
 
@@ -93,11 +77,11 @@ and
 $$
 \begin{equation}%\label{eq:deltaF4}
 	\Delta F^{4\textrm{ph}} =
-	3\sum_{\lambda\lambda'}
-	\Phi_{\lambda\bar{\lambda}\lambda'\bar{\lambda}'}(2n_{\lambda}+1)(2n_{\lambda'}+1)
+	\frac{\hbar^2}{8N}\sum_{\bm k\ \bm k^\prime \lambda\lambda^\prime}\frac{\Phi_{\lambda\lambda\lambda^\prime\lambda^\prime}^{\bm k,-\bm k,\bm k^\prime,-\bm k^\prime}}{\omega\omega^{\prime}}\left(n+\frac{1}{2}\right)\left(n^\prime + \frac{1}{2}\right)
 \end{equation}
 $$
 
+[^Meitz2026]: [Meitz, E., Castellano, A., Wang, G. J. & McGaughey, A. J. H. (2026) Quantum Anharmonic Phonon Thermodynamics from the Free Energy Cumulant Expansion. npj Computational Materials (in review)](https://www.researchsquare.com/article/rs-10541555/v1)
 
 [^Leibfried1961]: Leibfried, G. & Ludwig, W. (1961) Theory of Anharmonic Effects in Crystals. Solid State Phys 12, 275–444.
 
