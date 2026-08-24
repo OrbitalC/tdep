@@ -787,7 +787,7 @@ module subroutine lo_permutations(p,n)
         if (pos > pos_max) then
             ! store this one
             k=k+1
-            pm(:,i)=permutation
+            pm(:,k)=permutation
         else
             do val = val_min,val_max
                 if (.not. any (permutation(:pos-1) == val)) then
